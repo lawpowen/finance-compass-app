@@ -421,23 +421,14 @@ $financeAnalysisSystemPrompt
     int monthCount = 6,
     int futureMonthCount = defaultFutureMonthCount,
   }) {
-    final data = buildRequestData(
-      repository,
-      includePlanned: true,
-      monthCount: monthCount,
-      futureMonthCount: futureMonthCount,
-    );
-    final prompt = buildAnalysisPrompt(data);
-    final jsonText = const JsonEncoder.withIndent('  ').convert(data);
+    final prompt = buildAnalysisPrompt({
+      'base_currency': repository.baseCurrency,
+      'future_month_count': futureMonthCount,
+    });
     return '''
 $prompt
 
-【财务数据 JSON】
----BEGIN_FINANCE_COMPASS_JSON---
-$jsonText
----END_FINANCE_COMPASS_JSON---
-
-请直接根据上面的 JSON 分析；如果你无法读取附件或外部文件，请优先使用这段内嵌 JSON。
+请在对话中上传 Finance Compass 导出的 JSON 文件，再根据上面的要求进行分析。
 ''';
   }
 
