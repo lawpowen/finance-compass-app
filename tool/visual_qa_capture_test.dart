@@ -15,6 +15,7 @@ import 'package:finance_app/src/core/settings/app_theme_style.dart';
 import 'package:finance_app/src/core/theme/finance_theme.dart';
 import 'package:finance_app/src/features/budgets/budgets_v2_screen.dart';
 import 'package:finance_app/src/features/settings/settings_reference_pages.dart';
+import 'package:finance_app/src/features/transactions/transactions_v2_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -23,7 +24,7 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('capture budget and appearance screens at 390px', (tester) async {
+  testWidgets('capture approved screens at 390px', (tester) async {
     late Directory output;
     late AppDatabase database;
     late FinanceRepository repository;
@@ -41,6 +42,19 @@ void main() {
           currency: 'MYR',
           currentBalance: 12000,
           initialBalance: 12000,
+        ),
+      );
+      repository = await repository.addAccount(
+        const Account(
+          id: 'credit',
+          name: '主力信用卡',
+          accountType: AccountType.creditCard,
+          reportGroup: ReportGroup.credit,
+          currency: 'MYR',
+          currentBalance: 0,
+          creditLimit: 10000,
+          statementDay: 25,
+          paymentDueDay: 14,
         ),
       );
 
@@ -86,6 +100,35 @@ void main() {
         _expense('t3', 'family', 112),
         _expense('t4', 'insurance', 41),
         _expense('t5', 'fun', 120, status: TransactionStatus.planned),
+        FinanceTransaction(
+          id: 'card-shopping',
+          type: TransactionType.expense,
+          accountId: 'credit',
+          categoryId: 'daily',
+          amount: 268,
+          currency: 'MYR',
+          transactionDate: DateTime(2026, 7, 14),
+          merchant: 'Lazada',
+        ),
+        FinanceTransaction(
+          id: 'cash-income',
+          type: TransactionType.income,
+          accountId: 'cash',
+          amount: 8800,
+          currency: 'MYR',
+          transactionDate: DateTime(2026, 7, 15),
+          merchant: '薪资收入',
+        ),
+        FinanceTransaction(
+          id: 'credit-repayment',
+          type: TransactionType.transfer,
+          accountId: 'cash',
+          toAccountId: 'credit',
+          amount: 200,
+          currency: 'MYR',
+          transactionDate: DateTime(2026, 7, 16),
+          description: '信用卡还款',
+        ),
       ];
       repository = await repository.addTransactions(transactions);
     });
@@ -102,6 +145,13 @@ void main() {
       outputPath: '${output.path}/appearance-carousel-390.png',
       database: database,
       child: AppearancePage(settingsController: AppSettingsController()),
+    );
+
+    await _capture(
+      tester,
+      outputPath: '${output.path}/transaction-basis-cards-390.png',
+      database: database,
+      child: TransactionsV2Screen(repository: repository),
     );
 
     await tester.pumpWidget(const SizedBox.shrink());

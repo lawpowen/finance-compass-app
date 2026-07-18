@@ -14,6 +14,121 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('three calculation bases use distinct financial scopes', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final database = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(database.close);
+    var repository = await FinanceRepository.load(database);
+    repository = await repository.addAccount(
+      const Account(
+        id: 'cash',
+        name: '现金账户',
+        accountType: AccountType.cash,
+        reportGroup: ReportGroup.cash,
+        currency: 'MYR',
+        currentBalance: 1000,
+      ),
+    );
+    repository = await repository.addAccount(
+      const Account(
+        id: 'credit',
+        name: '信用卡',
+        accountType: AccountType.creditCard,
+        reportGroup: ReportGroup.credit,
+        currency: 'MYR',
+        currentBalance: 0,
+        creditLimit: 5000,
+        statementDay: 25,
+        paymentDueDay: 14,
+      ),
+    );
+    final now = DateTime.now();
+    repository = await repository.addTransactions([
+      FinanceTransaction(
+        id: 'cash-expense',
+        type: TransactionType.expense,
+        accountId: 'cash',
+        amount: 100,
+        currency: 'MYR',
+        transactionDate: DateTime(now.year, now.month, 2),
+      ),
+      FinanceTransaction(
+        id: 'card-expense',
+        type: TransactionType.expense,
+        accountId: 'credit',
+        amount: 300,
+        currency: 'MYR',
+        transactionDate: DateTime(now.year, now.month, 3),
+      ),
+      FinanceTransaction(
+        id: 'repayment',
+        type: TransactionType.transfer,
+        accountId: 'cash',
+        toAccountId: 'credit',
+        amount: 200,
+        currency: 'MYR',
+        transactionDate: DateTime(now.year, now.month, 4),
+      ),
+      FinanceTransaction(
+        id: 'planned-cash-expense',
+        type: TransactionType.expense,
+        accountId: 'cash',
+        amount: 40,
+        currency: 'MYR',
+        transactionDate: DateTime(now.year, now.month, 5),
+        status: TransactionStatus.planned,
+      ),
+      FinanceTransaction(
+        id: 'planned-card-expense',
+        type: TransactionType.expense,
+        accountId: 'credit',
+        amount: 50,
+        currency: 'MYR',
+        transactionDate: DateTime(now.year, now.month, 6),
+        status: TransactionStatus.planned,
+      ),
+    ]);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          financeRepositoryProvider.overrideWith(
+            () => _TestRepositoryNotifier(repository),
+          ),
+        ],
+        child: MaterialApp(
+          theme: buildFinanceTheme(AppThemeStyle.abyss)
+              .copyWith(splashFactory: NoSplash.splashFactory),
+          home: Scaffold(body: TransactionsV2Screen(repository: repository)),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(_selectedBasisValue(tester), '- MYR 400');
+
+    await tester.tap(find.byKey(const Key('basis-card-cash')));
+    await tester.pumpAndSettle();
+    expect(_selectedBasisValue(tester), '- MYR 300');
+    expect(find.text('流出 MYR 300'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('basis-card-committed')));
+    await tester.pumpAndSettle();
+    expect(_selectedBasisValue(tester), 'MYR 100');
+    expect(find.text('偿还抵扣 MYR 200'), findsOneWidget);
+
+    await tester.tap(find.text('包含预计'));
+    await tester.pumpAndSettle();
+    expect(_selectedBasisValue(tester), 'MYR 150');
+    expect(find.text('新增承诺 MYR 350'), findsOneWidget);
+  });
+
   testWidgets('calculation scope can include actual and planned together', (
     tester,
   ) async {
@@ -181,6 +296,12 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('编辑交易'), findsOneWidget);
   });
+}
+
+String _selectedBasisValue(WidgetTester tester) {
+  return tester
+      .widget<Text>(find.byKey(const Key('transaction-basis-selected-value')))
+      .data!;
 }
 
 class _TestRepositoryNotifier extends FinanceRepositoryNotifier {

@@ -15,6 +15,14 @@ import 'transaction_composer_page.dart';
 import 'transaction_form_dialog.dart';
 import 'transactions_screen.dart';
 
+enum _TransactionBasis {
+  consumption,
+  cash,
+  committed,
+}
+
+const _allFilterValue = '__all__';
+
 class TransactionsV2Screen extends ConsumerStatefulWidget {
   const TransactionsV2Screen({super.key, required this.repository});
 
@@ -29,6 +37,9 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
   int monthOffset = 0;
   bool includePlanned = false;
   TransactionType? typeFilter;
+  String? accountFilter;
+  String? categoryFilter;
+  _TransactionBasis selectedBasis = _TransactionBasis.consumption;
   final Set<String> selectedTransactionIds = {};
   bool isDeleting = false;
 
@@ -52,18 +63,25 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
     final visible = allForMonth.where((item) {
       final matchesStatus =
           includePlanned || item.status != TransactionStatus.planned;
-      return matchesStatus && (typeFilter == null || item.type == typeFilter);
+      final matchesAccount = accountFilter == null ||
+          item.accountId == accountFilter ||
+          item.toAccountId == accountFilter;
+      final matchesCategory =
+          categoryFilter == null || item.categoryId == categoryFilter;
+      return matchesStatus &&
+          matchesAccount &&
+          matchesCategory &&
+          (typeFilter == null || item.type == typeFilter);
     }).toList();
-    final income = _totalForType(
-      allForMonth,
-      TransactionType.income,
-      includePlanned: includePlanned,
-    );
-    final expense = _totalForType(
-      allForMonth,
-      TransactionType.expense,
-      includePlanned: includePlanned,
-    );
+    final scopedTransactions = allForMonth
+        .where((item) =>
+            includePlanned || item.status != TransactionStatus.planned)
+        .toList();
+    final basisSummaries = {
+      for (final basis in _TransactionBasis.values)
+        basis: _summaryFor(basis, scopedTransactions, allForMonth),
+    };
+    final selectedSummary = basisSummaries[selectedBasis]!;
 
     return Stack(
       children: [
@@ -101,22 +119,7 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
                       _HeaderAction(
                         icon: Icons.search_rounded,
                         tooltip: '搜索交易',
-                        onPressed: () => showSearch<void>(
-                          context: context,
-                          delegate: _TransactionSearchDelegate(
-                            repository: repository,
-                            onEdit: (item) => _showTransactionEditor(
-                              context,
-                              draft: item,
-                              editExisting: true,
-                            ),
-                            onAction: (value, item) => _handleTransactionAction(
-                              context,
-                              value,
-                              item,
-                            ),
-                          ),
-                        ),
+                        onPressed: _openSearch,
                       ),
                       const SizedBox(width: 8),
                       _HeaderAction(
@@ -158,39 +161,12 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
                 ),
               ],
             ),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text('${month.month}月净现金流',
-                    style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(width: 12),
-                Text(
-                  compassMoney(income - expense, decimals: 0),
-                  style: TextStyle(
-                    color: income >= expense
-                        ? FinanceColors.compassTeal
-                        : FinanceColors.compassOrange,
-                    fontSize: 25,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
+            _BasisCards(
+              summaries: basisSummaries,
+              selected: selectedBasis,
+              onSelected: (basis) => setState(() => selectedBasis = basis),
             ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                _FlowLegend(
-                  color: FinanceColors.compassTeal,
-                  label: '收入 ${compassMoney(income, decimals: 0)}',
-                ),
-                const SizedBox(width: 18),
-                _FlowLegend(
-                  color: FinanceColors.compassOrange,
-                  label: '支出 ${compassMoney(expense, decimals: 0)}',
-                ),
-              ],
-            ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 12),
             _StatusSwitch(
               includePlanned: includePlanned,
               onChanged: (value) => setState(() {
@@ -199,30 +175,54 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
               }),
             ),
             const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: _FlowLegend(
+                    key: const Key('transaction-basis-primary'),
+                    color: FinanceColors.compassTeal,
+                    label:
+                        '${selectedSummary.primaryLabel} ${compassMoney(selectedSummary.primary, decimals: 0)}',
+                  ),
+                ),
+                Expanded(
+                  child: _FlowLegend(
+                    key: const Key('transaction-basis-secondary'),
+                    color: FinanceColors.compassOrange,
+                    label:
+                        '${selectedSummary.secondaryLabel} ${compassMoney(selectedSummary.secondary, decimals: 0)}',
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
                 children: [
-                  _FilterChip(
-                    label: '全部',
-                    selected: typeFilter == null,
-                    onTap: () => _setTypeFilter(null),
+                  _QuickFilterPill(
+                    icon: Icons.account_balance_wallet_outlined,
+                    label: accountFilter == null
+                        ? '全部账户'
+                        : repository.accountName(accountFilter!),
+                    selected: accountFilter != null,
+                    onTap: _pickAccountFilter,
                   ),
-                  _FilterChip(
-                    label: '支出',
-                    selected: typeFilter == TransactionType.expense,
-                    onTap: () => _setTypeFilter(TransactionType.expense),
+                  _QuickFilterPill(
+                    icon: Icons.list_alt_rounded,
+                    label: typeFilter == null ? '全部类型' : _typeName(typeFilter!),
+                    selected: typeFilter != null,
+                    onTap: _pickTypeFilter,
                   ),
-                  _FilterChip(
-                    label: '收入',
-                    selected: typeFilter == TransactionType.income,
-                    onTap: () => _setTypeFilter(TransactionType.income),
+                  _QuickFilterPill(
+                    icon: Icons.sell_outlined,
+                    label: categoryFilter == null
+                        ? '全部类别'
+                        : repository.categoryName(categoryFilter!),
+                    selected: categoryFilter != null,
+                    onTap: _pickCategoryFilter,
                   ),
-                  _FilterChip(
-                    label: '转账',
-                    selected: typeFilter == TransactionType.transfer,
-                    onTap: () => _setTypeFilter(TransactionType.transfer),
-                  ),
+                  _CompactSearchButton(onTap: _openSearch),
                 ],
               ),
             ),
@@ -263,20 +263,151 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
     );
   }
 
-  double _totalForType(
-    List<FinanceTransaction> transactions,
-    TransactionType type, {
-    required bool includePlanned,
-  }) {
-    return transactions
-        .where((item) =>
-            item.type == type &&
-            (includePlanned || item.status != TransactionStatus.planned))
-        .fold<double>(
-          0,
-          (sum, item) =>
-              sum + repository.convertToBase(item.amount, item.currency),
+  _BasisSummary _summaryFor(
+    _TransactionBasis basis,
+    List<FinanceTransaction> scopedTransactions,
+    List<FinanceTransaction> allForMonth,
+  ) {
+    switch (basis) {
+      case _TransactionBasis.consumption:
+        final income = scopedTransactions
+            .where((item) => item.type == TransactionType.income)
+            .fold<double>(
+              0,
+              (sum, item) => sum + repository.transactionAmountInBase(item),
+            );
+        final expense = scopedTransactions
+            .where((item) => item.type == TransactionType.expense)
+            .fold<double>(
+              0,
+              (sum, item) => sum + repository.transactionAmountInBase(item),
+            );
+        return _BasisSummary(
+          title: '消费发生',
+          subtitle: '按交易发生日',
+          value: income - expense,
+          primaryLabel: '收入',
+          primary: income,
+          secondaryLabel: '支出',
+          secondary: expense,
+          icon: Icons.receipt_long_outlined,
         );
+      case _TransactionBasis.cash:
+        var inflow = 0.0;
+        var outflow = 0.0;
+        for (final item in scopedTransactions) {
+          final delta = _cashDelta(item);
+          if (delta >= 0) {
+            inflow += delta;
+          } else {
+            outflow += -delta;
+          }
+        }
+        return _BasisSummary(
+          title: '现金收付',
+          subtitle: '按现金账户变动',
+          value: inflow - outflow,
+          primaryLabel: '流入',
+          primary: inflow,
+          secondaryLabel: '流出',
+          secondary: outflow,
+          icon: Icons.swap_horiz_rounded,
+        );
+      case _TransactionBasis.committed:
+        var additions = 0.0;
+        var reductions = 0.0;
+        for (final item in scopedTransactions) {
+          final delta = _creditDebtDelta(item);
+          if (delta >= 0) {
+            additions += delta;
+          } else {
+            reductions += -delta;
+          }
+        }
+        final cutoff = repository.currentMonthCutoffDate();
+        final currentCommitted = repository.accounts
+            .where((account) => account.reportGroup == ReportGroup.credit)
+            .fold<double>(0, (sum, account) {
+          final balance = account.accountType == AccountType.creditCard
+              ? repository.convertToBase(
+                  account.currentBalance,
+                  account.currency,
+                )
+              : repository.accountBalanceAtBase(account.id, cutoff);
+          return sum + (-balance).clamp(0.0, double.infinity).toDouble();
+        });
+        final plannedDelta = includePlanned
+            ? allForMonth
+                .where((item) => item.status == TransactionStatus.planned)
+                .fold<double>(0, (sum, item) => sum + _creditDebtDelta(item))
+            : 0.0;
+        return _BasisSummary(
+          title: '已承诺',
+          subtitle: includePlanned ? '当前＋本月预计' : '当前信用与分期义务',
+          value: (currentCommitted + plannedDelta)
+              .clamp(0.0, double.infinity)
+              .toDouble(),
+          primaryLabel: '新增承诺',
+          primary: additions,
+          secondaryLabel: '偿还抵扣',
+          secondary: reductions,
+          icon: Icons.verified_user_outlined,
+        );
+    }
+  }
+
+  double _cashDelta(FinanceTransaction transaction) {
+    final source = _account(transaction.accountId);
+    final target = transaction.toAccountId == null
+        ? null
+        : _account(transaction.toAccountId!);
+    final amount = repository.transactionAmountInBase(transaction);
+    switch (transaction.type) {
+      case TransactionType.income:
+        return source?.reportGroup == ReportGroup.cash ? amount : 0;
+      case TransactionType.expense:
+        return source?.reportGroup == ReportGroup.cash ? -amount : 0;
+      case TransactionType.adjustment:
+        return source?.reportGroup == ReportGroup.cash ? amount : 0;
+      case TransactionType.transfer:
+        var delta = 0.0;
+        if (source?.reportGroup == ReportGroup.cash) delta -= amount;
+        if (target?.reportGroup == ReportGroup.cash) {
+          delta += repository.transferIncomingAmountInBase(transaction);
+        }
+        return delta;
+    }
+  }
+
+  double _creditDebtDelta(FinanceTransaction transaction) {
+    final source = _account(transaction.accountId);
+    final target = transaction.toAccountId == null
+        ? null
+        : _account(transaction.toAccountId!);
+    final amount = repository.transactionAmountInBase(transaction);
+    var delta = 0.0;
+    if (source?.reportGroup == ReportGroup.credit) {
+      switch (transaction.type) {
+        case TransactionType.income:
+        case TransactionType.adjustment:
+          delta -= amount;
+        case TransactionType.expense:
+        case TransactionType.transfer:
+          delta += amount;
+      }
+    }
+    if (transaction.type == TransactionType.transfer &&
+        target?.reportGroup == ReportGroup.credit) {
+      delta -= repository.transferIncomingAmountInBase(transaction);
+    }
+    return delta;
+  }
+
+  Account? _account(String id) {
+    for (final account in repository.accounts) {
+      if (account.id == id) return account;
+    }
+    return null;
   }
 
   List<Widget> _transactionWidgets(
@@ -530,18 +661,118 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
     return _typeName(transaction.type);
   }
 
+  void _openSearch() {
+    showSearch<void>(
+      context: context,
+      delegate: _TransactionSearchDelegate(
+        repository: repository,
+        onEdit: (item) => _showTransactionEditor(
+          context,
+          draft: item,
+          editExisting: true,
+        ),
+        onAction: (value, item) => _handleTransactionAction(
+          context,
+          value,
+          item,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickAccountFilter() async {
+    final value = await _showFilterSheet(
+      title: '筛选账户',
+      values: {
+        for (final account in repository.accounts) account.id: account.name,
+      },
+      selectedValue: accountFilter,
+    );
+    if (!mounted || value == null) return;
+    setState(() {
+      selectedTransactionIds.clear();
+      accountFilter = value == _allFilterValue ? null : value;
+    });
+  }
+
+  Future<void> _pickTypeFilter() async {
+    final value = await _showFilterSheet(
+      title: '筛选类型',
+      values: {
+        for (final type in TransactionType.values) type.name: _typeName(type),
+      },
+      selectedValue: typeFilter?.name,
+    );
+    if (!mounted || value == null) return;
+    setState(() {
+      selectedTransactionIds.clear();
+      typeFilter = value == _allFilterValue
+          ? null
+          : TransactionType.values.firstWhere((type) => type.name == value);
+    });
+  }
+
+  Future<void> _pickCategoryFilter() async {
+    final value = await _showFilterSheet(
+      title: '筛选类别',
+      values: {
+        for (final category in repository.categories)
+          category.id: category.name,
+      },
+      selectedValue: categoryFilter,
+    );
+    if (!mounted || value == null) return;
+    setState(() {
+      selectedTransactionIds.clear();
+      categoryFilter = value == _allFilterValue ? null : value;
+    });
+  }
+
+  Future<String?> _showFilterSheet({
+    required String title,
+    required Map<String, String> values,
+    required String? selectedValue,
+  }) {
+    return showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+          children: [
+            ListTile(
+              title: Text(title),
+              trailing: selectedValue == null
+                  ? const Icon(Icons.check_rounded)
+                  : null,
+            ),
+            ListTile(
+              title: const Text('全部'),
+              trailing: selectedValue == null
+                  ? const Icon(Icons.check_rounded)
+                  : null,
+              onTap: () => Navigator.pop(sheetContext, _allFilterValue),
+            ),
+            for (final entry in values.entries)
+              ListTile(
+                title: Text(entry.value),
+                trailing: selectedValue == entry.key
+                    ? const Icon(Icons.check_rounded)
+                    : null,
+                onTap: () => Navigator.pop(sheetContext, entry.key),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _changeMonth(int delta) {
     setState(() {
       selectedTransactionIds.clear();
       monthOffset = (monthOffset + delta).clamp(-120, 120);
       if (monthOffset > 0) includePlanned = true;
-    });
-  }
-
-  void _setTypeFilter(TransactionType? type) {
-    setState(() {
-      selectedTransactionIds.clear();
-      typeFilter = type;
     });
   }
 
@@ -779,8 +1010,193 @@ class _HeaderAction extends StatelessWidget {
       );
 }
 
+class _BasisSummary {
+  const _BasisSummary({
+    required this.title,
+    required this.subtitle,
+    required this.value,
+    required this.primaryLabel,
+    required this.primary,
+    required this.secondaryLabel,
+    required this.secondary,
+    required this.icon,
+  });
+
+  final String title;
+  final String subtitle;
+  final double value;
+  final String primaryLabel;
+  final double primary;
+  final String secondaryLabel;
+  final double secondary;
+  final IconData icon;
+}
+
+class _BasisCards extends StatelessWidget {
+  const _BasisCards({
+    required this.summaries,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  final Map<_TransactionBasis, _BasisSummary> summaries;
+  final _TransactionBasis selected;
+  final ValueChanged<_TransactionBasis> onSelected;
+
+  @override
+  Widget build(BuildContext context) => Column(
+        children: [
+          SizedBox(
+            height: 118,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (final basis in _TransactionBasis.values) ...[
+                  Expanded(
+                    flex: basis == selected ? 18 : 11,
+                    child: _BasisCard(
+                      key: Key('basis-card-${basis.name}'),
+                      summary: summaries[basis]!,
+                      selected: basis == selected,
+                      onTap: () => onSelected(basis),
+                    ),
+                  ),
+                  if (basis != _TransactionBasis.committed)
+                    const SizedBox(width: 7),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: _TransactionBasis.values
+                .map(
+                  (basis) => AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    width: basis == selected ? 18 : 5,
+                    height: 5,
+                    margin: const EdgeInsets.symmetric(horizontal: 3),
+                    decoration: BoxDecoration(
+                      color: basis == selected
+                          ? FinanceColors.compassTeal
+                          : Colors.white24,
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                  ),
+                )
+                .toList(),
+          ),
+        ],
+      );
+}
+
+class _BasisCard extends StatelessWidget {
+  const _BasisCard({
+    super.key,
+    required this.summary,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final _BasisSummary summary;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final valueColor = summary.value < 0
+        ? FinanceColors.compassOrange
+        : FinanceColors.compassTeal;
+    return Material(
+      color: selected
+          ? FinanceColors.compassTeal.withValues(alpha: .12)
+          : Colors.white.withValues(alpha: .025),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(
+          color: selected
+              ? FinanceColors.compassTeal.withValues(alpha: .8)
+              : Colors.white12,
+        ),
+      ),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Padding(
+          padding: EdgeInsets.symmetric(
+            horizontal: selected ? 12 : 8,
+            vertical: 10,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    summary.icon,
+                    size: selected ? 18 : 16,
+                    color:
+                        selected ? FinanceColors.compassTeal : Colors.white54,
+                  ),
+                  const SizedBox(width: 5),
+                  Expanded(
+                    child: Text(
+                      summary.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: selected ? 13 : 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const Spacer(),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  compassMoney(summary.value, decimals: 0),
+                  key: selected
+                      ? const Key('transaction-basis-selected-value')
+                      : null,
+                  style: TextStyle(
+                    color: valueColor,
+                    fontSize: selected ? 23 : 15,
+                    fontWeight: FontWeight.w600,
+                    height: 1,
+                  ),
+                ),
+              ),
+              if (selected) ...[
+                const SizedBox(height: 7),
+                Text(
+                  summary.subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        fontSize: 9.5,
+                        color: Colors.white54,
+                      ),
+                ),
+              ] else
+                const SizedBox(height: 16),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _FlowLegend extends StatelessWidget {
-  const _FlowLegend({required this.color, required this.label});
+  const _FlowLegend({
+    super.key,
+    required this.color,
+    required this.label,
+  });
 
   final Color color;
   final String label;
@@ -873,33 +1289,83 @@ class _StatusButton extends StatelessWidget {
       );
 }
 
-class _FilterChip extends StatelessWidget {
-  const _FilterChip({
+class _QuickFilterPill extends StatelessWidget {
+  const _QuickFilterPill({
+    required this.icon,
     required this.label,
     required this.selected,
     required this.onTap,
   });
 
+  final IconData icon;
   final String label;
   final bool selected;
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.only(right: 7),
-        child: ActionChip(
-          onPressed: onTap,
-          label: Text(label),
-          labelStyle: TextStyle(
-            color: selected ? FinanceColors.compassTeal : null,
-            fontSize: 10.5,
-          ),
-          visualDensity: VisualDensity.compact,
-          backgroundColor: selected
+  Widget build(BuildContext context) => Container(
+        height: 36,
+        constraints: const BoxConstraints(maxWidth: 124),
+        margin: const EdgeInsets.only(right: 7),
+        child: Material(
+          color: selected
               ? FinanceColors.compassTeal.withValues(alpha: .12)
               : Colors.transparent,
-          side: BorderSide(
-            color: selected ? FinanceColors.compassTeal : Colors.white12,
+          shape: StadiumBorder(
+            side: BorderSide(
+              color: selected ? FinanceColors.compassTeal : Colors.white12,
+            ),
+          ),
+          child: InkWell(
+            onTap: onTap,
+            customBorder: const StadiumBorder(),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    icon,
+                    size: 14,
+                    color: FinanceColors.compassTeal,
+                  ),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: selected ? FinanceColors.compassTeal : null,
+                        fontSize: 10.5,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 3),
+                  const Icon(Icons.keyboard_arrow_down_rounded, size: 14),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+}
+
+class _CompactSearchButton extends StatelessWidget {
+  const _CompactSearchButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+        width: 36,
+        height: 36,
+        child: IconButton(
+          tooltip: '搜索交易',
+          onPressed: onTap,
+          icon: const Icon(Icons.search_rounded, size: 17),
+          style: IconButton.styleFrom(
+            side: const BorderSide(color: Colors.white12),
           ),
         ),
       );

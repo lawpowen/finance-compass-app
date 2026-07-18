@@ -57,6 +57,25 @@
 
 final result: passed
 
+## 2026-07-18 transaction calculation basis cards
+
+- Visual source of truth: `C:/Users/pwlaw/.codex/generated_images/019f5ba9-2b1f-7cf3-bf9a-2da8a4633995/exec-f4136a98-86fe-402b-a555-7098de94f50d.png`, the user-selected Product Design option 2.
+- Implementation capture: `artifacts/design-qa/transaction-basis-cards-390.png` at a 390×844 logical-pixel viewport with deterministic cash, credit, income, expense, transfer and planned data.
+- Combined comparison: `artifacts/design-qa/transaction-basis-comparison.png`; the reference and implementation were judged in one image at the same width.
+- Full-page evidence confirms the retained month navigation, grouped transaction list, equal-size lightning/add actions and bottom navigation. Focused evidence confirms the selected wide card, two compact cards, page indicator, actual/planned segment, dual metric legend and three quick-filter pills plus search.
+- The implementation preserves the approved deep-navy surface, teal selection border and orange negative-value grammar. Amounts differ because the implementation capture uses test ledger data rather than the concept image's illustrative values.
+- All three cards are real controls. Switching cards changes the summary and metric labels; the actual/planned segment changes the underlying status scope; account, type and category pills open real selectors. Transaction rows remain available under every calculation basis.
+- No actionable P0, P1 or P2 mismatch remains. The implementation card row is slightly more compact vertically to preserve more transaction content at 390×844, without changing hierarchy or touch-target clarity.
+- The Flutter widget renderer on this workstation lacks CJK and Material icon fallback fonts, so glyphs appear as boxes in automated captures. Layout, color, spacing and control state remain inspectable; packaged Android uses system glyphs.
+
+### Iteration history
+
+1. First capture implemented the three basis cards and status switch but retained four legacy transaction-type chips.
+2. The filter row was revised to the approved account/type/category pills with a compact search control, and all pills were connected to real filters.
+3. The corrected state was recaptured and recombined with the selected reference; geometry and interaction hierarchy now align at the 390 px baseline.
+
+final result: passed
+
 ## 2026-07-18 Shopee PayLater original-statement follow-up
 
 - The approved credit-card detail hierarchy is unchanged. The correction only changes bill-month naming and amount semantics: the month is derived from the day before statement close, and a paid historical bill keeps its original amount for reconciliation.

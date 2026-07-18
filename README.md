@@ -1,6 +1,6 @@
 # Finance Compass
 
-当前版本：`0.8.0+23`。工程文档索引见 [docs/README.md](docs/README.md)。
+当前版本：`0.8.0+24`。工程文档索引见 [docs/README.md](docs/README.md)。
 
 完整中文需求与设计文档请看：[finance-app-design.md](finance-app-design.md)。
 
