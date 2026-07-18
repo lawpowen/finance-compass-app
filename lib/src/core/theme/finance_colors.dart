@@ -9,6 +9,18 @@ class FinanceColors {
   // ── Income / Positive ──
   static const Color income = Color(0xFF15803D);
   static const Color incomeSoft = Color(0xFF6AAF8A);
+  static const Color compassTeal = Color(0xFF58D4C4);
+  static const Color compassTealDark = Color(0xFF1F766F);
+  static const Color compassOrange = Color(0xFFFF7417);
+  static const Color compassBackground = Color(0xFF011720);
+  static const Color compassBackgroundTop = Color(0xFF00131B);
+  static const Color compassBackgroundBottom = Color(0xFF001B25);
+  static const Color compassSurface = Color(0xFF06232C);
+  static const Color compassSurfaceStrong = Color(0xFF0B2B34);
+  static const Color compassBorder = Color(0xFF284149);
+  static const Color compassText = Color(0xFFF1F3F2);
+  static const Color compassMuted = Color(0xFFA4AAAD);
+  static const Color compassDisabled = Color(0xFF66757A);
 
   // ── Expense / Negative ──
   static const Color expense = Color(0xFFB91C1C);

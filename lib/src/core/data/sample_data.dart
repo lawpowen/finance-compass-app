@@ -78,20 +78,44 @@ class SampleData {
     return const [
       Category(id: 'cat_salary', name: 'Salary', type: CategoryType.income),
       Category(id: 'cat_food', name: 'Food', type: CategoryType.expense),
-      Category(id: 'cat_transport', name: 'Transport', type: CategoryType.expense),
+      Category(
+          id: 'cat_transport', name: 'Transport', type: CategoryType.expense),
       Category(id: 'cat_housing', name: 'Housing', type: CategoryType.expense),
-      Category(id: 'cat_shopping', name: 'Shopping', type: CategoryType.expense),
-      Category(id: 'cat_invest', name: 'Investment Top-up', type: CategoryType.investment),
-      Category(id: 'cat_transfer', name: 'Account Transfer', type: CategoryType.transfer),
+      Category(
+          id: 'cat_shopping', name: 'Shopping', type: CategoryType.expense),
+      Category(
+          id: 'cat_invest',
+          name: 'Investment Top-up',
+          type: CategoryType.investment),
+      Category(
+          id: 'cat_transfer',
+          name: 'Account Transfer',
+          type: CategoryType.transfer),
     ];
   }
 
   static List<Budget> budgets() {
     return const [
-      Budget(id: 'budget_food', categoryId: 'cat_food', monthKey: '2026-04', amount: 1200),
-      Budget(id: 'budget_transport', categoryId: 'cat_transport', monthKey: '2026-04', amount: 500),
-      Budget(id: 'budget_housing', categoryId: 'cat_housing', monthKey: '2026-04', amount: 1800),
-      Budget(id: 'budget_shopping', categoryId: 'cat_shopping', monthKey: '2026-04', amount: 600),
+      Budget(
+          id: 'budget_food',
+          categoryId: 'cat_food',
+          monthKey: '2026-04',
+          amount: 1200),
+      Budget(
+          id: 'budget_transport',
+          categoryId: 'cat_transport',
+          monthKey: '2026-04',
+          amount: 500),
+      Budget(
+          id: 'budget_housing',
+          categoryId: 'cat_housing',
+          monthKey: '2026-04',
+          amount: 1800),
+      Budget(
+          id: 'budget_shopping',
+          categoryId: 'cat_shopping',
+          monthKey: '2026-04',
+          amount: 600),
     ];
   }
 

@@ -11,6 +11,9 @@ class Accounts extends Table {
   TextColumn get institution => text().nullable()();
   TextColumn get note => text().nullable()();
   BoolColumn get isActive => boolean().withDefault(const Constant(true))();
+  RealColumn get creditLimit => real().nullable()();
+  IntColumn get statementDay => integer().nullable()();
+  IntColumn get paymentDueDay => integer().nullable()();
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
 
   @override

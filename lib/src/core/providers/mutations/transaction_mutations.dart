@@ -39,7 +39,15 @@ class TransactionMutations extends Notifier<void> {
 
   /// Deletes a transaction and reverses its balance effects.
   Future<void> deleteTransaction(String transactionId) async {
-    final updated = await (await _repo).deleteExistingTransaction(transactionId);
+    final updated =
+        await (await _repo).deleteExistingTransaction(transactionId);
+    _repoNotifier.setRepository(updated);
+  }
+
+  /// Deletes multiple transactions atomically and reverses every balance effect.
+  Future<void> deleteTransactions(Iterable<String> transactionIds) async {
+    final updated =
+        await (await _repo).deleteExistingTransactions(transactionIds);
     _repoNotifier.setRepository(updated);
   }
 
@@ -61,6 +69,12 @@ class TransactionMutations extends Notifier<void> {
     _repoNotifier.setRepository(updated);
   }
 
+  /// Replaces an existing template while preserving its identifier.
+  Future<void> saveTransactionTemplate(TransactionTemplate template) async {
+    final updated = await (await _repo).saveTransactionTemplate(template);
+    _repoNotifier.setRepository(updated);
+  }
+
   /// Creates a recurring transaction rule.
   Future<void> addRecurringTransactionRule({
     required String name,
@@ -78,6 +92,14 @@ class TransactionMutations extends Notifier<void> {
   /// Deletes a recurring transaction rule.
   Future<void> deleteRecurringTransactionRule(String ruleId) async {
     final updated = await (await _repo).deleteRecurringTransactionRule(ruleId);
+    _repoNotifier.setRepository(updated);
+  }
+
+  /// Replaces an existing recurring rule while preserving generated history.
+  Future<void> saveRecurringTransactionRule(
+    RecurringTransactionRule rule,
+  ) async {
+    final updated = await (await _repo).saveRecurringTransactionRule(rule);
     _repoNotifier.setRepository(updated);
   }
 

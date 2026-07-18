@@ -1,4 +1,7 @@
+import 'package:drift/native.dart';
 import 'package:finance_app/src/core/data/finance_repository.dart';
+import 'package:finance_app/src/core/database/app_database.dart' hide Account;
+import 'package:finance_app/src/core/models/account.dart';
 import 'package:finance_app/src/core/models/transaction.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -62,5 +65,94 @@ void main() {
     expect(generated.toCurrency, 'TWD');
     expect(generated.transferInAmount, 1000);
     expect(generated.transferInCurrency, 'TWD');
+  });
+
+  test('recurring rule created from a planned transaction stays planned', () {
+    final base = FinanceTransaction(
+      id: 'txn_plan',
+      type: TransactionType.expense,
+      accountId: 'acc_bank',
+      amount: 88,
+      currency: 'MYR',
+      transactionDate: DateTime(2026, 7, 18),
+      status: TransactionStatus.planned,
+    );
+
+    final rule = RecurringTransactionRule.fromTransaction(
+      id: 'rule_plan',
+      name: 'Planned rule',
+      transaction: base,
+    );
+
+    expect(rule.status, TransactionStatus.planned);
+  });
+
+  test('repository generation keeps the rule status in future months',
+      () async {
+    final now = DateTime.now();
+    final start = DateTime(now.year, now.month + 1, 15);
+    final database = AppDatabase.forTesting(NativeDatabase.memory());
+    var repository = await FinanceRepository.load(database);
+    repository = await repository.addAccount(
+      const Account(
+        id: 'recurring_cash',
+        name: 'Recurring cash',
+        accountType: AccountType.cash,
+        reportGroup: ReportGroup.cash,
+        currency: 'MYR',
+        initialBalance: 1000,
+        currentBalance: 1000,
+      ),
+    );
+    repository = await repository.addRecurringTransactionRule(
+      name: 'Actual installments',
+      transaction: FinanceTransaction(
+        id: 'actual_seed',
+        type: TransactionType.expense,
+        accountId: 'recurring_cash',
+        amount: 100,
+        currency: 'MYR',
+        transactionDate: start,
+        status: TransactionStatus.actual,
+      ),
+    );
+    repository = await repository.addRecurringTransactionRule(
+      name: 'Planned installments',
+      transaction: FinanceTransaction(
+        id: 'planned_seed',
+        type: TransactionType.expense,
+        accountId: 'recurring_cash',
+        amount: 80,
+        currency: 'MYR',
+        transactionDate: start,
+        status: TransactionStatus.planned,
+      ),
+    );
+
+    final actualRule = repository.recurringTransactionRules
+        .singleWhere((item) => item.name == 'Actual installments');
+    final plannedRule = repository.recurringTransactionRules
+        .singleWhere((item) => item.name == 'Planned installments');
+    repository = await repository.generateRecurringTransactions(
+      actualRule.id,
+      monthsAhead: 2,
+    );
+    repository = await repository.generateRecurringTransactions(
+      plannedRule.id,
+      monthsAhead: 2,
+    );
+
+    final actualRows = repository.transactions
+        .where((item) => item.recurringRuleId == actualRule.id);
+    final plannedRows = repository.transactions
+        .where((item) => item.recurringRuleId == plannedRule.id);
+    expect(actualRows, isNotEmpty);
+    expect(actualRows.map((item) => item.status),
+        everyElement(TransactionStatus.actual));
+    expect(plannedRows, isNotEmpty);
+    expect(plannedRows.map((item) => item.status),
+        everyElement(TransactionStatus.planned));
+
+    await database.close();
   });
 }

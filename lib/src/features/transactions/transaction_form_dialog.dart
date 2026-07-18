@@ -46,6 +46,15 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
 
   bool get _isEditing => widget.initialTransaction != null;
 
+  bool get _usesCreditCardAccount {
+    final creditCardIds = widget.repository.accounts
+        .where((item) => item.accountType == AccountType.creditCard)
+        .map((item) => item.id)
+        .toSet();
+    return creditCardIds.contains(accountId) ||
+        (toAccountId != null && creditCardIds.contains(toAccountId));
+  }
+
   @override
   void initState() {
     super.initState();
@@ -64,6 +73,9 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
           initialTransaction == null ? null : seedTransaction.transactionDate;
       accountId = seedTransaction.accountId;
       toAccountId = seedTransaction.toAccountId;
+      if (_usesCreditCardAccount) {
+        settlementDate = null;
+      }
       categoryId = seedTransaction.categoryId;
       amountController.text = seedTransaction.amount.toString();
       currency = normalizeCurrency(seedTransaction.currency);
@@ -184,6 +196,9 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                       .toList(),
                   onChanged: (value) => setState(() {
                     accountId = value;
+                    if (_usesCreditCardAccount) {
+                      settlementDate = null;
+                    }
                     if (value != null) {
                       currency = _currencyForAccount(value) ?? currency;
                     }
@@ -211,6 +226,9 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                         .toList(),
                     onChanged: (value) => setState(() {
                       toAccountId = value;
+                      if (_usesCreditCardAccount) {
+                        settlementDate = null;
+                      }
                       if (value != null) {
                         toCurrency = _currencyForAccount(value) ?? toCurrency;
                       }
@@ -243,8 +261,10 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                 FinanceTextField(
                   controller: amountController,
                   label: '金额',
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                    signed: true,
+                  ),
                   validator: _numberRequired,
                 ),
                 const SizedBox(height: 12),
@@ -258,8 +278,10 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                   FinanceTextField(
                     controller: toAmountController,
                     label: '转入金额',
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                      signed: true,
+                    ),
                     validator: _numberRequired,
                   ),
                   const SizedBox(height: 12),
@@ -283,16 +305,18 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                   value: recordDate,
                   onPick: () => _pickRecordDate(),
                 ),
-                const SizedBox(height: 8),
-                _DateTile(
-                  title: '结算日期',
-                  value: settlementDate,
-                  emptyLabel: '未填写时使用记录日期',
-                  onPick: () => _pickSettlementDate(),
-                  onClear: settlementDate == null
-                      ? null
-                      : () => setState(() => settlementDate = null),
-                ),
+                if (!_usesCreditCardAccount) ...[
+                  const SizedBox(height: 8),
+                  _DateTile(
+                    title: '结算日期',
+                    value: settlementDate,
+                    emptyLabel: '未填写时使用记录日期',
+                    onPick: () => _pickSettlementDate(),
+                    onClear: settlementDate == null
+                        ? null
+                        : () => setState(() => settlementDate = null),
+                  ),
+                ],
                 if (!_isEditing) ...[
                   const SizedBox(height: 12),
                   DropdownButtonFormField<int>(
@@ -335,6 +359,12 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
         ),
       ),
       actions: [
+        if (_isEditing)
+          TextButton.icon(
+            onPressed: _confirmDelete,
+            icon: const Icon(Icons.delete_outline_rounded),
+            label: const Text('删除'),
+          ),
         TextButton(
             onPressed: () => Navigator.of(context).pop(),
             child: const Text('取消')),
@@ -523,7 +553,8 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
         : null;
     final description = _nullIfEmpty(descriptionController.text);
     final merchant = _nullIfEmpty(merchantController.text);
-    final effectiveSettlementDate = settlementDate ?? recordDate;
+    final effectiveSettlementDate =
+        _usesCreditCardAccount ? recordDate : settlementDate ?? recordDate;
 
     if (_isEditing) {
       Navigator.of(context).pop(
@@ -613,8 +644,35 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
     }
   }
 
-  String? _numberRequired(String? value) =>
-      double.tryParse(value ?? '') == null ? '请输入数字' : null;
+  String? _numberRequired(String? value) {
+    final amount = double.tryParse(value ?? '');
+    return amount == null || !amount.isFinite ? '请输入有限数字' : null;
+  }
+
+  Future<void> _confirmDelete() async {
+    final transactionId = widget.initialTransaction?.id;
+    if (transactionId == null) return;
+    final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('删除交易？'),
+            content: const Text('删除后会同步恢复相关账户余额，且无法撤销。'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text('取消'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: const Text('确认删除'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirmed || !mounted) return;
+    Navigator.of(context).pop(TransactionFormResult.deleted(transactionId));
+  }
 
   String? _nullIfEmpty(String value) =>
       value.trim().isEmpty ? null : value.trim();
@@ -690,10 +748,16 @@ class _CurrencyDisplayField extends StatelessWidget {
 
 class TransactionFormResult {
   const TransactionFormResult({
-    required this.transactions,
+    this.transactions = const [],
+    this.deletedTransactionId,
   });
 
+  const TransactionFormResult.deleted(String transactionId)
+      : transactions = const [],
+        deletedTransactionId = transactionId;
+
   final List<FinanceTransaction> transactions;
+  final String? deletedTransactionId;
 }
 
 class _StatusSwitch extends StatelessWidget {
@@ -833,7 +897,7 @@ List<FinanceTransaction> buildRecurringTransactions({
       toCurrency: baseTransaction.toCurrency,
       recordDate: recordDate,
       transactionDate: settlementDate,
-      status: index == 0 ? baseTransaction.status : TransactionStatus.planned,
+      status: baseTransaction.status,
       recurringRuleId: baseTransaction.recurringRuleId,
       description: baseTransaction.description,
       merchant: baseTransaction.merchant,

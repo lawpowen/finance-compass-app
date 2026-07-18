@@ -11,9 +11,11 @@ import '../models/account.dart';
 import '../models/asset_snapshot.dart';
 import '../models/budget.dart';
 import '../models/category.dart';
+import '../models/credit_card_billing.dart';
 import '../models/forecast_summary.dart';
 import '../models/monthly_summary.dart';
 import '../models/transaction.dart';
+import '../models/transaction_preset.dart' as preset;
 import '../utils/currency_formatter.dart';
 import '../utils/id_generator.dart';
 import '../utils/month_key.dart';
@@ -30,12 +32,16 @@ class FinanceRepository {
     required List<Budget> budgets,
     required List<FinanceTransaction> transactions,
     required List<AssetSnapshot> snapshots,
+    required List<TransactionTemplate> transactionTemplates,
+    required List<RecurringTransactionRule> recurringTransactionRules,
     required Map<String, String> metaValues,
   })  : _accounts = accounts,
         _categories = categories,
         _budgets = budgets,
         _transactions = transactions,
         _snapshots = snapshots,
+        _transactionTemplates = transactionTemplates,
+        _recurringTransactionRules = recurringTransactionRules,
         _metaValues = metaValues;
 
   final AppDatabase database;
@@ -45,6 +51,8 @@ class FinanceRepository {
   final List<Budget> _budgets;
   final List<FinanceTransaction> _transactions;
   final List<AssetSnapshot> _snapshots;
+  final List<TransactionTemplate> _transactionTemplates;
+  final List<RecurringTransactionRule> _recurringTransactionRules;
   final Map<String, String> _metaValues;
 
   static FinanceRepository preview() {
@@ -55,6 +63,8 @@ class FinanceRepository {
       budgets: SampleData.budgets(),
       transactions: SampleData.transactions(),
       snapshots: SampleData.snapshots(),
+      transactionTemplates: const [],
+      recurringTransactionRules: const [],
       metaValues: const {},
     );
     setActiveBaseCurrency(repository.baseCurrency);
@@ -67,7 +77,18 @@ class FinanceRepository {
     final budgets = await database.fetchBudgets();
     final transactions = await database.fetchTransactions();
     final snapshots = await database.fetchAssetSnapshots();
+    final storedTemplates = (await database.fetchTransactionTemplates())
+        .map((item) => TransactionTemplate.fromJson(item.toJson()))
+        .toList();
+    final storedRules = (await database.fetchRecurringTransactionRules())
+        .map((item) => RecurringTransactionRule.fromJson(item.toJson()))
+        .toList();
     final metaValues = await database.fetchAllMetaValues();
+    final transactionTemplates = storedTemplates.isNotEmpty
+        ? storedTemplates
+        : _legacyTemplatesFromMeta(metaValues);
+    final recurringTransactionRules =
+        storedRules.isNotEmpty ? storedRules : _legacyRulesFromMeta(metaValues);
 
     final repository = FinanceRepository._(
       database: database,
@@ -76,6 +97,8 @@ class FinanceRepository {
       budgets: budgets,
       transactions: transactions,
       snapshots: snapshots,
+      transactionTemplates: transactionTemplates,
+      recurringTransactionRules: recurringTransactionRules,
       metaValues: metaValues,
     );
     setActiveBaseCurrency(repository.baseCurrency);
@@ -83,6 +106,40 @@ class FinanceRepository {
   }
 
   Future<FinanceRepository> refresh() => FinanceRepository.load(database);
+
+  static List<TransactionTemplate> _legacyTemplatesFromMeta(
+    Map<String, String> metaValues,
+  ) {
+    try {
+      final decoded =
+          jsonDecode(metaValues['transaction_templates_json'] ?? '[]');
+      return (decoded as List<dynamic>)
+          .whereType<Map>()
+          .map((item) => TransactionTemplate.fromJson(
+                Map<String, dynamic>.from(item),
+              ))
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  static List<RecurringTransactionRule> _legacyRulesFromMeta(
+    Map<String, String> metaValues,
+  ) {
+    try {
+      final decoded =
+          jsonDecode(metaValues['recurring_transaction_rules_json'] ?? '[]');
+      return (decoded as List<dynamic>)
+          .whereType<Map>()
+          .map((item) => RecurringTransactionRule.fromJson(
+                Map<String, dynamic>.from(item),
+              ))
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
 
   List<Account> get accounts => List.unmodifiable(_accounts);
   List<Category> get categories => List.unmodifiable(_categories);
@@ -218,35 +275,11 @@ class FinanceRepository {
   }
 
   List<TransactionTemplate> get transactionTemplates {
-    final raw = _metaValues['transaction_templates_json'];
-    if (raw == null || raw.trim().isEmpty) {
-      return const [];
-    }
-    final decoded = jsonDecode(raw);
-    if (decoded is! List) {
-      return const [];
-    }
-    return decoded
-        .whereType<Map<String, dynamic>>()
-        .map(TransactionTemplate.fromJson)
-        .toList()
-      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    return List.unmodifiable(_transactionTemplates);
   }
 
   List<RecurringTransactionRule> get recurringTransactionRules {
-    final raw = _metaValues['recurring_transaction_rules_json'];
-    if (raw == null || raw.trim().isEmpty) {
-      return const [];
-    }
-    final decoded = jsonDecode(raw);
-    if (decoded is! List) {
-      return const [];
-    }
-    return decoded
-        .whereType<Map<String, dynamic>>()
-        .map(RecurringTransactionRule.fromJson)
-        .toList()
-      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    return List.unmodifiable(_recurringTransactionRules);
   }
 
   List<AssetGoal> get assetGoals {
@@ -289,26 +322,29 @@ class FinanceRepository {
   }
 
   double totalAssetsByGroup(ReportGroup group) {
-    return displayTotalAssetsByGroup(group,
-        cutoffDate: currentMonthCutoffDate());
+    return displayTotalAssetsByGroup(group);
   }
 
   double displayTotalAssetsByGroup(ReportGroup group, {DateTime? cutoffDate}) {
+    final useCommittedCreditBalance = cutoffDate == null;
     final targetDate = cutoffDate ?? currentMonthCutoffDate();
     return _accounts.where((account) => account.reportGroup == group).fold(
           0.0,
-          (sum, account) => sum + accountBalanceAtBase(account.id, targetDate),
+          (sum, account) =>
+              sum +
+              (useCommittedCreditBalance &&
+                      account.accountType == AccountType.creditCard
+                  ? convertToBase(account.currentBalance, account.currency)
+                  : accountBalanceAtBase(account.id, targetDate)),
         );
   }
 
   double totalAssets({bool includeCredit = true}) {
-    return displayTotalAssets(
-      includeCredit: includeCredit,
-      cutoffDate: currentMonthCutoffDate(),
-    );
+    return displayTotalAssets(includeCredit: includeCredit);
   }
 
   double displayTotalAssets({bool includeCredit = true, DateTime? cutoffDate}) {
+    final useCommittedCreditBalance = cutoffDate == null;
     final targetDate = cutoffDate ?? currentMonthCutoffDate();
     return _accounts
         .where((account) =>
@@ -316,14 +352,15 @@ class FinanceRepository {
         .fold(
             0.0,
             (sum, account) =>
-                sum + accountBalanceAtBase(account.id, targetDate));
+                sum +
+                (useCommittedCreditBalance &&
+                        account.accountType == AccountType.creditCard
+                    ? convertToBase(account.currentBalance, account.currency)
+                    : accountBalanceAtBase(account.id, targetDate)));
   }
 
   double totalTargetAssets() {
-    return displayTotalAssets(
-      includeCredit: true,
-      cutoffDate: currentMonthCutoffDate(),
-    );
+    return displayTotalAssets(includeCredit: true);
   }
 
   List<AssetGoalHistoryPoint> totalAssetHistory({
@@ -480,6 +517,63 @@ class FinanceRepository {
   double accountBalanceAtBase(String accountId, DateTime date) {
     final account = _accounts.firstWhere((item) => item.id == accountId);
     return convertToBase(_accountBalanceAt(account, date), account.currency);
+  }
+
+  /// Credit already committed by actual/settled records, regardless of date.
+  /// Planned records never affect [Account.currentBalance] and are excluded.
+  double creditCardCommittedOutstandingBalance(String accountId) {
+    final account = _accounts.firstWhere((item) => item.id == accountId);
+    if (account.accountType != AccountType.creditCard) {
+      throw ArgumentError.value(accountId, 'accountId', 'Not a credit card');
+    }
+    return (-account.currentBalance).clamp(0, double.infinity).toDouble();
+  }
+
+  /// Remaining balance at a statement close, including carried balance,
+  /// actual charges, refunds and repayments posted on or before that day.
+  double creditCardStatementBalance(
+    String accountId,
+    CreditCardBillingPeriod period,
+  ) {
+    final account = _accounts.firstWhere((item) => item.id == accountId);
+    if (account.accountType != AccountType.creditCard) {
+      throw ArgumentError.value(accountId, 'accountId', 'Not a credit card');
+    }
+    final statementCutoff = DateTime(
+      period.statementDate.year,
+      period.statementDate.month,
+      period.statementDate.day,
+      23,
+      59,
+      59,
+      999,
+    );
+    return (-accountBalanceAt(accountId, statementCutoff))
+        .clamp(0, double.infinity)
+        .toDouble();
+  }
+
+  /// Returns an authoritative statement amount imported during reconciliation.
+  ///
+  /// The key is the statement close date (`yyyy-MM-dd`). Missing or malformed
+  /// metadata deliberately falls back to the transaction-derived calculation.
+  double? creditCardStatementAmountOverride(
+    String accountId,
+    DateTime statementDate,
+  ) {
+    final raw = _metaValues[_creditCardStatementAmountsKey(accountId)];
+    if (raw == null || raw.trim().isEmpty) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) return null;
+      final amount = decoded[_statementDateKey(statementDate)];
+      if (amount is num && amount.isFinite && amount >= 0) {
+        return amount.toDouble();
+      }
+    } on FormatException {
+      return null;
+    }
+    return null;
   }
 
   double transactionDeltaForAccount(
@@ -742,6 +836,7 @@ class FinanceRepository {
     DateTime? fromDateExclusive,
     DateTime? upToDate,
   }) {
+    final targetDate = upToDate ?? currentMonthCutoffDate();
     double contribution = 0;
     double withdrawal = 0;
 
@@ -753,7 +848,7 @@ class FinanceRepository {
           !transaction.transactionDate.isAfter(fromDateExclusive)) {
         continue;
       }
-      if (upToDate != null && transaction.transactionDate.isAfter(upToDate)) {
+      if (transaction.transactionDate.isAfter(targetDate)) {
         continue;
       }
 
@@ -830,17 +925,28 @@ class FinanceRepository {
     });
   }
 
-  List<CashFlowProjectionPoint> futureCashFlowProjection({int months = 6}) {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
+  List<CashFlowProjectionPoint> futureCashFlowProjection({
+    int months = 6,
+    DateTime? asOf,
+  }) {
+    final now = asOf ?? DateTime.now();
+    final todayCutoff = DateTime(
+      now.year,
+      now.month,
+      now.day,
+      23,
+      59,
+      59,
+      999,
+    );
     final startMonth = DateTime(now.year, now.month);
     var runningCash = displayTotalAssetsByGroup(
           ReportGroup.cash,
-          cutoffDate: currentMonthCutoffDate(),
+          cutoffDate: todayCutoff,
         ) +
         displayTotalAssetsByGroup(
           ReportGroup.credit,
-          cutoffDate: currentMonthCutoffDate(),
+          cutoffDate: todayCutoff,
         );
 
     return List.generate(months, (index) {
@@ -853,7 +959,7 @@ class FinanceRepository {
       for (final transaction in _transactions.where(
         (item) => _monthKey(item.transactionDate) == monthKey,
       )) {
-        if (transaction.transactionDate.isBefore(today) &&
+        if (!transaction.transactionDate.isAfter(todayCutoff) &&
             transaction.status != TransactionStatus.planned) {
           continue;
         }
@@ -889,20 +995,62 @@ class FinanceRepository {
     });
   }
 
+  /// Net cash/credit-account movement for transactions dated inside an exact
+  /// calendar window. Both planned and future-dated actual records are
+  /// included because this method is used by forward-looking UI projections.
+  double cashFlowNetBetween({
+    required DateTime startInclusive,
+    required DateTime endInclusive,
+  }) {
+    final start = DateTime(
+      startInclusive.year,
+      startInclusive.month,
+      startInclusive.day,
+    );
+    final end = DateTime(
+      endInclusive.year,
+      endInclusive.month,
+      endInclusive.day,
+      23,
+      59,
+      59,
+      999,
+    );
+    return _transactions.where((transaction) {
+      final date = transaction.transactionDate;
+      return !date.isBefore(start) && !date.isAfter(end);
+    }).fold<double>(
+      0,
+      (sum, transaction) => sum + _cashFlowDelta(transaction),
+    );
+  }
+
   List<CreditCardPaymentReminder> creditCardPaymentReminders({
     DateTime? asOf,
   }) {
-    final now = asOf ?? DateTime.now();
-    final dueDate = DateTime(now.year, now.month + 1, 25);
+    final reference = asOf ?? DateTime.now();
+    final cutoff = DateTime(
+      reference.year,
+      reference.month,
+      reference.day,
+      23,
+      59,
+      59,
+      999,
+    );
     return _accounts
-        .where((account) => account.reportGroup == ReportGroup.credit)
+        .where((account) => account.accountType == AccountType.creditCard)
         .map((account) {
-          final balance =
-              accountBalanceAt(account.id, currentMonthCutoffDate());
+          final summary = calculateCreditCardBilling(
+            account: account,
+            transactions: _transactions,
+            now: reference,
+            balanceAtCutoff: accountBalanceAt(account.id, cutoff),
+          );
           return CreditCardPaymentReminder(
             account: account,
-            amountDue: balance < 0 ? balance.abs() : 0,
-            dueDate: dueDate,
+            amountDue: summary.billedBalance,
+            dueDate: summary.dueDate,
           );
         })
         .where((item) => item.amountDue > 0)
@@ -1255,6 +1403,16 @@ class FinanceRepository {
     return refresh();
   }
 
+  Future<FinanceRepository> saveTransactionTemplate(
+    TransactionTemplate template,
+  ) async {
+    await _saveTransactionTemplates([
+      ...transactionTemplates.where((item) => item.id != template.id),
+      template,
+    ]);
+    return refresh();
+  }
+
   Future<FinanceRepository> addRecurringTransactionRule({
     required String name,
     required FinanceTransaction transaction,
@@ -1278,6 +1436,16 @@ class FinanceRepository {
     await _saveRecurringTransactionRules(
       recurringTransactionRules.where((item) => item.id != ruleId).toList(),
     );
+    return refresh();
+  }
+
+  Future<FinanceRepository> saveRecurringTransactionRule(
+    RecurringTransactionRule rule,
+  ) async {
+    await _saveRecurringTransactionRules([
+      ...recurringTransactionRules.where((item) => item.id != rule.id),
+      rule,
+    ]);
     return refresh();
   }
 
@@ -1314,12 +1482,11 @@ class FinanceRepository {
       if (!generatedKeys.contains(currentMonthKey) &&
           (activeRule.endDate == null ||
               !cursor.isAfter(activeRule.endDate!))) {
-        final isFuture = cursor.isAfter(DateTime(now.year, now.month, now.day));
         transactions.add(
           activeRule.toTransaction(
             id: '${buildId('txn')}_${generatedCount++}',
             date: cursor,
-            status: isFuture ? TransactionStatus.planned : activeRule.status,
+            status: activeRule.status,
           ),
         );
         generatedKeys.add(currentMonthKey);
@@ -1347,9 +1514,17 @@ class FinanceRepository {
 
   Future<Map<String, dynamic>> buildJsonSnapshotPayload() async {
     final metaValues = await database.fetchAllMetaValues();
+    final exportableMeta = Map<String, String>.from(metaValues)
+      ..remove('data_migration_version')
+      ..remove('transaction_templates_json')
+      ..remove('recurring_transaction_rules_json');
     return {
+      'format_version': 3,
+      'transaction_date_semantics': 'occurrence_date',
+      'app_version': '0.8.0',
+      'schema_version': 7,
       'exported_at': DateTime.now().toIso8601String(),
-      'meta': metaValues,
+      'meta': exportableMeta,
       'accounts': _accounts
           .map(
             (item) => {
@@ -1363,6 +1538,9 @@ class FinanceRepository {
               'institution': item.institution,
               'note': item.note,
               'is_active': item.isActive,
+              'credit_limit': item.creditLimit,
+              'statement_day': item.statementDay,
+              'payment_due_day': item.paymentDueDay,
             },
           )
           .toList(),
@@ -1373,6 +1551,10 @@ class FinanceRepository {
               'name': item.name,
               'type': item.type.name,
               'parent_id': item.parentId,
+              'icon_key': item.iconKey,
+              'color_value': item.colorValue,
+              'sort_order': item.sortOrder,
+              'is_archived': item.isArchived,
             },
           )
           .toList(),
@@ -1423,6 +1605,10 @@ class FinanceRepository {
             },
           )
           .toList(),
+      'transaction_templates':
+          transactionTemplates.map((item) => item.toJson()).toList(),
+      'recurring_transaction_rules':
+          recurringTransactionRules.map((item) => item.toJson()).toList(),
     };
   }
 
@@ -1654,9 +1840,18 @@ class FinanceRepository {
             institution: item['institution'] as String?,
             note: item['note'] as String?,
             isActive: item['is_active'] as bool? ?? true,
+            creditLimit: (item['credit_limit'] as num?)?.toDouble(),
+            statementDay: (item['statement_day'] as num?)?.toInt(),
+            paymentDueDay: (item['payment_due_day'] as num?)?.toInt(),
           ),
         )
         .toList();
+    final creditCardAccountIds = accountItems
+        .where((item) => item.accountType == AccountType.creditCard)
+        .map((item) => item.id)
+        .toSet();
+    final formatVersion = (payload['format_version'] as num?)?.toInt() ?? 1;
+    final usesLegacySettlementDates = formatVersion < 3;
     final categoryItems = (payload['categories'] as List<dynamic>? ?? const [])
         .map(
           (item) => Category(
@@ -1664,6 +1859,10 @@ class FinanceRepository {
             name: item['name'] as String,
             type: CategoryType.values.byName(item['type'] as String),
             parentId: item['parent_id'] as String?,
+            iconKey: item['icon_key'] as String?,
+            colorValue: (item['color_value'] as num?)?.toInt(),
+            sortOrder: (item['sort_order'] as num?)?.toInt() ?? 0,
+            isArchived: item['is_archived'] as bool? ?? false,
           ),
         )
         .toList();
@@ -1682,33 +1881,60 @@ class FinanceRepository {
         )
         .toList();
     final transactionItems =
-        (payload['transactions'] as List<dynamic>? ?? const [])
-            .map(
-              (item) => FinanceTransaction(
-                id: item['id'] as String,
-                type: TransactionType.values.byName(item['type'] as String),
-                accountId: item['account_id'] as String,
-                toAccountId: item['to_account_id'] as String?,
-                categoryId: item['category_id'] as String?,
-                amount: (item['amount'] as num).toDouble(),
-                currency: item['currency'] as String? ?? 'MYR',
-                toAmount: (item['to_amount'] as num?)?.toDouble(),
-                toCurrency: item['to_currency'] as String?,
-                recordDate: DateTime.parse(
-                  (item['record_date'] as String?) ??
-                      item['transaction_date'] as String,
-                ),
-                transactionDate:
-                    DateTime.parse(item['transaction_date'] as String),
-                status: item['status'] == null
-                    ? TransactionStatus.actual
-                    : TransactionStatus.values.byName(item['status'] as String),
-                recurringRuleId: item['recurring_rule_id'] as String?,
-                description: item['description'] as String?,
-                merchant: item['merchant'] as String?,
-              ),
-            )
-            .toList();
+        (payload['transactions'] as List<dynamic>? ?? const []).map((item) {
+      final recordDate = DateTime.parse(
+        (item['record_date'] as String?) ?? item['transaction_date'] as String,
+      );
+      final accountId = item['account_id'] as String;
+      final toAccountId = item['to_account_id'] as String?;
+      final involvesCreditCard = creditCardAccountIds.contains(accountId) ||
+          (toAccountId != null && creditCardAccountIds.contains(toAccountId));
+      return FinanceTransaction(
+        id: item['id'] as String,
+        type: TransactionType.values.byName(item['type'] as String),
+        accountId: accountId,
+        toAccountId: toAccountId,
+        categoryId: item['category_id'] as String?,
+        amount: (item['amount'] as num).toDouble(),
+        currency: item['currency'] as String? ?? 'MYR',
+        toAmount: (item['to_amount'] as num?)?.toDouble(),
+        toCurrency: item['to_currency'] as String?,
+        recordDate: recordDate,
+        transactionDate: usesLegacySettlementDates && involvesCreditCard
+            ? recordDate
+            : DateTime.parse(item['transaction_date'] as String),
+        status: item['status'] == null
+            ? TransactionStatus.actual
+            : TransactionStatus.values.byName(item['status'] as String),
+        recurringRuleId: item['recurring_rule_id'] as String?,
+        description: item['description'] as String?,
+        merchant: item['merchant'] as String?,
+      );
+    }).toList();
+    final legacyTemplatePayload = metaPayload['transaction_templates_json'];
+    final legacyRulePayload = metaPayload['recurring_transaction_rules_json'];
+    final templatePayload =
+        payload['transaction_templates'] as List<dynamic>? ??
+            (legacyTemplatePayload is String && legacyTemplatePayload.isNotEmpty
+                ? jsonDecode(legacyTemplatePayload) as List<dynamic>
+                : const []);
+    final recurringRulePayload =
+        payload['recurring_transaction_rules'] as List<dynamic>? ??
+            (legacyRulePayload is String && legacyRulePayload.isNotEmpty
+                ? jsonDecode(legacyRulePayload) as List<dynamic>
+                : const []);
+    final templateItems = templatePayload
+        .whereType<Map>()
+        .map((item) => preset.TransactionTemplate.fromJson(
+              Map<String, dynamic>.from(item),
+            ))
+        .toList();
+    final recurringRuleItems = recurringRulePayload
+        .whereType<Map>()
+        .map((item) => preset.RecurringTransactionRule.fromJson(
+              Map<String, dynamic>.from(item),
+            ))
+        .toList();
     final snapshotItems =
         (payload['asset_snapshots'] as List<dynamic>? ?? const [])
             .map(
@@ -1735,12 +1961,21 @@ class FinanceRepository {
           'Import file does not contain any finance data.');
     }
 
+    final backupDirectory = await getApplicationDocumentsDirectory();
+    final restorePoint = p.join(
+      backupDirectory.path,
+      'finance_compass_before_import_${DateTime.now().millisecondsSinceEpoch}.json',
+    );
+    await exportJsonSnapshot(restorePoint);
+
     await database.replaceAllWithSeedData(
       accountItems: accountItems,
       categoryItems: categoryItems,
       budgetItems: budgetItems,
       transactionItems: transactionItems,
       snapshotItems: snapshotItems,
+      templateItems: templateItems,
+      recurringRuleItems: recurringRuleItems,
       metaValues: {
         for (final entry in metaPayload.entries) entry.key: '${entry.value}',
       },
@@ -1822,6 +2057,12 @@ class FinanceRepository {
   Future<FinanceRepository> deleteExistingTransaction(
       String transactionId) async {
     await database.deleteTransaction(transactionId);
+    return _refreshWithGoalSync();
+  }
+
+  Future<FinanceRepository> deleteExistingTransactions(
+      Iterable<String> transactionIds) async {
+    await database.deleteTransactionsByIds(transactionIds);
     return _refreshWithGoalSync();
   }
 
@@ -1955,10 +2196,11 @@ class FinanceRepository {
   Future<void> _saveTransactionTemplates(
     List<TransactionTemplate> templates,
   ) async {
-    if (templates.isEmpty) {
-      await database.deleteMetaValue('transaction_templates_json');
-      return;
-    }
+    await database.replaceTransactionTemplates(
+      templates
+          .map((item) => preset.TransactionTemplate.fromJson(item.toJson()))
+          .toList(),
+    );
     await database.setMetaValue(
       'transaction_templates_json',
       jsonEncode(templates.map((item) => item.toJson()).toList()),
@@ -1968,10 +2210,12 @@ class FinanceRepository {
   Future<void> _saveRecurringTransactionRules(
     List<RecurringTransactionRule> rules,
   ) async {
-    if (rules.isEmpty) {
-      await database.deleteMetaValue('recurring_transaction_rules_json');
-      return;
-    }
+    await database.replaceRecurringTransactionRules(
+      rules
+          .map(
+              (item) => preset.RecurringTransactionRule.fromJson(item.toJson()))
+          .toList(),
+    );
     await database.setMetaValue(
       'recurring_transaction_rules_json',
       jsonEncode(rules.map((item) => item.toJson()).toList()),
@@ -2128,6 +2372,16 @@ class FinanceRepository {
 
   String _accountReconciliationKey(String accountId) {
     return 'account_reconciled_month_$accountId';
+  }
+
+  String _creditCardStatementAmountsKey(String accountId) {
+    return 'credit_card_statement_amounts_${accountId}_json';
+  }
+
+  String _statementDateKey(DateTime value) {
+    final month = value.month.toString().padLeft(2, '0');
+    final day = value.day.toString().padLeft(2, '0');
+    return '${value.year}-$month-$day';
   }
 
   String _traceTitleForTransaction(FinanceTransaction transaction) {
@@ -2308,6 +2562,7 @@ class TransactionTemplate {
     this.categoryId,
     this.description,
     this.merchant,
+    this.sortOrder = 0,
   });
 
   final String id;
@@ -2323,6 +2578,7 @@ class TransactionTemplate {
   final TransactionStatus status;
   final String? description;
   final String? merchant;
+  final int sortOrder;
 
   factory TransactionTemplate.fromTransaction({
     required String id,
@@ -2360,6 +2616,7 @@ class TransactionTemplate {
         'status': status.name,
         'description': description,
         'merchant': merchant,
+        'sort_order': sortOrder,
       };
 
   factory TransactionTemplate.fromJson(Map<String, dynamic> json) {
@@ -2382,6 +2639,7 @@ class TransactionTemplate {
           : TransactionStatus.values.byName(json['status'] as String),
       description: json['description'] as String?,
       merchant: json['merchant'] as String?,
+      sortOrder: (json['sort_order'] as num?)?.toInt() ?? 0,
     );
   }
 }
@@ -2446,9 +2704,7 @@ class RecurringTransactionRule {
       toCurrency: transaction.toCurrency,
       startDate: transaction.transactionDate,
       intervalMonths: intervalMonths,
-      status: transaction.status == TransactionStatus.planned
-          ? TransactionStatus.actual
-          : transaction.status,
+      status: transaction.status,
       description: transaction.description,
       merchant: transaction.merchant,
     );
@@ -2480,6 +2736,7 @@ class RecurringTransactionRule {
 
   RecurringTransactionRule copyWith({
     List<String>? generatedMonthKeys,
+    bool? isActive,
   }) {
     return RecurringTransactionRule(
       id: id,
@@ -2499,7 +2756,7 @@ class RecurringTransactionRule {
       merchant: merchant,
       endDate: endDate,
       generatedMonthKeys: generatedMonthKeys ?? this.generatedMonthKeys,
-      isActive: isActive,
+      isActive: isActive ?? this.isActive,
     );
   }
 

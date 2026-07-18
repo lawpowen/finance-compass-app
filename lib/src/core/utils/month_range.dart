@@ -1,7 +1,8 @@
 import 'month_key.dart';
 
 List<String> recentMonthKeys({required int count, DateTime? anchor}) {
-  final base = DateTime((anchor ?? DateTime.now()).year, (anchor ?? DateTime.now()).month);
+  final base = DateTime(
+      (anchor ?? DateTime.now()).year, (anchor ?? DateTime.now()).month);
   return List.generate(count, (index) {
     final date = DateTime(base.year, base.month - (count - index - 1));
     return monthKeyFromDate(date);

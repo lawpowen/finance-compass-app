@@ -36,10 +36,38 @@ class FinanceThemePalette {
   final Color expense;
 }
 
+@immutable
+class FinanceThemeTokens extends ThemeExtension<FinanceThemeTokens> {
+  const FinanceThemeTokens({required this.palette});
+
+  final FinanceThemePalette palette;
+
+  @override
+  FinanceThemeTokens copyWith({FinanceThemePalette? palette}) =>
+      FinanceThemeTokens(palette: palette ?? this.palette);
+
+  @override
+  FinanceThemeTokens lerp(
+    covariant ThemeExtension<FinanceThemeTokens>? other,
+    double t,
+  ) {
+    if (other is! FinanceThemeTokens) return this;
+    return t < .5 ? this : other;
+  }
+}
+
+FinanceThemePalette financePaletteOf(BuildContext context) =>
+    Theme.of(context).extension<FinanceThemeTokens>()?.palette ??
+    paletteForStyle(
+      Theme.of(context).brightness == Brightness.dark
+          ? AppThemeStyle.abyss
+          : AppThemeStyle.tide,
+    );
+
 FinanceThemePalette paletteForStyle(AppThemeStyle style) {
   // Shared semantic colors — muted and gentle, not high-contrast.
-  const incomeColor = Color(0xFF7BAE8A);   // soft sage green
-  const expenseColor = Color(0xFFD49A9A);  // soft dusty rose
+  const incomeColor = Color(0xFF7BAE8A); // soft sage green
+  const expenseColor = Color(0xFFD49A9A); // soft dusty rose
 
   switch (style) {
     case AppThemeStyle.tide:
@@ -180,20 +208,20 @@ FinanceThemePalette paletteForStyle(AppThemeStyle style) {
       );
     case AppThemeStyle.abyss:
       return const FinanceThemePalette(
-        seed: Color(0xFF388BFD),
-        background: Color(0xFF0D1117),
-        backgroundTop: Color(0xFF121820),
-        backgroundBottom: Color(0xFF0A0E14),
-        surface: Color(0xFF1C2128),
-        surfaceAlt: Color(0xFF161B22),
-        border: Color(0xFF30363D),
-        cardTint: Color(0xFF161B22),
-        cardBorderStrong: Color(0xFF30363D),
-        textPrimary: Color(0xFFE6EDF3),
-        textMuted: Color(0xFFA0A0A0),
-        gradient: [Color(0x4D388BFD), Color(0x1A388BFD)],
-        income: Color(0xFF7BC89A),
-        expense: Color(0xFFE8AAAA),
+        seed: Color(0xFF58D4C4),
+        background: Color(0xFF011720),
+        backgroundTop: Color(0xFF00131B),
+        backgroundBottom: Color(0xFF001B25),
+        surface: Color(0xFF06232C),
+        surfaceAlt: Color(0xFF0B2B34),
+        border: Color(0xFF284149),
+        cardTint: Color(0xFF06232C),
+        cardBorderStrong: Color(0xFF36545C),
+        textPrimary: Color(0xFFF1F3F2),
+        textMuted: Color(0xFFA4AAAD),
+        gradient: [Color(0x3058D4C4), Color(0x0658D4C4)],
+        income: Color(0xFF58D4C4),
+        expense: Color(0xFFFF7417),
       );
     case AppThemeStyle.graphite:
       return const FinanceThemePalette(
@@ -258,59 +286,70 @@ ThemeData buildFinanceTheme(AppThemeStyle style) {
     AppThemeStyle.darkGreen,
     AppThemeStyle.darkWood,
   }.contains(style);
-  final colorScheme = ColorScheme.fromSeed(
+  final generatedScheme = ColorScheme.fromSeed(
     seedColor: palette.seed,
     brightness: isDark ? Brightness.dark : Brightness.light,
+  );
+  final colorScheme = generatedScheme.copyWith(
+    primary: palette.seed,
+    onPrimary: Colors.white,
+    secondary: palette.income,
+    tertiary: palette.expense,
+    surface: palette.surface,
+    onSurface: palette.textPrimary,
+    outline: palette.border,
+    outlineVariant: palette.border.withValues(alpha: .6),
   );
 
   return ThemeData(
     useMaterial3: true,
     colorScheme: colorScheme,
+    extensions: [FinanceThemeTokens(palette: palette)],
     scaffoldBackgroundColor: palette.background,
     textTheme: TextTheme(
       headlineSmall: TextStyle(
-        fontSize: 31,
-        fontWeight: FontWeight.w800,
-        letterSpacing: -0.7,
+        fontSize: 24,
+        fontWeight: FontWeight.w700,
+        letterSpacing: -0.45,
         color: palette.textPrimary,
       ),
       titleLarge: TextStyle(
-        fontSize: 22,
-        fontWeight: FontWeight.w700,
-        letterSpacing: -0.3,
+        fontSize: 20,
+        fontWeight: FontWeight.w600,
+        letterSpacing: -0.15,
         color: palette.textPrimary,
       ),
       titleMedium: TextStyle(
-        fontSize: 17,
-        fontWeight: FontWeight.w700,
-        letterSpacing: -0.2,
+        fontSize: 16,
+        fontWeight: FontWeight.w600,
+        letterSpacing: 0,
         color: palette.textPrimary,
       ),
       titleSmall: TextStyle(
-        fontSize: 13,
-        fontWeight: FontWeight.w700,
+        fontSize: 14,
+        fontWeight: FontWeight.w600,
         color: palette.textPrimary,
       ),
       bodyMedium: TextStyle(
         fontSize: 14,
-        fontWeight: FontWeight.w500,
+        fontWeight: FontWeight.w400,
         height: 1.35,
         color: palette.textPrimary,
       ),
       bodySmall: TextStyle(
         fontSize: 12,
-        fontWeight: FontWeight.w500,
+        fontWeight: FontWeight.w400,
         height: 1.3,
         color: palette.textMuted,
       ),
       labelLarge: TextStyle(
-        fontSize: 12,
-        fontWeight: FontWeight.w700,
+        fontSize: 13,
+        fontWeight: FontWeight.w600,
         letterSpacing: 0.1,
         color: palette.textMuted,
       ),
       labelSmall: TextStyle(
-        fontSize: 10,
+        fontSize: 11,
         fontWeight: FontWeight.w600,
         color: palette.textMuted,
       ),
@@ -320,12 +359,37 @@ ThemeData buildFinanceTheme(AppThemeStyle style) {
       elevation: 0,
       margin: EdgeInsets.zero,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(18),
         side: BorderSide(
           color: palette.cardTint,
           width: 0.5,
         ),
       ),
+    ),
+    appBarTheme: AppBarTheme(
+      backgroundColor: Colors.transparent,
+      foregroundColor: palette.textPrimary,
+      elevation: 0,
+      surfaceTintColor: Colors.transparent,
+      centerTitle: false,
+      titleTextStyle: TextStyle(
+        color: palette.textPrimary,
+        fontSize: 21,
+        fontWeight: FontWeight.w700,
+      ),
+    ),
+    bottomSheetTheme: BottomSheetThemeData(
+      backgroundColor: palette.surface,
+      modalBackgroundColor: palette.surface,
+      surfaceTintColor: Colors.transparent,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+    ),
+    dialogTheme: DialogThemeData(
+      backgroundColor: palette.surface,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
     ),
     dividerTheme: DividerThemeData(
       color: palette.border.withValues(alpha: 0.5),
@@ -360,10 +424,10 @@ ThemeData buildFinanceTheme(AppThemeStyle style) {
     ),
     iconButtonTheme: IconButtonThemeData(
       style: IconButton.styleFrom(
-        backgroundColor: palette.surfaceAlt.withValues(alpha: 0.5),
+        backgroundColor: Colors.transparent,
         foregroundColor: palette.textPrimary,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        side: BorderSide(color: palette.border, width: 0.5),
+        shape: const CircleBorder(),
+        side: BorderSide.none,
       ),
     ),
     listTileTheme: ListTileThemeData(
@@ -373,14 +437,18 @@ ThemeData buildFinanceTheme(AppThemeStyle style) {
     ),
     navigationBarTheme: NavigationBarThemeData(
       backgroundColor: palette.surface.withValues(alpha: 0.92),
-      indicatorColor: palette.surfaceAlt,
-      height: 74,
+      indicatorColor: Colors.transparent,
+      height: 72,
       elevation: 0,
       shadowColor: Colors.transparent,
       surfaceTintColor: Colors.transparent,
-      labelTextStyle: WidgetStateProperty.all(
-        const TextStyle(fontWeight: FontWeight.w600),
-      ),
+      labelTextStyle: WidgetStateProperty.resolveWith((states) => TextStyle(
+            color: states.contains(WidgetState.selected)
+                ? palette.seed
+                : palette.textMuted,
+            fontSize: 11,
+            fontWeight: FontWeight.w500,
+          )),
       iconTheme: WidgetStateProperty.resolveWith((states) {
         final selected = states.contains(WidgetState.selected);
         return IconThemeData(

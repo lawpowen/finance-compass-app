@@ -68,29 +68,35 @@ class AccountService {
 
   /// 截至当月末的指定 [group] 资产（基准货币）。
   double totalAssetsByGroup(ReportGroup group) {
-    return displayTotalAssetsByGroup(group,
-        cutoffDate: currentMonthCutoffDate());
+    return displayTotalAssetsByGroup(group);
   }
 
   /// 截至 [cutoffDate]（默认当月末）的指定 [group] 资产（基准货币）。
   double displayTotalAssetsByGroup(ReportGroup group, {DateTime? cutoffDate}) {
+    final useCommittedCreditBalance = cutoffDate == null;
     final targetDate = cutoffDate ?? currentMonthCutoffDate();
     return _accounts.where((account) => account.reportGroup == group).fold(
           0.0,
-          (sum, account) => accountBalanceAtBase(account.id, targetDate),
+          (sum, account) =>
+              sum +
+              (useCommittedCreditBalance &&
+                      account.accountType == AccountType.creditCard
+                  ? currencyService.convertToBase(
+                      account.currentBalance,
+                      account.currency,
+                    )
+                  : accountBalanceAtBase(account.id, targetDate)),
         );
   }
 
   /// 截至当月末的总资产（基准货币）。
   double totalAssets({bool includeCredit = true}) {
-    return displayTotalAssets(
-      includeCredit: includeCredit,
-      cutoffDate: currentMonthCutoffDate(),
-    );
+    return displayTotalAssets(includeCredit: includeCredit);
   }
 
   /// 截至 [cutoffDate]（默认当月末）的总资产（基准货币）。
   double displayTotalAssets({bool includeCredit = true, DateTime? cutoffDate}) {
+    final useCommittedCreditBalance = cutoffDate == null;
     final targetDate = cutoffDate ?? currentMonthCutoffDate();
     return _accounts
         .where((account) =>
@@ -98,15 +104,19 @@ class AccountService {
         .fold(
             0.0,
             (sum, account) =>
-                sum + accountBalanceAtBase(account.id, targetDate));
+                sum +
+                (useCommittedCreditBalance &&
+                        account.accountType == AccountType.creditCard
+                    ? currencyService.convertToBase(
+                        account.currentBalance,
+                        account.currency,
+                      )
+                    : accountBalanceAtBase(account.id, targetDate)));
   }
 
   /// 目标资产（包含信用卡/负债后的净资产）。
   double totalTargetAssets() {
-    return displayTotalAssets(
-      includeCredit: true,
-      cutoffDate: currentMonthCutoffDate(),
-    );
+    return displayTotalAssets(includeCredit: true);
   }
 
   /// 截至 [date] 的总资产（基准货币）。
@@ -138,6 +148,16 @@ class AccountService {
     final account = _accounts.firstWhere((item) => item.id == accountId);
     return currencyService.convertToBase(
         _accountBalanceAt(account, date), account.currency);
+  }
+
+  /// Credit already committed by actual/settled records, regardless of date.
+  /// Planned records never affect [Account.currentBalance] and are excluded.
+  double creditCardCommittedOutstandingBalance(String accountId) {
+    final account = _accounts.firstWhere((item) => item.id == accountId);
+    if (account.accountType != AccountType.creditCard) {
+      throw ArgumentError.value(accountId, 'accountId', 'Not a credit card');
+    }
+    return (-account.currentBalance).clamp(0, double.infinity).toDouble();
   }
 
   /// 单笔交易对指定账户的余额影响（账户原币）。

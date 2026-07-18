@@ -5,12 +5,12 @@ import '../../core/providers/repository_provider.dart';
 import '../../core/settings/app_settings_controller.dart';
 import '../../core/theme/finance_theme.dart';
 import '../../core/utils/currency_formatter.dart';
-import '../accounts/accounts_screen.dart';
-import '../budgets/budgets_screen.dart';
-import '../dashboard/dashboard_screen.dart';
-import '../reports/reports_screen.dart';
-import '../settings/settings_screen.dart';
-import '../transactions/transactions_screen.dart';
+import '../accounts/accounts_v2_screen.dart';
+import '../budgets/budgets_v2_screen.dart';
+import '../dashboard/dashboard_v2_screen.dart';
+import '../reports/reports_v2_screen.dart';
+import '../settings/settings_v2_screen.dart';
+import '../transactions/transactions_v2_screen.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key, required this.settingsController});
@@ -46,12 +46,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         setActiveBaseCurrency(repository.baseCurrency);
         final palette = paletteForStyle(widget.settingsController.themeStyle);
         final screens = [
-          DashboardScreen(repository: repository),
-          AccountsScreen(repository: repository),
-          TransactionsScreen(repository: repository),
-          BudgetsScreen(repository: repository),
-          ReportsScreen(repository: repository),
-          SettingsScreen(
+          DashboardV2Screen(repository: repository),
+          AccountsV2Screen(repository: repository),
+          TransactionsV2Screen(repository: repository),
+          BudgetsV2Screen(repository: repository),
+          ReportsV2Screen(repository: repository),
+          SettingsV2Screen(
             repository: repository,
             settingsController: widget.settingsController,
           ),
@@ -71,40 +71,57 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ),
           child: Scaffold(
             backgroundColor: Colors.transparent,
-            body: SafeArea(child: screens[selectedIndex]),
-            bottomNavigationBar: NavigationBar(
-              selectedIndex: selectedIndex,
-              labelBehavior:
-                  NavigationDestinationLabelBehavior.onlyShowSelected,
-              destinations: const [
-                NavigationDestination(
-                  icon: Icon(Icons.dashboard_outlined),
-                  label: '总览',
+            body: SafeArea(
+              bottom: false,
+              child: IndexedStack(index: selectedIndex, children: screens),
+            ),
+            bottomNavigationBar: DecoratedBox(
+              decoration: BoxDecoration(
+                color: palette.background.withValues(alpha: .97),
+                border: Border(
+                  top: BorderSide(
+                    color: palette.border.withValues(alpha: .65),
+                    width: .7,
+                  ),
                 ),
-                NavigationDestination(
-                  icon: Icon(Icons.account_balance_wallet_outlined),
-                  label: '账户',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.receipt_long_outlined),
-                  label: '交易',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.savings_outlined),
-                  label: '预算',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.insights_outlined),
-                  label: '报表',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.tune_outlined),
-                  label: '设置',
-                ),
-              ],
-              onDestinationSelected: (index) {
-                setState(() => selectedIndex = index);
-              },
+              ),
+              child: NavigationBar(
+                selectedIndex: selectedIndex,
+                labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+                destinations: const [
+                  NavigationDestination(
+                    icon: Icon(Icons.account_balance_wallet_outlined),
+                    selectedIcon: Icon(Icons.account_balance_wallet_rounded),
+                    label: '总览',
+                  ),
+                  NavigationDestination(
+                    icon: Icon(Icons.wallet_outlined),
+                    selectedIcon: Icon(Icons.wallet_rounded),
+                    label: '账户',
+                  ),
+                  NavigationDestination(
+                    icon: Icon(Icons.swap_horiz_rounded),
+                    label: '交易',
+                  ),
+                  NavigationDestination(
+                    icon: Icon(Icons.pie_chart_outline_rounded),
+                    selectedIcon: Icon(Icons.pie_chart_rounded),
+                    label: '预算',
+                  ),
+                  NavigationDestination(
+                    icon: Icon(Icons.bar_chart_rounded),
+                    label: '报表',
+                  ),
+                  NavigationDestination(
+                    icon: Icon(Icons.settings_outlined),
+                    selectedIcon: Icon(Icons.settings_rounded),
+                    label: '设置',
+                  ),
+                ],
+                onDestinationSelected: (index) {
+                  setState(() => selectedIndex = index);
+                },
+              ),
             ),
           ),
         );

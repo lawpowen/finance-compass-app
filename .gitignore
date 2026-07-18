@@ -34,6 +34,11 @@ migrate_working_dir/
 /coverage/
 /outputs/
 
+# Local Codex inputs and generated delivery artifacts
+/.codex-remote-attachments/
+/analysis/
+/artifacts/
+
 # Symbolication related
 app.*.symbols
 

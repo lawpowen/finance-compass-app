@@ -44,7 +44,8 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
   }
 
   Future<void> _loadCollapsedAccounts() async {
-    final raw = await DatabaseProvider.instance.getMetaValue('collapsed_accounts');
+    final raw =
+        await DatabaseProvider.instance.getMetaValue('collapsed_accounts');
     if (raw != null && mounted) {
       try {
         final List<dynamic> decoded = jsonDecode(raw);
@@ -329,8 +330,9 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
                                       const SizedBox(height: 4),
                                       Text(
                                         '${_accountTypeLabel(account.accountType)} · $topCategory',
-                                        style:
-                                            Theme.of(context).textTheme.bodySmall,
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall,
                                       ),
                                       const SizedBox(height: 6),
                                       FinanceStatusChip(
@@ -366,8 +368,9 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
                                         displayedMarketValue,
                                         account.currency,
                                       ),
-                                      style:
-                                          Theme.of(context).textTheme.labelSmall,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .labelSmall,
                                     ),
                                     FinanceActionMenuButton<String>(
                                       tooltip: '账户操作',
@@ -395,7 +398,8 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
                                           destructive: true,
                                         ),
                                       ],
-                                      onSelected: (value) => _handleAccountAction(
+                                      onSelected: (value) =>
+                                          _handleAccountAction(
                                         context,
                                         value,
                                         account,
@@ -766,6 +770,8 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
         return '交易账户';
       case AccountType.fund:
         return '基金';
+      case AccountType.loan:
+        return '贷款';
       case AccountType.other:
         return '其他';
     }

@@ -282,8 +282,7 @@ class ExportService {
     final payload = jsonDecode(raw) as Map<String, dynamic>;
     return ImportPreview(
       accounts: (payload['accounts'] as List<dynamic>? ?? const []).length,
-      categories:
-          (payload['categories'] as List<dynamic>? ?? const []).length,
+      categories: (payload['categories'] as List<dynamic>? ?? const []).length,
       budgets: (payload['budgets'] as List<dynamic>? ?? const []).length,
       transactions:
           (payload['transactions'] as List<dynamic>? ?? const []).length,
@@ -338,24 +337,20 @@ class ExportService {
       'expense_categories_by_month': {
         for (final monthKey in includedMonths)
           monthKey: {
-            for (final entry in reportService
-                .categoryTotalsForMonths(
-                  type: CategoryType.expense,
-                  monthKeys: [monthKey],
-                )
-                .entries)
+            for (final entry in reportService.categoryTotalsForMonths(
+              type: CategoryType.expense,
+              monthKeys: [monthKey],
+            ).entries)
               _categoryName(entry.key): entry.value,
           },
       },
       'income_categories_by_month': {
         for (final monthKey in includedMonths)
           monthKey: {
-            for (final entry in reportService
-                .categoryTotalsForMonths(
-                  type: CategoryType.income,
-                  monthKeys: [monthKey],
-                )
-                .entries)
+            for (final entry in reportService.categoryTotalsForMonths(
+              type: CategoryType.income,
+              monthKeys: [monthKey],
+            ).entries)
               _categoryName(entry.key): entry.value,
           },
       },
@@ -458,8 +453,9 @@ class ExportService {
           .where((item) => item.categoryId == categoryId)
           .toList()
         ..sort((a, b) => compareMonthKeys(b.monthKey, a.monthKey));
-      final baseBudget =
-          budgetList.isEmpty ? 0.0 : budgetService.budgetAmountInBase(budgetList.first);
+      final baseBudget = budgetList.isEmpty
+          ? 0.0
+          : budgetService.budgetAmountInBase(budgetList.first);
       final monthValues = monthKeys
           .map((monthKey) =>
               budgetService.expenseTotalForCategory(categoryId, monthKey) +
@@ -490,14 +486,13 @@ class ExportService {
         .toList();
     final monthlyBudgets = monthKeys
         .map(
-          (monthKey) => budgetService
-              .activeBudgetsForMonth(monthKey)
-              .fold<double>(
-                0,
-                (sum, budget) =>
-                    sum +
-                    budgetService.effectiveBudgetForMonth(budget, monthKey),
-              ),
+          (monthKey) =>
+              budgetService.activeBudgetsForMonth(monthKey).fold<double>(
+                    0,
+                    (sum, budget) =>
+                        sum +
+                        budgetService.effectiveBudgetForMonth(budget, monthKey),
+                  ),
         )
         .toList();
 

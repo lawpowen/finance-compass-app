@@ -4,7 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/data/finance_repository.dart';
 import '../../core/models/category.dart';
 import '../../core/providers/mutations/category_mutations.dart';
-import '../shared/finance_action_menu_button.dart';
+import '../../core/providers/repository_provider.dart';
+import '../../core/theme/finance_colors.dart';
+import '../shared/compass_ui.dart';
 import 'category_form_dialog.dart';
 
 class CategoryManageScreen extends ConsumerStatefulWidget {
@@ -18,97 +20,189 @@ class CategoryManageScreen extends ConsumerStatefulWidget {
 }
 
 class _CategoryManageScreenState extends ConsumerState<CategoryManageScreen> {
-  String _searchQuery = '';
-  CategoryType? _selectedType;
+  final searchController = TextEditingController();
+  CategoryType? selectedType;
+
+  @override
+  void dispose() {
+    searchController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final repository = widget.repository;
-    final allCategories = [...repository.sortedCategories()]
-      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-
-    final filteredCategories = allCategories.where((category) {
-      final matchesSearch = _searchQuery.isEmpty ||
-          category.name.toLowerCase().contains(_searchQuery.toLowerCase());
-      final matchesType = _selectedType == null || category.type == _selectedType;
-      return matchesSearch && matchesType;
+    final repository =
+        ref.watch(financeRepositoryProvider).valueOrNull ?? widget.repository;
+    final real = repository.sortedCategories();
+    final query = searchController.text.trim().toLowerCase();
+    final categories = real.where((item) {
+      final typeMatch = selectedType == null || item.type == selectedType;
+      final queryMatch =
+          query.isEmpty || item.name.toLowerCase().contains(query);
+      return typeMatch && queryMatch;
     }).toList();
+    final expense =
+        categories.where((item) => item.type == CategoryType.expense).toList();
+    final income =
+        categories.where((item) => item.type == CategoryType.income).toList();
+    final investment = categories
+        .where((item) => item.type == CategoryType.investment)
+        .toList();
+    final transfer =
+        categories.where((item) => item.type == CategoryType.transfer).toList();
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('类别管理'),
-        actions: [
-          IconButton.filled(
-            onPressed: () => _showAddCategory(context),
-            icon: const Icon(Icons.add),
-            tooltip: '新增类别',
-          ),
-        ],
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          TextField(
-            decoration: const InputDecoration(
-              labelText: '搜索类别',
-              prefixIcon: Icon(Icons.search),
-              border: OutlineInputBorder(),
-              isDense: true,
-            ),
-            onChanged: (value) => setState(() => _searchQuery = value),
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
+      backgroundColor: Colors.transparent,
+      body: CompassBackground(
+        child: SafeArea(
+          child: Stack(
             children: [
-              FilterChip(
-                label: const Text('全部'),
-                selected: _selectedType == null,
-                onSelected: (_) => setState(() => _selectedType = null),
+              ListView(
+                padding: const EdgeInsets.fromLTRB(18, 12, 18, 94),
+                children: [
+                  Row(
+                    children: [
+                      const CompassBackButton(),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Text(
+                          '类别管理',
+                          style: Theme.of(context).textTheme.headlineSmall,
+                        ),
+                      ),
+                      const Icon(Icons.search_rounded, size: 28),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  _TypeTabBar(
+                    selected: selectedType,
+                    counts: {
+                      null: real.length,
+                      CategoryType.expense: real
+                          .where((item) => item.type == CategoryType.expense)
+                          .length,
+                      CategoryType.income: real
+                          .where((item) => item.type == CategoryType.income)
+                          .length,
+                      CategoryType.investment: real
+                          .where((item) => item.type == CategoryType.investment)
+                          .length,
+                      CategoryType.transfer: real
+                          .where((item) => item.type == CategoryType.transfer)
+                          .length,
+                    },
+                    onChanged: (value) => setState(() => selectedType = value),
+                  ),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: searchController,
+                    onChanged: (_) => setState(() {}),
+                    decoration: const InputDecoration(
+                      prefixIcon: Icon(Icons.search_rounded),
+                      hintText: '搜索类别',
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  if (selectedType == null ||
+                      selectedType == CategoryType.expense)
+                    _CategorySection(
+                      title: '支出',
+                      count: expense.length,
+                      color: FinanceColors.compassOrange,
+                      rows: expense
+                          .map(
+                            (item) => _CategoryPresentation.fromCategory(
+                              item,
+                              repository,
+                            ),
+                          )
+                          .toList(),
+                      onEdit: (row) {
+                        if (row.source != null) {
+                          _showEditCategory(context, row.source!);
+                        }
+                      },
+                    ),
+                  if (selectedType == null ||
+                      selectedType == CategoryType.income)
+                    _CategorySection(
+                      title: '收入',
+                      count: income.length,
+                      color: FinanceColors.compassTeal,
+                      rows: income
+                          .map(
+                            (item) => _CategoryPresentation.fromCategory(
+                              item,
+                              repository,
+                            ),
+                          )
+                          .toList(),
+                      onEdit: (row) {
+                        if (row.source != null) {
+                          _showEditCategory(context, row.source!);
+                        }
+                      },
+                    ),
+                  if (selectedType == null ||
+                      selectedType == CategoryType.investment)
+                    _CategorySection(
+                      title: '投资',
+                      count: investment.length,
+                      color: FinanceColors.compassTeal,
+                      rows: investment
+                          .map(
+                            (item) => _CategoryPresentation.fromCategory(
+                              item,
+                              repository,
+                            ),
+                          )
+                          .toList(),
+                      onEdit: (row) {
+                        if (row.source != null) {
+                          _showEditCategory(context, row.source!);
+                        }
+                      },
+                    ),
+                  if (selectedType == null ||
+                      selectedType == CategoryType.transfer)
+                    _CategorySection(
+                      title: '转账',
+                      count: transfer.length,
+                      color: FinanceColors.compassTeal,
+                      rows: transfer
+                          .map(
+                            (item) => _CategoryPresentation.fromCategory(
+                              item,
+                              repository,
+                            ),
+                          )
+                          .toList(),
+                      onEdit: (row) {
+                        if (row.source != null) {
+                          _showEditCategory(context, row.source!);
+                        }
+                      },
+                    ),
+                  const SizedBox(height: 18),
+                  Text('ⓘ  已关联交易或预算的类别不可删除',
+                      style: Theme.of(context).textTheme.bodySmall),
+                ],
               ),
-              ...CategoryType.values.map(
-                (type) => FilterChip(
-                  label: Text(_categoryTypeLabel(type)),
-                  selected: _selectedType == type,
-                  onSelected: (_) => setState(() => _selectedType = type),
+              Positioned(
+                right: 18,
+                bottom: 18,
+                child: CompassActionBubble(
+                  heroTag: 'category_add',
+                  icon: Icons.add_rounded,
+                  color: FinanceColors.compassOrange,
+                  onPressed: () => _showAddCategory(context),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 16),
-          if (filteredCategories.isEmpty)
-            const Center(
-              child: Padding(
-                padding: EdgeInsets.all(32),
-                child: Text('暂无类别'),
-              ),
-            )
-          else
-            ...filteredCategories.map(
-              (category) => _CategoryTile(
-                category: category,
-                repository: repository,
-                onEdit: () => _showEditCategory(context, category),
-                onDelete: () => _deleteCategory(context, category),
-              ),
-            ),
-        ],
+        ),
       ),
     );
-  }
-
-  String _categoryTypeLabel(CategoryType type) {
-    switch (type) {
-      case CategoryType.income:
-        return '收入';
-      case CategoryType.expense:
-        return '支出';
-      case CategoryType.investment:
-        return '投资';
-      case CategoryType.transfer:
-        return '转账';
-    }
   }
 
   Future<void> _showAddCategory(BuildContext context) async {
@@ -123,7 +217,10 @@ class _CategoryManageScreenState extends ConsumerState<CategoryManageScreen> {
     }
   }
 
-  Future<void> _showEditCategory(BuildContext context, Category category) async {
+  Future<void> _showEditCategory(
+    BuildContext context,
+    Category category,
+  ) async {
     final result = await showDialog<CategoryFormResult>(
       context: context,
       builder: (_) => CategoryFormDialog(initialCategory: category),
@@ -134,126 +231,190 @@ class _CategoryManageScreenState extends ConsumerState<CategoryManageScreen> {
           .updateCategory(result.category);
     }
   }
+}
 
-  Future<void> _deleteCategory(BuildContext context, Category category) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('删除类别'),
-        content: Text('确定删除"${category.name}"吗？'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('取消'),
+class _TypeTabBar extends StatelessWidget {
+  const _TypeTabBar({
+    required this.selected,
+    required this.counts,
+    required this.onChanged,
+  });
+  final CategoryType? selected;
+  final Map<CategoryType?, int> counts;
+  final ValueChanged<CategoryType?> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    const values = <CategoryType?>[
+      null,
+      CategoryType.expense,
+      CategoryType.income,
+      CategoryType.investment,
+      CategoryType.transfer,
+    ];
+    const labels = ['全部', '支出', '收入', '投资', '转账'];
+    return Row(
+      children: List.generate(values.length, (index) {
+        final active = selected == values[index];
+        return Expanded(
+          child: InkWell(
+            onTap: () => onChanged(values[index]),
+            child: Container(
+              padding: const EdgeInsets.only(bottom: 10),
+              decoration: BoxDecoration(
+                border: Border(
+                  bottom: BorderSide(
+                    width: 2,
+                    color:
+                        active ? FinanceColors.compassTeal : Colors.transparent,
+                  ),
+                ),
+              ),
+              child: Text(
+                '${labels[index]} ${counts[values[index]] ?? 0}',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: active
+                      ? FinanceColors.compassTeal
+                      : FinanceColors.compassMuted,
+                ),
+              ),
+            ),
           ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('删除'),
-          ),
-        ],
-      ),
-    );
-
-    if (!context.mounted || confirmed != true) return;
-
-    final deleted = await ref
-        .read(categoryMutationsProvider.notifier)
-        .deleteCategory(category.id);
-
-    if (!context.mounted) return;
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          deleted ? '类别已删除' : '该类别已关联预算或交易，不能删除',
-        ),
-      ),
+        );
+      }),
     );
   }
 }
 
-class _CategoryTile extends StatelessWidget {
-  const _CategoryTile({
-    required this.category,
-    required this.repository,
+class _CategorySection extends StatelessWidget {
+  const _CategorySection({
+    required this.title,
+    required this.count,
+    required this.color,
+    required this.rows,
     required this.onEdit,
-    required this.onDelete,
   });
-
-  final Category category;
-  final FinanceRepository repository;
-  final VoidCallback onEdit;
-  final VoidCallback onDelete;
+  final String title;
+  final int count;
+  final Color color;
+  final List<_CategoryPresentation> rows;
+  final ValueChanged<_CategoryPresentation> onEdit;
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        color: Theme.of(context).colorScheme.surface,
-        border: Border.all(
-          color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.4),
-          width: 0.8,
-        ),
-      ),
-      child: Row(
+  Widget build(BuildContext context) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  category.name,
-                  style: Theme.of(context).textTheme.titleSmall,
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  _categoryTypeLabel(category.type),
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ],
+          Row(
+            children: [
+              Text(
+                title,
+                style: Theme.of(context)
+                    .textTheme
+                    .titleLarge
+                    ?.copyWith(color: color),
+              ),
+              const Spacer(),
+              Text('$count 个', style: TextStyle(color: color)),
+              const Icon(Icons.keyboard_arrow_up_rounded),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ...rows.map(
+            (row) => _CategoryRow(row: row, onTap: () => onEdit(row)),
+          ),
+          const SizedBox(height: 20),
+        ],
+      );
+}
+
+class _CategoryRow extends StatelessWidget {
+  const _CategoryRow({required this.row, required this.onTap});
+  final _CategoryPresentation row;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          decoration: const BoxDecoration(
+            border: Border(
+              bottom: BorderSide(color: FinanceColors.compassBorder),
             ),
           ),
-          FinanceActionMenuButton<String>(
-            tooltip: '类别操作',
-            items: const [
-              FinanceActionMenuItem(
-                value: 'edit',
-                label: '编辑',
-                icon: Icons.edit_outlined,
+          child: Row(
+            children: [
+              CompassIconBadge(icon: row.icon, color: row.color, size: 38),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(row.name,
+                        style: Theme.of(context).textTheme.titleMedium),
+                    if (row.subtitle.isNotEmpty)
+                      Text(row.subtitle,
+                          style: Theme.of(context).textTheme.bodySmall),
+                  ],
+                ),
               ),
-              FinanceActionMenuItem(
-                value: 'delete',
-                label: '删除',
-                icon: Icons.delete_outline,
-                destructive: true,
-              ),
+              const Icon(Icons.chevron_right_rounded),
             ],
-            onSelected: (value) {
-              if (value == 'edit') {
-                onEdit();
-              } else if (value == 'delete') {
-                onDelete();
-              }
-            },
           ),
-        ],
-      ),
+        ),
+      );
+}
+
+class _CategoryPresentation {
+  const _CategoryPresentation({
+    required this.name,
+    required this.subtitle,
+    required this.icon,
+    required this.color,
+    this.source,
+  });
+  final String name;
+  final String subtitle;
+  final IconData icon;
+  final Color color;
+  final Category? source;
+
+  factory _CategoryPresentation.fromCategory(
+    Category category,
+    FinanceRepository repository,
+  ) {
+    final count = repository.transactions
+        .where((item) => item.categoryId == category.id)
+        .length;
+    return _CategoryPresentation(
+      name: _translatedName(category.name),
+      subtitle: '$count 笔交易',
+      icon: _categoryIcon(category.iconKey, category.name),
+      color: Color(category.colorValue ?? FinanceColors.compassTeal.toARGB32()),
+      source: category,
     );
   }
+}
 
-  String _categoryTypeLabel(CategoryType type) {
-    switch (type) {
-      case CategoryType.income:
-        return '收入';
-      case CategoryType.expense:
-        return '支出';
-      case CategoryType.investment:
-        return '投资';
-      case CategoryType.transfer:
-        return '转账';
-    }
+String _translatedName(String name) {
+  final lower = name.toLowerCase();
+  if (lower.contains('food')) return '餐饮';
+  if (lower.contains('transport')) return '交通';
+  if (lower.contains('shopping')) return '购物';
+  if (lower.contains('housing')) return '住房';
+  if (lower.contains('salary')) return '工资';
+  return name;
+}
+
+IconData _categoryIcon(String? key, String name) {
+  final value = '${key ?? ''} $name'.toLowerCase();
+  if (value.contains('restaurant') || value.contains('food')) {
+    return Icons.restaurant_outlined;
   }
+  if (value.contains('transport')) return Icons.directions_bus_outlined;
+  if (value.contains('shopping')) return Icons.shopping_bag_outlined;
+  if (value.contains('salary')) return Icons.badge_outlined;
+  if (value.contains('home')) return Icons.home_outlined;
+  return Icons.sell_outlined;
 }

@@ -1,5 +1,4 @@
-import '../database/app_database.dart'
-    hide Budget, Category;
+import '../database/app_database.dart' hide Budget, Category;
 import '../models/budget.dart';
 import '../models/category.dart';
 import '../models/transaction.dart';

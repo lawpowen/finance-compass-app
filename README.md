@@ -1,5 +1,7 @@
 # Finance Compass
 
+当前版本：`0.8.0+23`。工程文档索引见 [docs/README.md](docs/README.md)。
+
 完整中文需求与设计文档请看：[finance-app-design.md](finance-app-design.md)。
 
 `Finance Compass` is a Flutter-based personal finance app focused on:
@@ -21,6 +23,8 @@ This project is already beyond a simple MVP skeleton. It includes local persiste
 - Cross-currency transfers with separate source and target amounts.
 - Reusable budgets with positive and negative rollover.
 - Planned versus actual transaction states.
+- Transaction editing with confirmed deletion and finite signed amounts, including zero and negative values.
+- Credit-card statement history preserves each cycle's original bill amount after repayment, while remaining debt is calculated separately. Day-one statement cuts are labeled as the month that just ended, matching PayLater bill-month conventions.
 - Recurring transaction rules and compact quick templates.
 - Account cutoff-month calculations that exclude future transactions.
 - Investment and retirement snapshots with contribution, withdrawal, cost, cash balance, and PnL views.
@@ -97,7 +101,8 @@ Key behavior:
 - transactions can be reused directly or saved as templates
 - templates prefill amount, account, category, type, description, merchant, and currency
 - planned transactions are shown in planning views but do not change account balances
-- recurring rules can generate future planned transactions for 1-12 selected months
+- the transaction page defaults to actual records; switching to `包含预计` keeps actual records visible and adds planned records to the list, income, expense, and net cash-flow totals
+- recurring rules generate 1-12 selected months while preserving the rule's actual or planned status for every month
 
 ### Budgets
 
@@ -274,6 +279,8 @@ Business meaning:
 - `transfer`: moves funds between two accounts; `amount/currency` is the source account amount and `toAmount/toCurrency` is the target account amount
 - `adjustment`: contribution or manual funding adjustment, mainly for investment and retirement accounts
 - `status = planned`: used for expected future cash flow and budget planning; it does not affect account balances
+- Credit-card committed debt and limit usage include every actual/settled record, including future-dated installments that already lock the limit, while excluding every planned record. Billing periods and due reminders still stop at today.
+- Credit-card details provide a statement-month picker derived from the account statement day. Selecting a historical month switches the amount, timeline and transaction list to that exact billing cycle.
 - `status = actual`: counted as real bookkeeping and affects account balances
 
 ### `asset_snapshots`
@@ -345,7 +352,9 @@ Stores app-level metadata such as:
 ### Credit Card Reminders
 
 - Credit accounts with negative balances are surfaced as payment reminders.
-- The first version uses a default reminder date of the 25th of the next month.
+- Credit-card accounts support a credit limit, statement day, and payment due day.
+- Legacy cards without those fields keep an explicitly estimated reminder on the 25th of the next month until setup is completed.
+- Card purchases remain ordinary transactions; billing dates are not stored per transaction.
 
 ### Investment and Retirement Calculations
 
@@ -443,6 +452,17 @@ Build Android APK:
 ```powershell
 C:\Users\dell\.puro\envs\stable\flutter\bin\flutter.bat build apk
 ```
+
+Build the side-by-side installable debug APK for a physical ARM64 device:
+
+```powershell
+C:\Users\dell\.puro\envs\stable\flutter\bin\flutter.bat build apk --debug --split-per-abi
+```
+
+The debug variant is labeled `Finance Compass Debug` and uses the independent
+application ID `com.financecompass.app.debug`. It can be installed beside the
+release application (`com.financecompass.app`) and has a separate Android data
+directory.
 
 Build Android release APK and copy it to an app-named file:
 

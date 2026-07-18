@@ -42,7 +42,8 @@ class SimpleLineChart extends StatelessWidget {
       return const SizedBox(height: 180, child: Center(child: Text('暂无数据')));
     }
 
-    final maxValue = points.fold<double>(0, (max, point) => math.max(max, point.value));
+    final maxValue =
+        points.fold<double>(0, (max, point) => math.max(max, point.value));
 
     return SizedBox(
       height: 240,
@@ -108,7 +109,8 @@ class SimpleBarTable extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final maxValue = points.fold<double>(0, (max, point) => math.max(max, point.value));
+    final maxValue =
+        points.fold<double>(0, (max, point) => math.max(max, point.value));
     return Column(
       children: points.map((point) {
         final ratio = maxValue == 0 ? 0.0 : point.value / maxValue;
@@ -132,7 +134,8 @@ class SimpleBarTable extends StatelessWidget {
               SizedBox(
                 width: 112,
                 child: Text(
-                  amountBuilder?.call(point.value) ?? point.value.toStringAsFixed(0),
+                  amountBuilder?.call(point.value) ??
+                      point.value.toStringAsFixed(0),
                   textAlign: TextAlign.right,
                 ),
               ),
@@ -263,14 +266,17 @@ class MultiLineChart extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final nonEmptySeries = series.where((item) => item.points.isNotEmpty).toList();
+    final nonEmptySeries =
+        series.where((item) => item.points.isNotEmpty).toList();
     if (nonEmptySeries.isEmpty) {
       return const SizedBox(height: 220, child: Center(child: Text('暂无数据')));
     }
 
     final allPoints = nonEmptySeries.expand((item) => item.points);
-    final maxValue = allPoints.fold<double>(0, (max, point) => math.max(max, point.value));
-    final labels = nonEmptySeries.first.points.map((point) => point.label).toList();
+    final maxValue =
+        allPoints.fold<double>(0, (max, point) => math.max(max, point.value));
+    final labels =
+        nonEmptySeries.first.points.map((point) => point.label).toList();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -313,7 +319,8 @@ class MultiLineChart extends StatelessWidget {
                           final ratio = (3 - index) / 3;
                           final value = maxValue * ratio;
                           return Text(
-                            amountBuilder?.call(value) ?? value.toStringAsFixed(0),
+                            amountBuilder?.call(value) ??
+                                value.toStringAsFixed(0),
                             style: Theme.of(context).textTheme.bodySmall,
                           );
                         }),
@@ -378,7 +385,8 @@ class _LineChartPainter extends CustomPainter {
         end: Alignment.bottomCenter,
       ).createShader(Rect.fromLTWH(0, 0, size.width, size.height));
     final dotPaint = Paint()..color = const Color(0xFF0F766E);
-    final maxValue = points.fold<double>(0, (max, point) => math.max(max, point.value));
+    final maxValue =
+        points.fold<double>(0, (max, point) => math.max(max, point.value));
     final safeMax = maxValue == 0 ? 1.0 : maxValue;
     const left = 8.0;
     final width = size.width - left - 12;
@@ -388,13 +396,15 @@ class _LineChartPainter extends CustomPainter {
       final y = height - ((height - 12) * (i / 4));
       canvas.drawLine(Offset(left, y), Offset(size.width, y), gridPaint);
     }
-    canvas.drawLine(Offset(left, height), Offset(size.width, height), axisPaint);
+    canvas.drawLine(
+        Offset(left, height), Offset(size.width, height), axisPaint);
     canvas.drawLine(const Offset(left, 0), Offset(left, height), axisPaint);
 
     final path = Path();
     final fillPath = Path();
     for (var i = 0; i < points.length; i++) {
-      final dx = left + (width * (points.length == 1 ? 0 : i / (points.length - 1)));
+      final dx =
+          left + (width * (points.length == 1 ? 0 : i / (points.length - 1)));
       final dy = height - ((points[i].value / safeMax) * (height - 12));
       if (i == 0) {
         path.moveTo(dx, dy);
@@ -469,8 +479,11 @@ class _MiniSparklinePainter extends CustomPainter {
       ..style = PaintingStyle.stroke;
 
     for (var i = 0; i < points.length; i++) {
-      final dx = size.width * (points.length == 1 ? 0 : i / (points.length - 1));
-      final dy = size.height - (((points[i] - safeMin) / range) * (size.height - 4)) - 2;
+      final dx =
+          size.width * (points.length == 1 ? 0 : i / (points.length - 1));
+      final dy = size.height -
+          (((points[i] - safeMin) / range) * (size.height - 4)) -
+          2;
       if (i == 0) {
         path.moveTo(dx, dy);
       } else {
@@ -510,7 +523,8 @@ class _MultiLineChartPainter extends CustomPainter {
       final y = height - ((height - 12) * (i / 4));
       canvas.drawLine(Offset(left, y), Offset(size.width, y), gridPaint);
     }
-    canvas.drawLine(Offset(left, height), Offset(size.width, height), axisPaint);
+    canvas.drawLine(
+        Offset(left, height), Offset(size.width, height), axisPaint);
     canvas.drawLine(const Offset(left, 0), Offset(left, height), axisPaint);
 
     for (final item in series) {
@@ -522,7 +536,9 @@ class _MultiLineChartPainter extends CustomPainter {
       final path = Path();
 
       for (var i = 0; i < item.points.length; i++) {
-        final dx = left + (width * (item.points.length == 1 ? 0 : i / (item.points.length - 1)));
+        final dx = left +
+            (width *
+                (item.points.length == 1 ? 0 : i / (item.points.length - 1)));
         final dy = height - ((item.points[i].value / maxValue) * (height - 12));
         if (i == 0) {
           path.moveTo(dx, dy);

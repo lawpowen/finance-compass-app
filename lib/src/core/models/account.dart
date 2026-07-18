@@ -9,6 +9,7 @@ enum AccountType {
   crypto,
   trading,
   fund,
+  loan,
   other,
 }
 
@@ -31,6 +32,9 @@ class Account {
     this.note,
     this.initialBalance = 0,
     this.isActive = true,
+    this.creditLimit,
+    this.statementDay,
+    this.paymentDueDay,
   });
 
   final String id;
@@ -43,4 +47,11 @@ class Account {
   final String? institution;
   final String? note;
   final bool isActive;
+  final double? creditLimit;
+  final int? statementDay;
+  final int? paymentDueDay;
+
+  bool get hasCompleteCreditCardProfile =>
+      accountType != AccountType.creditCard ||
+      (creditLimit != null && statementDay != null && paymentDueDay != null);
 }
