@@ -19,6 +19,7 @@
 - 交易编辑删除与有符号金额回归：编辑页滚动至删除入口后分别验证取消与确认；确认结果只包含待删除 ID。金额用例覆盖 `0.00` 与负数保存，并在 Repository 层验证零金额无余额影响、负支出/负转账的代数方向及删除后的余额完全恢复。
 - 交易菜单与周期生成回归：验证整行点击仍进入编辑，三点菜单五项均可见；复用新增使用新交易流程，保存模板和保存周期真实写入 Repository，菜单删除确认后实时刷新。新增交易选择三个月时验证生成三笔且全部继承所选状态；实际规则的未来月份全部为实际，预计规则的所有月份全部为预计。
 - 集成测试：AI 网关在本地服务不可用时跳过，不影响离线测试通过。
+- 外部 AI 提示词回归：验证提示词同时声明消费发生、现金收付、信用负债，明确信用卡还款不是消费、投资市值调整不是收入、未来 `actual` 是未来已确定、`planned` 单列预计，并兼容完整备份 JSON。
 
 ## 完成门禁
 
@@ -69,6 +70,8 @@ flutter build windows --debug
 2026-07-18 交易“包含预计”口径回归：新增 390×844 Widget 测试，默认只显示 MYR 100 已发生支出，切换后保留已发生并加入 MYR 40 预计，顶部支出同步变为 MYR 140；原未来月份导航与编辑回归继续通过。全量测试 62 项通过、2 项按设计跳过；`flutter analyze --no-fatal-infos --no-fatal-warnings` 无编译错误，保留 104 项既有 lint。ARM64 Debug APK 核对包名 `com.financecompass.app.debug`、应用名 `Finance Compass Debug`、版本名 `0.8.0-debug`、versionCode `2023` 和架构 `arm64-v8a`。完整 v3 JSON 从 SQLite 在线备份导出并验证，APK 与 JSON 的 Drive 本地同步副本 SHA-256 均与工程产物一致。
 
 2026-07-18 交易三口径与 Product Design 方案 2 回归：新增 390×844 Widget 测试，以现金支出 MYR 100、信用消费 MYR 300、还款 MYR 200、预计现金 MYR 40 和预计信用 MYR 50 分别验证消费发生 -MYR 400、现金收付 -MYR 300、当前已承诺 MYR 100，以及包含预计后 MYR 150；原“包含预计”和未来月份编辑回归继续通过。全量测试 63 项通过、2 项按设计跳过；静态分析无编译错误，保留 104 项既有 lint。390×844 实现截图与选定方案 2 合成同屏，筛选行经一次迭代后通过视觉门禁。SQLite 在线备份完整性为 `ok`、外键错误为 0；v3 JSON 验证为 16 个账户、29 个分类、13 个预算、672 笔交易、34 个快照、7 个模板、6 条周期规则。ARM64 Debug APK 核对包名 `com.financecompass.app.debug`、应用名 `Finance Compass Debug`、版本名 `0.8.0-debug`、versionCode `2024` 和架构 `arm64-v8a`；APK 与 JSON 的 Drive 本地同步副本 SHA-256 均与工程产物一致。
+
+2026-07-19 外部 AI 提示词 v3 回归：新增 2 项提示词测试，验证消费发生、现金收付、信用负债三口径，信用卡还款与消费分离，投资调整不算收入，未来 `actual`/`settled` 标记为未来已确定、`planned` 单列预计，并兼容完整备份 JSON。全量测试 65 项通过、2 项按设计跳过；静态分析无编译错误，保留 104 项既有 lint。SQLite 在线备份完整性为 `ok`、外键错误为 0；v3 JSON 验证 16 个账户、29 个分类、13 个预算、672 笔交易、34 个快照、7 个模板和 6 条周期规则。ARM64 Debug APK 核对包名 `com.financecompass.app.debug`、标签 `Finance Compass Debug`、版本名 `0.8.0-debug`、versionCode `2025` 和 `arm64-v8a`；APK 与 JSON 的 Drive 副本 SHA-256 均与工程产物一致。
 
 ## UI 质量
 

@@ -15,6 +15,8 @@ Android/桌面端通过系统文件选择器读取 `.json`，通过系统保存�
 - 生成不包含完整原始交易的 AI 摘要 JSON。
 - 生成外部分析文本并通过系统分享面板交给 ChatGPT 或其他 AI App。
 
+外部 AI 分享文本由 `AiAnalysisService.buildExternalAnalysisText` 生成，只包含分析提示词和“请上传 JSON”的说明，不自动附带文件。提示词版本 `finance_compass_three_lenses_v3` 支持带 `analysis_contract` 的分析摘要和带 `format_version/accounts/transactions` 的完整备份；接收方必须以 `generated_at` 或 `exported_at` 为截止点，按 `transaction_date` 归属月份，并分别计算消费发生、现金收付和信用负债。
+
 可选 `ai_gateway_url` 由高级设置保存。应用不会把网关描述为隐私诊断功能。
 
 ## 外部身份

@@ -19,6 +19,8 @@
 
 ## Google Play 与身份计划
 
-Android 包版本为 `0.8.0+24`。正式版应用 ID 为 `com.financecompass.app`；内部测试 Debug 版使用 `com.financecompass.app.debug` 和独立数据目录，避免覆盖正式版。Debug APK 使用开发签名，只用于设备测试，不得提交 Google Play。Google 登录、隐私政策、数据安全表和正式签名属于上架前工作，当前尚未实现或配置。未来认证不得改变本地优先默认值。
+Android 包版本为 `0.8.0+25`。正式版应用 ID 为 `com.financecompass.app`；内部测试 Debug 版使用 `com.financecompass.app.debug` 和独立数据目录，避免覆盖正式版。Debug APK 使用开发签名，只用于设备测试，不得提交 Google Play。Google 登录、隐私政策、数据安全表和正式签名属于上架前工作，当前尚未实现或配置。未来认证不得改变本地优先默认值。
 
 每次完成任务后的默认交付作业见[测试版发布与数据恢复作业](RELEASE_WORKFLOW.md)：导出可恢复的完整 v3 JSON、构建独立 Debug APK，并优先把这两项写入本机 `G:\我的云端硬盘\Finance Compass APK` 同步目录；EXE、临时 SQLite 和银行来源资料不在默认上传范围。
+
+外部 AI 分析只在用户主动按下分享按钮后发送提示词；应用不会自动附加完整备份。提示词兼容分析摘要 JSON 与完整备份 JSON，并要求接收方严格区分已发生、未来已确定和预计记录。完整 JSON 仍可能包含账户名称、商户、备注和金额，用户必须在外部 AI App 中自行决定是否上传；提示词优化不改变这一敏感数据边界。
