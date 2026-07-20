@@ -159,6 +159,10 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.textContaining('现金账户 B'));
     await tester.pumpAndSettle();
+    final receivingField =
+        tester.widget<TextField>(find.byType(TextField).at(1));
+    expect(receivingField.controller!.text, '250.00');
+    expect(receivingField.readOnly, isTrue);
     await tester.ensureVisible(find.text('保存交易'));
     await tester.tap(find.text('保存交易'));
     await tester.pumpAndSettle();
@@ -175,6 +179,80 @@ void main() {
     repository = await repository.addTransaction(transfer);
     expect(_balance(repository, 'source'), 750);
     expect(_balance(repository, 'target'), 350);
+  });
+
+  testWidgets('new composer converts and allows overriding target currency',
+      (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final database = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(database.close);
+    var repository = await _repositoryWithCashAccounts(
+      database,
+      targetCurrency: 'TWD',
+    );
+    TransactionFormResult? result;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFinanceTheme(AppThemeStyle.abyss)
+            .copyWith(splashFactory: NoSplash.splashFactory),
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: FilledButton(
+              onPressed: () async {
+                result =
+                    await Navigator.of(context).push<TransactionFormResult>(
+                  MaterialPageRoute(
+                    builder: (_) => TransactionComposerPage(
+                      repository: repository,
+                    ),
+                  ),
+                );
+              },
+              child: const Text('新增跨币种转账'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('新增跨币种转账'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('转账').first);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, '250');
+    await tester.ensureVisible(find.text('转入账户'));
+    await tester.tap(find.text('转入账户'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining('现金账户 B'));
+    await tester.pumpAndSettle();
+
+    final receivingField =
+        tester.widget<TextField>(find.byType(TextField).at(1));
+    expect(receivingField.controller!.text, '1785.71');
+    expect(receivingField.readOnly, isFalse);
+    expect(find.textContaining('1 MYR = 7.1429 TWD'), findsOneWidget);
+    await tester.enterText(find.byType(TextField).at(1), '1800');
+    tester.testTextInput.hide();
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('保存交易'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('保存交易'));
+    await tester.pumpAndSettle();
+
+    final transfer = result!.transactions.single;
+    expect(transfer.amount, 250);
+    expect(transfer.currency, 'MYR');
+    expect(transfer.toAmount, 1800);
+    expect(transfer.toCurrency, 'TWD');
+
+    repository = await repository.addTransaction(transfer);
+    expect(_balance(repository, 'source'), 750);
+    expect(_balance(repository, 'target'), 1900);
   });
 
   testWidgets('account overview refreshes both sides of a live cash transfer',
@@ -242,6 +320,7 @@ Future<FinanceRepository> _repositoryWithCashAccounts(
   AppDatabase database, {
   String sourceName = '现金账户 A',
   String targetName = '现金账户 B',
+  String targetCurrency = 'MYR',
 }) async {
   var repository = await FinanceRepository.load(database);
   for (final account in [
@@ -258,7 +337,7 @@ Future<FinanceRepository> _repositoryWithCashAccounts(
       name: targetName,
       accountType: AccountType.cash,
       reportGroup: ReportGroup.cash,
-      currency: 'MYR',
+      currency: targetCurrency,
       currentBalance: 100,
     ),
   ]) {

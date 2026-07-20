@@ -38,8 +38,11 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
   late String? toAccountId;
   late String? categoryId;
   late final TextEditingController amountController;
+  late final TextEditingController toAmountController;
   late final TextEditingController merchantController;
   late final TextEditingController noteController;
+  bool _isAutoSettingToAmount = false;
+  bool _toAmountEditedByUser = false;
   bool moreExpanded = true;
   int recurrenceMonths = 1;
 
@@ -60,15 +63,25 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
     amountController = TextEditingController(
       text: draft == null ? '' : amount.toStringAsFixed(2),
     );
+    toAmountController = TextEditingController(
+      text: draft?.toAmount?.toStringAsFixed(2) ?? '',
+    );
+    _toAmountEditedByUser = draft?.toAmount != null;
     merchantController = TextEditingController(
       text: draft?.merchant ?? '',
     );
     noteController = TextEditingController(text: draft?.description ?? '');
+    amountController.addListener(_updateTransferEstimateIfAllowed);
+    toAmountController.addListener(_markToAmountEdited);
+    _updateTransferEstimate(
+      force: draft?.toAmount == null || _isSameCurrencyTransfer,
+    );
   }
 
   @override
   void dispose() {
     amountController.dispose();
+    toAmountController.dispose();
     merchantController.dispose();
     noteController.dispose();
     super.dispose();
@@ -113,7 +126,9 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                     type = value;
                     categoryId = _categoriesForType(value).firstOrNull?.id;
                     if (value != TransactionType.transfer) toAccountId = null;
+                    _toAmountEditedByUser = false;
                   });
+                  _updateTransferEstimate(force: true);
                 },
               ),
               const SizedBox(height: 18),
@@ -129,7 +144,10 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                   label: const Text('套用模板'),
                 ),
               ),
-              Text('金额', style: Theme.of(context).textTheme.titleMedium),
+              Text(
+                type == TransactionType.transfer ? '转出金额' : '金额',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
               const SizedBox(height: 8),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
@@ -172,6 +190,80 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                   ),
                 ],
               ),
+              if (type == TransactionType.transfer) ...[
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '转入金额',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                    ),
+                    if (toAccountId != null && !_isSameCurrencyTransfer)
+                      TextButton(
+                        onPressed: () {
+                          _toAmountEditedByUser = false;
+                          _updateTransferEstimate(force: true);
+                        },
+                        child: const Text('重新换算'),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: toAmountController,
+                        enabled: toAccountId != null,
+                        readOnly: _isSameCurrencyTransfer,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                          signed: true,
+                        ),
+                        style: const TextStyle(
+                          color: FinanceColors.compassTeal,
+                          fontSize: 40,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        decoration: InputDecoration(
+                          prefixText:
+                              '${_account(toAccountId)?.currency ?? '---'} ',
+                          prefixStyle: const TextStyle(
+                            color: FinanceColors.compassTeal,
+                            fontSize: 40,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          hintText: toAccountId == null ? '先选择账户' : null,
+                          border: InputBorder.none,
+                          enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none,
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                      ),
+                    ),
+                    OutlinedButton(
+                      onPressed: _pickToAccount,
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 12,
+                        ),
+                      ),
+                      child: Text(
+                        '${_account(toAccountId)?.currency ?? '选择'}⌄',
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _transferConversionHint(),
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
               const SizedBox(height: 12),
               CompassSegmentedControl(
                 labels: const ['已发生', '预计'],
@@ -340,13 +432,76 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
     return null;
   }
 
+  bool get _isSameCurrencyTransfer {
+    final sourceCurrency = _account(accountId)?.currency;
+    final targetCurrency = _account(toAccountId)?.currency;
+    if (sourceCurrency == null || targetCurrency == null) return false;
+    return sourceCurrency.trim().toUpperCase() ==
+        targetCurrency.trim().toUpperCase();
+  }
+
+  void _markToAmountEdited() {
+    if (!_isAutoSettingToAmount) {
+      _toAmountEditedByUser = true;
+    }
+  }
+
+  void _updateTransferEstimateIfAllowed() {
+    _updateTransferEstimate();
+  }
+
+  void _updateTransferEstimate({bool force = false}) {
+    if (type != TransactionType.transfer || toAccountId == null) return;
+    if (!force && _toAmountEditedByUser && !_isSameCurrencyTransfer) return;
+    final amount = double.tryParse(amountController.text.trim());
+    if (amount == null || !amount.isFinite) return;
+    final sourceCurrency = _account(accountId)?.currency ?? 'MYR';
+    final targetCurrency = _account(toAccountId)?.currency ?? sourceCurrency;
+    final converted = _isSameCurrencyTransfer
+        ? amount
+        : repository.convertAmount(
+            amount: amount,
+            fromCurrency: sourceCurrency,
+            toCurrency: targetCurrency,
+          );
+    _isAutoSettingToAmount = true;
+    toAmountController.text = converted.toStringAsFixed(2);
+    _isAutoSettingToAmount = false;
+    if (mounted) setState(() {});
+  }
+
+  String _transferConversionHint() {
+    final sourceCurrency = _account(accountId)?.currency ?? 'MYR';
+    final targetCurrency = _account(toAccountId)?.currency;
+    if (targetCurrency == null) {
+      return '选择转入账户后会自动计算到账金额';
+    }
+    if (_isSameCurrencyTransfer) {
+      return '同币种转账 · 转入金额自动与转出金额相同';
+    }
+    final rate = repository.convertAmount(
+      amount: 1,
+      fromCurrency: sourceCurrency,
+      toCurrency: targetCurrency,
+    );
+    return '参考汇率 1 $sourceCurrency = ${rate.toStringAsFixed(4)} '
+        '$targetCurrency · 可按实际到账金额修改';
+  }
+
   Future<void> _pickAccount() async {
     final value = await _pickFromSheet<Account>(
       title: '选择账户',
       items: repository.accounts,
       label: (item) => '${item.name} · ${item.currency}',
     );
-    if (value != null) setState(() => accountId = value.id);
+    if (value != null) {
+      setState(() {
+        accountId = value.id;
+        if (toAccountId == value.id) toAccountId = null;
+        _toAmountEditedByUser = false;
+      });
+      _updateTransferEstimate(force: true);
+    }
   }
 
   Future<void> _pickToAccount() async {
@@ -355,7 +510,13 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
       items: repository.accounts.where((item) => item.id != accountId).toList(),
       label: (item) => '${item.name} · ${item.currency}',
     );
-    if (value != null) setState(() => toAccountId = value.id);
+    if (value != null) {
+      setState(() {
+        toAccountId = value.id;
+        _toAmountEditedByUser = false;
+      });
+      _updateTransferEstimate(force: true);
+    }
   }
 
   Future<void> _pickCategory() async {
@@ -391,7 +552,12 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
       amountController.text = selected.amount.toStringAsFixed(2);
       merchantController.text = selected.merchant ?? selected.name;
       noteController.text = selected.description ?? '';
+      _toAmountEditedByUser = selected.toAmount != null;
+      toAmountController.text = selected.toAmount?.toStringAsFixed(2) ?? '';
     });
+    _updateTransferEstimate(
+      force: selected.toAmount == null || _isSameCurrencyTransfer,
+    );
   }
 
   void _showPlannedFeature(String message) {
@@ -487,6 +653,15 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
     final isSameCurrencyTransfer = type == TransactionType.transfer &&
         sourceCurrency.trim().toUpperCase() ==
             (targetCurrency ?? sourceCurrency).trim().toUpperCase();
+    final transferInAmount =
+        type == TransactionType.transfer && !isSameCurrencyTransfer
+            ? double.tryParse(toAmountController.text.trim())
+            : null;
+    if (type == TransactionType.transfer &&
+        !isSameCurrencyTransfer &&
+        (transferInAmount == null || !transferInAmount.isFinite)) {
+      return;
+    }
     final transaction = FinanceTransaction(
       id: widget.editExisting && draft != null ? draft.id : buildId('txn'),
       type: type,
@@ -498,7 +673,7 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
       // A same-currency transfer has one canonical amount. Keeping a stale
       // quick-template toAmount (especially zero) would make the receiving
       // account diverge from the source account.
-      toAmount: isSameCurrencyTransfer ? null : draft?.toAmount,
+      toAmount: transferInAmount,
       toCurrency: targetCurrency,
       recordDate:
           widget.editExisting && draft != null ? draft.recordDate : date,

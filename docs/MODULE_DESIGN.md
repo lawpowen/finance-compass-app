@@ -8,7 +8,7 @@
 
 `FinanceRepository` 是当前页面的聚合读模型和业务入口。它负责币种转换、账户余额、预算、报表、模板/周期规则、导入导出和 AI 摘要。`cashFlowNetBetween` 按精确起止日期汇总现金/信用账户的未来变动，供总览 7/30/60/90 天预测使用。
 
-现金转账表单对同币种账户只提供一个金额入口，保存时清除模板遗留的 `toAmount`，目标账户使用相同金额入账。`FinanceTransaction.transferInAmount` 同时兼容旧资料中同币种、非零转账的显式 `toAmount=0`；数据库打开及完整导入还会事务式归一记录并补回已发生目标余额。跨币种转账仍保留独立 `toAmount`/`toCurrency` 语义，不能套用同币种修复规则。
+新版现金转账表单显示转出和转入两个金额区域。选择目标账户后，同币种使用同一数值并以只读转入栏预览，保存时仍以 `toAmount=NULL` 维持一个权威金额；跨币种调用 `FinanceRepository.convertAmount` 和设置页的 `exchangeRatesToBase` 自动填入 `toAmount`，用户可以覆盖为银行实际到账金额或点击“重新换算”。更改任一账户会重新按对应币种换算；快速模板和编辑记录保留已有跨币种到账金额。`FinanceTransaction.transferInAmount` 同时兼容旧资料中同币种、非零转账的显式 `toAmount=0`；数据库打开及完整导入还会事务式归一记录并补回已发生目标余额。
 
 ## `core/models`
 
