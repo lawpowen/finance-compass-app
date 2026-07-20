@@ -73,6 +73,8 @@ flutter build windows --debug
 
 2026-07-19 外部 AI 提示词 v3 回归：新增 2 项提示词测试，验证消费发生、现金收付、信用负债三口径，信用卡还款与消费分离，投资调整不算收入，未来 `actual`/`settled` 标记为未来已确定、`planned` 单列预计，并兼容完整备份 JSON。全量测试 65 项通过、2 项按设计跳过；静态分析无编译错误，保留 104 项既有 lint。SQLite 在线备份完整性为 `ok`、外键错误为 0；v3 JSON 验证 16 个账户、29 个分类、13 个预算、672 笔交易、34 个快照、7 个模板和 6 条周期规则。ARM64 Debug APK 核对包名 `com.financecompass.app.debug`、标签 `Finance Compass Debug`、版本名 `0.8.0-debug`、versionCode `2025` 和 `arm64-v8a`；APK 与 JSON 的 Drive 副本 SHA-256 均与工程产物一致。
 
+2026-07-20 现金账户转账双边余额回归：新增 `cash_transfer_balance_test.dart` 3 项测试，分别覆盖 Repository 写入与重新加载、`TransactionMutations` 发布刷新后的 provider，以及新版 `TransactionComposerPage` 实际选择目标现金账户后保存并落库。MYR 250 从余额 MYR 1,000 的来源账户转至余额 MYR 100 的目标账户后，两边显示与存储余额分别为 MYR 750 和 MYR 350；定向测试全部通过。该结果说明标准“同币种、当月、已发生”路径可正确更新转入账户，尚未复现手机端报告的异常。
+
 ## UI 质量
 
 基准视口宽度为 390 逻辑像素；本次原生 Windows 对照使用精确 390 像素客户区宽度和 713 像素可见高度，长页面通过滚动覆盖参考图完整内容。预算与外观页另使用 390×844 widget 截图，分别与 `supplemental-budget-overview.png` 和 `27-appearance.png` 合成同屏比较图。检查六个底部入口、无横向/纵向 RenderFlex 溢出、预算占比口径、实色/斜纹状态、主题拖动预览、交易筛选、账户详情、表单主按钮、信用卡日期、闪电/加号浮动按钮及深色对比度。视觉对照记录见项目根目录 `design-qa.md`，页面映射见 [UI 参考基线](UI_REFERENCE.md)。Flutter widget 截图环境缺少中文字体时会显示方框字形；该限制只影响测试截图文字外观，不影响 Android 系统字体渲染或布局断言。
