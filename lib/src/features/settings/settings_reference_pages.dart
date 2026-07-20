@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
-import 'package:file_saver/file_saver.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
@@ -426,7 +425,6 @@ class _BackupRestorePageState extends ConsumerState<BackupRestorePage> {
         final path = await _saveBytes(
           name: name,
           extension: 'json',
-          mimeType: 'application/json',
           bytes: bytes,
         );
         if (!mounted || path == null) return;
@@ -442,7 +440,8 @@ class _BackupRestorePageState extends ConsumerState<BackupRestorePage> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('恢复完成，当前数据已重新载入。')),
         );
-        Navigator.of(context).pop();
+        Navigator.of(context, rootNavigator: true)
+            .popUntil((route) => route.isFirst);
       });
 
   @override
@@ -568,7 +567,6 @@ class _ImportExportPageState extends ConsumerState<ImportExportPage> {
   Future<void> _export({
     required String prefix,
     required String extension,
-    required String mimeType,
     required Future<Uint8List> Function() bytesBuilder,
   }) =>
       _run(() async {
@@ -578,7 +576,6 @@ class _ImportExportPageState extends ConsumerState<ImportExportPage> {
         final path = await _saveBytes(
           name: name,
           extension: extension,
-          mimeType: mimeType,
           bytes: bytes,
         );
         if (!mounted || path == null) return;
@@ -591,7 +588,6 @@ class _ImportExportPageState extends ConsumerState<ImportExportPage> {
   Future<void> _exportFull() => _export(
         prefix: 'finance_compass',
         extension: 'json',
-        mimeType: 'application/json',
         bytesBuilder: () =>
             ref.read(exportMutationsProvider.notifier).exportJsonBytes(),
       );
@@ -599,7 +595,6 @@ class _ImportExportPageState extends ConsumerState<ImportExportPage> {
   Future<void> _exportAiSummary() => _export(
         prefix: 'finance_compass_ai_summary',
         extension: 'json',
-        mimeType: 'application/json',
         bytesBuilder: () =>
             ref.read(exportMutationsProvider.notifier).exportAiSummaryBytes(
                   monthKeys: recentMonthKeys(count: 6),
@@ -609,7 +604,6 @@ class _ImportExportPageState extends ConsumerState<ImportExportPage> {
   Future<void> _exportFuturePlan() => _export(
         prefix: 'finance_compass_future_24_months',
         extension: 'csv',
-        mimeType: 'text/csv',
         bytesBuilder: () => ref
             .read(exportMutationsProvider.notifier)
             .exportFuturePlanningCsvBytes(months: 24),
@@ -621,7 +615,8 @@ class _ImportExportPageState extends ConsumerState<ImportExportPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('导入完成，当前数据已重新载入。')),
         );
-        Navigator.of(context).pop();
+        Navigator.of(context, rootNavigator: true)
+            .popUntil((route) => route.isFirst);
       });
 
   @override
@@ -1733,18 +1728,18 @@ String _themeLabel(AppThemeStyle style) => switch (style) {
 Future<String?> _saveBytes({
   required String name,
   required String extension,
-  required String mimeType,
   required Uint8List bytes,
 }) async {
-  final path = await FileSaver.instance.saveAs(
-    name: name,
+  if (bytes.isEmpty) {
+    throw StateError('拒绝保存空文件');
+  }
+  return FilePicker.platform.saveFile(
+    dialogTitle: '选择保存位置',
+    fileName: '$name.$extension',
+    type: FileType.custom,
+    allowedExtensions: [extension],
     bytes: bytes,
-    fileExtension: extension,
-    mimeType: MimeType.custom,
-    customMimeType: mimeType,
   );
-  if (path == null || path.trim().isEmpty) return null;
-  return path;
 }
 
 Future<bool> _pickPreviewAndImport(

@@ -664,6 +664,7 @@ class AppDatabase extends _$AppDatabase {
       // Mark the resulting snapshot so a later reopen does not reinterpret a
       // v3 user-edited occurrence date as a legacy settlement date.
       await setMetaValue('credit_card_account_billing_dates_v1', 'true');
+      await _validateDatabaseIntegrity();
     });
   }
 

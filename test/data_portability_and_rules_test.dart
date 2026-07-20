@@ -212,4 +212,115 @@ void main() {
         .setMockMethodCallHandler(pathProviderChannel, null);
     await directory.delete(recursive: true);
   });
+
+  test('empty export file is rejected without changing current data', () async {
+    final directory =
+        await Directory.systemTemp.createTemp('finance_empty_import');
+    final file = File('${directory.path}/empty.json');
+    await file.writeAsBytes(const []);
+
+    final database = AppDatabase.forTesting(NativeDatabase.memory());
+    var repository = await FinanceRepository.load(database);
+    repository = await repository.addAccount(
+      const Account(
+        id: 'safe_cash',
+        name: 'Safe cash',
+        accountType: AccountType.cash,
+        reportGroup: ReportGroup.cash,
+        currency: 'MYR',
+        currentBalance: 88,
+      ),
+    );
+
+    await expectLater(
+      repository.importJsonSnapshot(file.path),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          contains('0 KB'),
+        ),
+      ),
+    );
+    final reloaded = await FinanceRepository.load(database);
+    expect(reloaded.accounts.single.id, 'safe_cash');
+    expect(reloaded.accounts.single.currentBalance, 88);
+
+    await database.close();
+    await directory.delete(recursive: true);
+  });
+
+  test('broken account references roll back instead of replacing live data',
+      () async {
+    final directory =
+        await Directory.systemTemp.createTemp('finance_invalid_import');
+    const pathProviderChannel =
+        MethodChannel('plugins.flutter.io/path_provider');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pathProviderChannel, (call) async {
+      if (call.method == 'getApplicationDocumentsDirectory') {
+        return directory.path;
+      }
+      return null;
+    });
+    final file = File('${directory.path}/invalid.json');
+    await file.writeAsString(jsonEncode({
+      'format_version': 3,
+      'accounts': [
+        {
+          'id': 'imported_cash',
+          'name': 'Imported cash',
+          'account_type': 'cash',
+          'report_group': 'cash',
+          'currency': 'MYR',
+          'current_balance': 10,
+        }
+      ],
+      'transactions': [
+        {
+          'id': 'broken_transfer',
+          'type': 'transfer',
+          'account_id': 'imported_cash',
+          'to_account_id': 'missing_target',
+          'amount': 10,
+          'currency': 'MYR',
+          'record_date': '2026-07-20T00:00:00.000',
+          'transaction_date': '2026-07-20T00:00:00.000',
+          'status': 'actual',
+        }
+      ],
+    }));
+
+    final database = AppDatabase.forTesting(NativeDatabase.memory());
+    var repository = await FinanceRepository.load(database);
+    repository = await repository.addAccount(
+      const Account(
+        id: 'original_cash',
+        name: 'Original cash',
+        accountType: AccountType.cash,
+        reportGroup: ReportGroup.cash,
+        currency: 'MYR',
+        currentBalance: 99,
+      ),
+    );
+
+    await expectLater(
+      repository.importJsonSnapshot(file.path),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          contains('missing_target'),
+        ),
+      ),
+    );
+    final reloaded = await FinanceRepository.load(database);
+    expect(reloaded.accounts.single.id, 'original_cash');
+    expect(reloaded.accounts.single.currentBalance, 99);
+
+    await database.close();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pathProviderChannel, null);
+    await directory.delete(recursive: true);
+  });
 }

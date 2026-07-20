@@ -77,6 +77,8 @@ flutter build windows --debug
 
 2026-07-20 快速模板排序与指定账户刷新回归：`quick_template_reorder_test.dart` 验证完整模板 ID 顺序会持久化为连续 `sortOrder`，重载后顺序不变；390×844 Widget 用例调用可重排列表把第 6 个模板拖到第 1 位，并确认新的前五顺序立即发布。现金转账用例同时扩展为账户总览中的 Grab → UOB One，MYR 250 转账后分别显示 MYR 750 与 MYR 350。两份定向测试共 6 项通过；全量测试 71 项通过、2 项按设计跳过，静态分析无编译错误并保留 104 项既有 lint。SQLite 在线备份完整性为 `ok`、外键错误为 0；v3 JSON 包含 16 个账户、29 个分类、13 个预算、672 笔交易、34 个快照、7 个模板和 6 条周期规则。ARM64 Debug APK 为 `com.financecompass.app.debug`、`Finance Compass Debug`、`0.8.0-debug`、versionCode `2026` 和 `arm64-v8a`，APK 与 JSON 的 Drive 本地同步副本哈希一致。
 
+2026-07-20 Android 导出与恢复安全回归：移除会吞掉 Android 写入异常的 `file_saver`，所有 JSON/CSV 保存统一走 `file_picker.saveFile(bytes: ...)`。定向测试验证 0 KB 文件会被拒绝且原账户保留、缺失目标账户的转账备份会在替换前失败且原数据库不变、合法 v3 备份恢复后 `HomeScreen` 的六个主页面可共同构建而不出现黑屏；5 项定向测试通过。全量测试 74 项通过、2 项按设计跳过；静态分析无编译错误，保留 104 项既有 lint。正式导入在同一事务内追加 SQLite 完整性检查。发布工具把 371,284-byte v3 JSON 真实恢复到空数据库，核对 16 个账户、29 个类别、13 个预算、672 笔交易、34 个快照、7 个模板和 6 条周期规则；SQLite 快照 `quick_check=ok`、外键错误为 0。build 27 ARM64 Debug APK 核对 `com.financecompass.app.debug`、`Finance Compass Debug`、`0.8.0-debug`、versionCode `2027` 与 `arm64-v8a`，APK 和 JSON 的 Drive 副本 SHA-256 与工程产物一致。
+
 ## UI 质量
 
 基准视口宽度为 390 逻辑像素；本次原生 Windows 对照使用精确 390 像素客户区宽度和 713 像素可见高度，长页面通过滚动覆盖参考图完整内容。预算与外观页另使用 390×844 widget 截图，分别与 `supplemental-budget-overview.png` 和 `27-appearance.png` 合成同屏比较图。检查六个底部入口、无横向/纵向 RenderFlex 溢出、预算占比口径、实色/斜纹状态、主题拖动预览、交易筛选、账户详情、表单主按钮、信用卡日期、闪电/加号浮动按钮及深色对比度。视觉对照记录见项目根目录 `design-qa.md`，页面映射见 [UI 参考基线](UI_REFERENCE.md)。Flutter widget 截图环境缺少中文字体时会显示方框字形；该限制只影响测试截图文字外观，不影响 Android 系统字体渲染或布局断言。

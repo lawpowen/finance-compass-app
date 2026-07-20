@@ -1859,9 +1859,7 @@ class FinanceRepository {
   }
 
   Future<FinanceRepository> importJsonSnapshot(String path) async {
-    final file = File(path);
-    final raw = await file.readAsString();
-    final payload = jsonDecode(raw) as Map<String, dynamic>;
+    final payload = await _readImportPayload(path);
     final metaPayload = payload['meta'] as Map<String, dynamic>? ?? const {};
 
     final accountItems = (payload['accounts'] as List<dynamic>? ?? const [])
@@ -1990,6 +1988,16 @@ class FinanceRepository {
             )
             .toList();
 
+    _validateImportReferences(
+      accounts: accountItems,
+      categories: categoryItems,
+      budgets: budgetItems,
+      transactions: transactionItems,
+      snapshots: snapshotItems,
+      templates: templateItems,
+      recurringRules: recurringRuleItems,
+    );
+
     final hasAnyData = accountItems.isNotEmpty ||
         categoryItems.isNotEmpty ||
         budgetItems.isNotEmpty ||
@@ -2023,9 +2031,7 @@ class FinanceRepository {
   }
 
   Future<ImportPreview> previewImportJson(String path) async {
-    final file = File(path);
-    final raw = await file.readAsString();
-    final payload = jsonDecode(raw) as Map<String, dynamic>;
+    final payload = await _readImportPayload(path);
     return ImportPreview(
       accounts: (payload['accounts'] as List<dynamic>? ?? const []).length,
       categories: (payload['categories'] as List<dynamic>? ?? const []).length,
@@ -2036,6 +2042,124 @@ class FinanceRepository {
           (payload['asset_snapshots'] as List<dynamic>? ?? const []).length,
       exportedAt: payload['exported_at'] as String?,
     );
+  }
+
+  Future<Map<String, dynamic>> _readImportPayload(String path) async {
+    final file = File(path);
+    if (!await file.exists() || await file.length() == 0) {
+      throw const FormatException('所选 JSON 是空文件（0 KB），没有导入任何数据。');
+    }
+
+    Object? decoded;
+    try {
+      decoded = jsonDecode(await file.readAsString());
+    } on FormatException catch (error) {
+      throw FormatException('JSON 内容不完整或已损坏：${error.message}');
+    }
+    if (decoded is! Map) {
+      throw const FormatException('Finance Compass JSON 顶层必须是对象。');
+    }
+    final payload = Map<String, dynamic>.from(decoded);
+    final formatVersion = (payload['format_version'] as num?)?.toInt() ?? 1;
+    if (formatVersion < 1 || formatVersion > 3) {
+      throw FormatException('不支持的备份格式版本：$formatVersion。');
+    }
+    const listFields = [
+      'accounts',
+      'categories',
+      'budgets',
+      'transactions',
+      'asset_snapshots',
+      'transaction_templates',
+      'recurring_transaction_rules',
+    ];
+    for (final field in listFields) {
+      final value = payload[field];
+      if (value != null && value is! List) {
+        throw FormatException('JSON 字段 "$field" 必须是数组。');
+      }
+    }
+    if (payload['meta'] != null && payload['meta'] is! Map) {
+      throw const FormatException('JSON 字段 "meta" 必须是对象。');
+    }
+    return payload;
+  }
+
+  void _validateImportReferences({
+    required List<Account> accounts,
+    required List<Category> categories,
+    required List<Budget> budgets,
+    required List<FinanceTransaction> transactions,
+    required List<AssetSnapshot> snapshots,
+    required List<preset.TransactionTemplate> templates,
+    required List<preset.RecurringTransactionRule> recurringRules,
+  }) {
+    Set<String> uniqueIds(Iterable<String> ids, String label) {
+      final values = <String>{};
+      for (final id in ids) {
+        if (id.trim().isEmpty || !values.add(id)) {
+          throw FormatException('$label包含空白或重复 ID：$id');
+        }
+      }
+      return values;
+    }
+
+    final accountIds = uniqueIds(accounts.map((item) => item.id), '账户');
+    final categoryIds = uniqueIds(categories.map((item) => item.id), '类别');
+    uniqueIds(budgets.map((item) => item.id), '预算');
+    uniqueIds(transactions.map((item) => item.id), '交易');
+    uniqueIds(snapshots.map((item) => item.id), '资产快照');
+    uniqueIds(templates.map((item) => item.id), '快速模板');
+    final recurringRuleIds =
+        uniqueIds(recurringRules.map((item) => item.id), '周期规则');
+
+    void requireAccount(String id, String owner) {
+      if (!accountIds.contains(id)) {
+        throw FormatException('$owner 引用了不存在的账户：$id');
+      }
+    }
+
+    void requireCategory(String? id, String owner) {
+      if (id != null && !categoryIds.contains(id)) {
+        throw FormatException('$owner 引用了不存在的类别：$id');
+      }
+    }
+
+    for (final category in categories) {
+      requireCategory(category.parentId, '类别 ${category.id}');
+    }
+    for (final budget in budgets) {
+      requireCategory(budget.categoryId, '预算 ${budget.id}');
+    }
+    for (final transaction in transactions) {
+      requireAccount(transaction.accountId, '交易 ${transaction.id}');
+      if (transaction.toAccountId case final String targetId) {
+        requireAccount(targetId, '交易 ${transaction.id}');
+      }
+      requireCategory(transaction.categoryId, '交易 ${transaction.id}');
+      if (transaction.recurringRuleId case final String ruleId) {
+        if (!recurringRuleIds.contains(ruleId)) {
+          throw FormatException('交易 ${transaction.id} 引用了不存在的周期规则：$ruleId');
+        }
+      }
+    }
+    for (final snapshot in snapshots) {
+      requireAccount(snapshot.accountId, '资产快照 ${snapshot.id}');
+    }
+    for (final template in templates) {
+      requireAccount(template.accountId, '快速模板 ${template.id}');
+      if (template.toAccountId case final String targetId) {
+        requireAccount(targetId, '快速模板 ${template.id}');
+      }
+      requireCategory(template.categoryId, '快速模板 ${template.id}');
+    }
+    for (final rule in recurringRules) {
+      requireAccount(rule.accountId, '周期规则 ${rule.id}');
+      if (rule.toAccountId case final String targetId) {
+        requireAccount(targetId, '周期规则 ${rule.id}');
+      }
+      requireCategory(rule.categoryId, '周期规则 ${rule.id}');
+    }
   }
 
   Future<FinanceRepository> addCategory(Category category) async {
