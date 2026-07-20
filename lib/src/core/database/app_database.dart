@@ -85,6 +85,9 @@ class AppDatabase extends _$AppDatabase {
           await _migrateCreditCardTransactionDates();
           await _ensureLocalProfileId();
           await _applyV2VisualDefault();
+          await super.transaction(
+            () => _repairLegacyZeroSameCurrencyTransfers(),
+          );
           await _validateDatabaseIntegrity();
         },
       );
@@ -664,8 +667,64 @@ class AppDatabase extends _$AppDatabase {
       // Mark the resulting snapshot so a later reopen does not reinterpret a
       // v3 user-edited occurrence date as a legacy settlement date.
       await setMetaValue('credit_card_account_billing_dates_v1', 'true');
+      // Imported snapshots from affected debug builds can contain a valid
+      // transfer target together with an explicit zero receiving amount.
+      // Force a scan because imported meta may come from another installation.
+      await _repairLegacyZeroSameCurrencyTransfers(forceScan: true);
       await _validateDatabaseIntegrity();
     });
+  }
+
+  static const _zeroSameCurrencyTransferRepairKey =
+      'zero_same_currency_transfer_amounts_v1';
+
+  Future<void> _repairLegacyZeroSameCurrencyTransfers({
+    bool forceScan = false,
+  }) async {
+    if (!forceScan &&
+        await getMetaValue(_zeroSameCurrencyTransferRepairKey) == 'true') {
+      return;
+    }
+
+    final rows = await (select(transactions)
+          ..where((tbl) =>
+              tbl.type.equals(model.TransactionType.transfer.name) &
+              tbl.toAccountId.isNotNull() &
+              tbl.toAmount.equals(0)))
+        .get();
+
+    for (final row in rows) {
+      if (row.amount == 0) {
+        continue;
+      }
+      final sourceCurrency = row.currency.trim().toUpperCase();
+      final targetCurrency =
+          (row.toCurrency ?? row.currency).trim().toUpperCase();
+      if (sourceCurrency != targetCurrency) {
+        continue;
+      }
+
+      await (update(transactions)..where((tbl) => tbl.id.equals(row.id))).write(
+        TransactionsCompanion(
+          toAmount: const Value(null),
+          updatedAt: Value(DateTime.now()),
+        ),
+      );
+      final status = enumByName(
+        model.TransactionStatus.values,
+        row.status ?? model.TransactionStatus.actual.name,
+      );
+      if (status != model.TransactionStatus.planned) {
+        await _incrementAccountBalance(row.toAccountId!, row.amount);
+        await _syncInvestmentFlowIntoSnapshot(
+          accountId: row.toAccountId!,
+          delta: row.amount,
+          transactionDate: row.transactionDate,
+        );
+      }
+    }
+
+    await setMetaValue(_zeroSameCurrencyTransferRepairKey, 'true');
   }
 
   Future<void> insertAccount(model.Account account) {

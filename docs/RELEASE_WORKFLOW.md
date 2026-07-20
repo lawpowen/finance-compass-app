@@ -10,6 +10,7 @@
 2. 执行相关定向测试、`flutter test` 和 `flutter analyze --no-fatal-infos --no-fatal-warnings`。
 3. 对正在使用的 `finance_app.sqlite` 执行 SQLite 在线备份，避免直接复制 WAL 状态下的数据库。
 4. 使用 `flutter test tool/export_release_data_test.dart --dart-define=SOURCE_DB=<sqlite-snapshot> --dart-define=OUTPUT_JSON=<output-json>` 从一致性快照生成完整 v3 JSON；工具通过 Flutter 运行器调用应用自身 Repository，验证账户、分类、预算、交易、投资快照、快速模板、周期规则和 meta 结构，再把产物导入空数据库并核对主要集合数量。未通过恢复验证的 JSON 不得交付。
+   对用户从手机提供的 JSON，先执行 `flutter test tool/validate_import_data_test.dart --dart-define=INPUT_JSON=<snapshot.json> --dart-define=OUTPUT_JSON=<repaired.json>`；该工具会真实导入空数据库，验证旧版同币种零转入金额可安全归一，并可另存不覆盖原件的修复后完整 JSON。
 5. 构建 ARM64 Debug APK。Debug 身份必须保持 `com.financecompass.app.debug`、应用名 `Finance Compass Debug`，数据目录与正式版及其他包名独立。
 6. 用包含应用版本、构建号和日期的文件名复制 APK 与 JSON，不覆盖或删除 Drive 上的旧版本。
 7. 优先把两份文件复制到本机 `G:\我的云端硬盘\Finance Compass APK`，由 Google Drive for desktop 完成同步；仅在本地同步盘不可用时才使用 Drive 连接器。默认不上传 EXE、SQLite 临时快照、银行账单或其他敏感来源文件。

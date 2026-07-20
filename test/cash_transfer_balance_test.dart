@@ -53,6 +53,32 @@ void main() {
     expect(_balance(reloaded, 'target'), 350);
   });
 
+  test('legacy zero receiving amount still credits same-currency target',
+      () async {
+    final database = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(database.close);
+    var repository = await _repositoryWithCashAccounts(database);
+
+    repository = await repository.addTransaction(
+      FinanceTransaction(
+        id: 'legacy-zero-transfer',
+        type: TransactionType.transfer,
+        accountId: 'source',
+        toAccountId: 'target',
+        amount: 500,
+        currency: 'MYR',
+        toAmount: 0,
+        toCurrency: 'MYR',
+        transactionDate: DateTime(2026, 7, 19),
+        status: TransactionStatus.actual,
+      ),
+    );
+
+    expect(_balance(repository, 'source'), 500);
+    expect(_balance(repository, 'target'), 600);
+    expect(repository.transactions.single.transferInAmount, 500);
+  });
+
   test('cash transfer mutation publishes the receiving balance immediately',
       () async {
     final database = AppDatabase.forTesting(NativeDatabase.memory());
@@ -144,6 +170,7 @@ void main() {
     expect(transfer.accountId, 'source');
     expect(transfer.toAccountId, 'target');
     expect(transfer.amount, 250);
+    expect(transfer.toAmount, isNull);
 
     repository = await repository.addTransaction(transfer);
     expect(_balance(repository, 'source'), 750);

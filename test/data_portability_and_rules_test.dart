@@ -323,4 +323,74 @@ void main() {
         .setMockMethodCallHandler(pathProviderChannel, null);
     await directory.delete(recursive: true);
   });
+
+  test('import repairs legacy zero same-currency transfer destination balance',
+      () async {
+    final directory =
+        await Directory.systemTemp.createTemp('finance_transfer_repair');
+    const pathProviderChannel =
+        MethodChannel('plugins.flutter.io/path_provider');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pathProviderChannel, (call) async {
+      if (call.method == 'getApplicationDocumentsDirectory') {
+        return directory.path;
+      }
+      return null;
+    });
+    final file = File('${directory.path}/legacy-zero-transfer.json');
+    await file.writeAsString(jsonEncode({
+      'format_version': 3,
+      'accounts': [
+        {
+          'id': 'grab',
+          'name': 'Grab',
+          'account_type': 'cash',
+          'report_group': 'cash',
+          'currency': 'MYR',
+          'current_balance': 500,
+        },
+        {
+          'id': 'uob_one',
+          'name': 'UOB One',
+          'account_type': 'cash',
+          'report_group': 'cash',
+          'currency': 'MYR',
+          'current_balance': 100,
+        }
+      ],
+      'transactions': [
+        {
+          'id': 'grab-to-uob-one',
+          'type': 'transfer',
+          'account_id': 'grab',
+          'to_account_id': 'uob_one',
+          'amount': 500,
+          'currency': 'MYR',
+          'to_amount': 0,
+          'to_currency': 'MYR',
+          'record_date': '2026-07-19T00:00:00.000',
+          'transaction_date': '2026-07-19T00:00:00.000',
+          'status': 'actual',
+        }
+      ],
+    }));
+
+    final database = AppDatabase.forTesting(NativeDatabase.memory());
+    var repository = await FinanceRepository.load(database);
+    repository = await repository.importJsonSnapshot(file.path);
+
+    expect(
+      repository.accounts
+          .firstWhere((account) => account.id == 'uob_one')
+          .currentBalance,
+      600,
+    );
+    expect(repository.transactions.single.toAmount, isNull);
+    expect(repository.transactions.single.transferInAmount, 500);
+
+    await database.close();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pathProviderChannel, null);
+    await directory.delete(recursive: true);
+  });
 }

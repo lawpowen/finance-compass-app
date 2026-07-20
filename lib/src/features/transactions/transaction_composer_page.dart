@@ -482,6 +482,11 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
     if (amount == null || !amount.isFinite || accountId == null) return;
     if (type == TransactionType.transfer && toAccountId == null) return;
     final draft = widget.draft;
+    final sourceCurrency = _account(accountId)?.currency ?? 'MYR';
+    final targetCurrency = _account(toAccountId)?.currency ?? draft?.toCurrency;
+    final isSameCurrencyTransfer = type == TransactionType.transfer &&
+        sourceCurrency.trim().toUpperCase() ==
+            (targetCurrency ?? sourceCurrency).trim().toUpperCase();
     final transaction = FinanceTransaction(
       id: widget.editExisting && draft != null ? draft.id : buildId('txn'),
       type: type,
@@ -489,9 +494,12 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
       toAccountId: toAccountId,
       categoryId: categoryId,
       amount: amount,
-      currency: _account(accountId)?.currency ?? 'MYR',
-      toAmount: draft?.toAmount,
-      toCurrency: _account(toAccountId)?.currency ?? draft?.toCurrency,
+      currency: sourceCurrency,
+      // A same-currency transfer has one canonical amount. Keeping a stale
+      // quick-template toAmount (especially zero) would make the receiving
+      // account diverge from the source account.
+      toAmount: isSameCurrencyTransfer ? null : draft?.toAmount,
+      toCurrency: targetCurrency,
       recordDate:
           widget.editExisting && draft != null ? draft.recordDate : date,
       transactionDate: date,
