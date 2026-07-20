@@ -82,7 +82,7 @@ flutter build windows --debug
 
 2026-07-20 同币种转账零转入金额回归：新增领域测试确认旧 `toAmount=0` 仍按唯一来源金额入账，Widget 测试确认新版表单保存 `toAmount=NULL`，数据可携测试确认导入会补回目标余额并归一交易。用户提供的 376,268-byte v3 JSON 已真实导入，17 个账户、29 个分类、13 个预算、681 笔交易全部恢复，3 笔异常转账完成修复。全量测试 76 项通过、2 项按设计跳过；静态分析无编译错误，保留 104 项既有 lint。build 28 ARM64 Debug APK 为 `com.financecompass.app.debug`、`Finance Compass Debug`、`0.8.0-debug`、versionCode `2028` 和 `arm64-v8a`；修复 JSON 为 376,326 bytes，两项 Drive 副本 SHA-256 均与工程产物一致。
 
-2026-07-20 新版跨币种转账回归：390×844 Widget 用例确认 MYR 250 转入 MYR 时显示只读 MYR 250.00 并保存 `toAmount=NULL`；转入 TWD 时按 1 MYR = 7.1429 TWD 自动填入 TWD 1,785.71，用户覆盖为 TWD 1,800 后目标账户增加 1,800。全量测试 77 项通过、2 项按设计跳过；静态分析无编译错误，保留 104 项既有 lint。
+2026-07-20 新版跨币种转账回归：390×844 Widget 用例确认 MYR 250 转入 MYR 时显示只读 MYR 250.00 并保存 `toAmount=NULL`；转入 TWD 时按 1 MYR = 7.1429 TWD 自动填入 TWD 1,785.71，用户覆盖为 TWD 1,800 后目标账户增加 1,800。全量测试 77 项通过、2 项按设计跳过；静态分析无编译错误，保留 104 项既有 lint。`validate_import_data_test.dart` 将可信 v3 备份真实恢复并重新导出，核对 17 个账户、29 个类别、13 个预算和 683 笔交易，未发现需要修复的旧式同币转账。build 29 ARM64 Debug APK 经 `aapt` 核对为 `com.financecompass.app.debug`、`Finance Compass Debug`、`0.8.0-debug`、versionCode `2029` 和 `arm64-v8a`；APK 为 84,689,324 bytes、JSON 为 377,347 bytes，复制到本地 Google Drive 后的 SHA-256 分别为 `90B2A37375C95FBCB1CECEB031B44230C0F451007A6A1C46C4820BDBFE62F3E0` 与 `6A7B24964E27AD48A5C3AB7824F2563F6509A8C32DD271C14A62954BCF96FAD7`，均与工程源产物一致。
 
 ## UI 质量
 

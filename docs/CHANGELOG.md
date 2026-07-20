@@ -8,7 +8,7 @@
 - 设计：复用 `FinanceRepository.convertAmount` 与 `exchangeRatesToBase`，不新增网络服务。同币种继续以 `amount` 为唯一持久化金额并保存 `toAmount=NULL`；跨币种保存最终 `toAmount`/`toCurrency`，账户余额、编辑、模板、周期生成及 JSON 往返沿用既有模型。
 - 安全与运维：无 schema、权限或网络变化；Debug 构建号升至 29。汇率是本地设置值，自动换算仅为建议，历史到账金额不会随汇率设置变化。
 - 文档：更新系统需求、模块设计、数据设计、接口、UI 基线、测试质量和变更记录。
-- 验证：定向测试覆盖同币种只读同步及 MYR→TWD 自动换算/人工覆盖；全量测试 77 项通过、2 项按设计跳过，静态分析无编译错误并保留 104 项既有 lint。
+- 验证：定向测试覆盖同币种只读同步及 MYR→TWD 自动换算/人工覆盖；全量测试 77 项通过、2 项按设计跳过，静态分析无编译错误并保留 104 项既有 lint。可信 v3 备份已真实恢复验证为 17 个账户、29 个类别、13 个预算和 683 笔交易。build 29 ARM64 Debug APK 核对包名 `com.financecompass.app.debug`、标签 `Finance Compass Debug`、版本 `0.8.0-debug`、versionCode `2029` 与 `arm64-v8a`；84,689,324-byte APK 和 377,347-byte JSON 的 Drive 副本 SHA-256 均与工程产物一致。
 - 限制：应用不会在线抓取实时银行汇率；实际手续费或银行点差需由用户在转入金额中校正。
 
 ### 同币种转账零转入金额修复
