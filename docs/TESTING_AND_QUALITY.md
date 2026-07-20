@@ -80,7 +80,7 @@ flutter build windows --debug
 
 2026-07-20 Android 导出与恢复安全回归：移除会吞掉 Android 写入异常的 `file_saver`，所有 JSON/CSV 保存统一走 `file_picker.saveFile(bytes: ...)`。定向测试验证 0 KB 文件会被拒绝且原账户保留、缺失目标账户的转账备份会在替换前失败且原数据库不变、合法 v3 备份恢复后 `HomeScreen` 的六个主页面可共同构建而不出现黑屏；5 项定向测试通过。全量测试 74 项通过、2 项按设计跳过；静态分析无编译错误，保留 104 项既有 lint。正式导入在同一事务内追加 SQLite 完整性检查。发布工具把 371,284-byte v3 JSON 真实恢复到空数据库，核对 16 个账户、29 个类别、13 个预算、672 笔交易、34 个快照、7 个模板和 6 条周期规则；SQLite 快照 `quick_check=ok`、外键错误为 0。build 27 ARM64 Debug APK 核对 `com.financecompass.app.debug`、`Finance Compass Debug`、`0.8.0-debug`、versionCode `2027` 与 `arm64-v8a`，APK 和 JSON 的 Drive 副本 SHA-256 与工程产物一致。
 
-2026-07-20 同币种转账零转入金额回归：新增领域测试确认旧 `toAmount=0` 仍按唯一来源金额入账，Widget 测试确认新版表单保存 `toAmount=NULL`，数据可携测试确认导入会补回目标余额并归一交易。用户提供的 376,268-byte v3 JSON 已真实导入，17 个账户、29 个分类、13 个预算、681 笔交易全部恢复，3 笔异常转账完成修复。全量测试 76 项通过、2 项按设计跳过；静态分析无编译错误，保留 104 项既有 lint。
+2026-07-20 同币种转账零转入金额回归：新增领域测试确认旧 `toAmount=0` 仍按唯一来源金额入账，Widget 测试确认新版表单保存 `toAmount=NULL`，数据可携测试确认导入会补回目标余额并归一交易。用户提供的 376,268-byte v3 JSON 已真实导入，17 个账户、29 个分类、13 个预算、681 笔交易全部恢复，3 笔异常转账完成修复。全量测试 76 项通过、2 项按设计跳过；静态分析无编译错误，保留 104 项既有 lint。build 28 ARM64 Debug APK 为 `com.financecompass.app.debug`、`Finance Compass Debug`、`0.8.0-debug`、versionCode `2028` 和 `arm64-v8a`；修复 JSON 为 376,326 bytes，两项 Drive 副本 SHA-256 均与工程产物一致。
 
 ## UI 质量
 

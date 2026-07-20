@@ -8,7 +8,7 @@
 - 设计：`FinanceTransaction.transferInAmount` 增加旧资料兼容；`TransactionComposerPage` 对同币种转账强制保存 `toAmount=NULL`；`AppDatabase` 新增幂等迁移 `zero_same_currency_transfer_amounts_v1`，并在完整导入事务内强制扫描。跨币种独立转入金额不受影响。
 - 安全与运维：不覆盖用户提供的 JSON；修复与账户余额更新在数据库事务中完成，随后继续执行 SQLite 完整性检查。Debug 构建号升至 28。
 - 文档：更新数据设计、模块设计、测试质量、发布恢复流程和变更记录。
-- 验证：用户提供的 376,268-byte v3 JSON 已真实导入空数据库，17 个账户、29 个类别、13 个预算和 681 笔交易全部恢复；3 笔同币种异常转账成功归一。全量测试 76 项通过、2 项按设计跳过；静态分析无编译错误，保留 104 项既有 lint。
+- 验证：用户提供的 376,268-byte v3 JSON 已真实导入空数据库，17 个账户、29 个类别、13 个预算和 681 笔交易全部恢复；3 笔同币种异常转账成功归一。全量测试 76 项通过、2 项按设计跳过；静态分析无编译错误，保留 104 项既有 lint。build 28 ARM64 Debug APK 核对包名 `com.financecompass.app.debug`、标签 `Finance Compass Debug`、versionCode `2028` 和 `arm64-v8a`；修复后 JSON 为 376,326 bytes，APK 与 JSON 的 Drive 副本哈希均和工程产物一致。
 - 限制：当前界面尚未提供跨币种汇率/目标金额编辑器；该类交易继续沿用已有 `toAmount` 数据，不会被本次同币种迁移改写。
 
 ### 修复 Android 导出 0 KB 与恢复后黑屏
