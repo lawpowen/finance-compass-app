@@ -4,7 +4,7 @@
 
 - `accounts`：新增 `credit_limit`、`statement_day`、`payment_due_day`；旧值均为 `NULL`。
 - `categories`：新增 `icon_key`、`color_value`、`sort_order`、`is_archived`。
-- `transaction_templates`：保存模板的账户、分类、金额、币种、状态、转账和显示顺序字段。
+- `transaction_templates`：保存模板的账户、分类、金额、币种、状态、转账和显示顺序字段。拖动排序后，全部模板按当前界面顺序重写为从 `0` 开始且连续唯一的 `sort_order`；前五项由查询排序直接确定，不另建“置顶”副本。
 - `recurring_transaction_rules`：保存周期、开始/结束日期、已生成月份和启用状态。
 - 原有 `budgets`、`transactions`、`asset_snapshots`、`app_meta` 保留主键和数据。
 

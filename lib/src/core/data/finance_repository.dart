@@ -1413,6 +1413,45 @@ class FinanceRepository {
     return refresh();
   }
 
+  Future<FinanceRepository> reorderTransactionTemplates(
+    List<String> orderedTemplateIds,
+  ) async {
+    final templatesById = {
+      for (final template in transactionTemplates) template.id: template,
+    };
+    if (orderedTemplateIds.length != templatesById.length ||
+        orderedTemplateIds.toSet().length != templatesById.length ||
+        orderedTemplateIds.any((id) => !templatesById.containsKey(id))) {
+      throw ArgumentError.value(
+        orderedTemplateIds,
+        'orderedTemplateIds',
+        'Template order must contain every template exactly once.',
+      );
+    }
+
+    final reordered = orderedTemplateIds.indexed.map((entry) {
+      final template = templatesById[entry.$2]!;
+      return TransactionTemplate(
+        id: template.id,
+        name: template.name,
+        type: template.type,
+        accountId: template.accountId,
+        toAccountId: template.toAccountId,
+        categoryId: template.categoryId,
+        amount: template.amount,
+        currency: template.currency,
+        toAmount: template.toAmount,
+        toCurrency: template.toCurrency,
+        status: template.status,
+        description: template.description,
+        merchant: template.merchant,
+        sortOrder: entry.$1,
+      );
+    }).toList();
+    await _saveTransactionTemplates(reordered);
+    return refresh();
+  }
+
   Future<FinanceRepository> addRecurringTransactionRule({
     required String name,
     required FinanceTransaction transaction,

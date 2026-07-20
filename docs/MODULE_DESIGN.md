@@ -26,7 +26,7 @@
 - Reports：趋势、分类、净资产、预算洞察和未来现金流。
 - Settings：本地账户、币种、规则、备份、外观、通知和外部 AI 分析。外观页以 `PageView` 提供 12 款主题的拖动预览，预览状态与持久化设置分离，用户确认后才调用设置控制器应用。外部 AI 分享使用 `finance_compass_three_lenses_v3` 提示词，兼容分析摘要 JSON 与完整备份 JSON；以 `generated_at`/`exported_at` 为截止点，要求分别分析消费发生、现金收付和信用负债，未来 `actual`/`settled` 只能作为“未来已确定”，`planned` 只能作为预计。信用卡还款只进入现金口径，投资/退休转账只属于资产重配置，周期规则与已生成交易必须去重。导入/导出、备份、分类、模板与周期规则是当前可用能力；Google 登录、系统通知调度及交易附件明确标为计划中，不得显示虚假成功状态。
 
-页面与 29 张确认截图的逐项映射、视觉契约和 390 像素检查规则见 [UI 参考基线](UI_REFERENCE.md)。主导航页面读取真实 `FinanceRepository` 数据；参考图中的示例金额不得覆盖用户账本。快速模板、周期计划、报表详情和设置详情使用独立页面，但共享 `CompassBackground`、`CompassSettingsRow`、`CompassSegmentedControl` 和金额格式化规则。
+页面与 29 张确认截图的逐项映射、视觉契约和 390 像素检查规则见 [UI 参考基线](UI_REFERENCE.md)。主导航页面读取真实 `FinanceRepository` 数据；参考图中的示例金额不得覆盖用户账本。快速模板、周期计划、报表详情和设置详情使用独立页面，但共享 `CompassBackground`、`CompassSettingsRow`、`CompassSegmentedControl` 和金额格式化规则。`QuickTemplateManagerPage` 使用单一可重排列表覆盖全部模板，允许其他模板拖入前五；`TransactionMutations.reorderTransactionTemplates` 将完整 ID 顺序交给 Repository 校验并一次性重写连续 `sortOrder`，避免逐项保存形成重复排序值。
 
 页面失败时显示 provider 错误；表单验证失败不得写入数据库。删除账户/类别时，如存在交易、快照、预算、模板或周期规则引用，必须拒绝删除。
 

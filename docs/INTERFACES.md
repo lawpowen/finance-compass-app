@@ -43,6 +43,8 @@ Google 登录接口尚未实现。未来接口必须将远程身份绑定到 `lo
 
 `TransactionFormResult` 是新旧交易编辑器共用的页面返回契约：保存时 `transactions` 包含待新增/更新记录；编辑页确认删除时使用 `TransactionFormResult.deleted(id)`，此时 `transactions` 为空且 `deletedTransactionId` 非空。调用页面必须先处理删除动作，不能把空列表当作保存。交易金额和转入金额接受任何有限 `double`，包括 `0` 和负数；非数字、`NaN` 与无穷必须在写入前拒绝。
 
+`FinanceRepository.reorderTransactionTemplates(orderedTemplateIds)` 接受包含现有全部模板且每个 ID 恰好一次的完整顺序，重新写入连续 `sortOrder=0..n-1`；缺失、重复或未知 ID 会拒绝保存。`TransactionMutations.reorderTransactionTemplates` 发布刷新后的 Repository，使快速模板管理页和闪电面板立即使用相同前五顺序。
+
 - `TransactionMutations.deleteTransactions(ids)` 是 UI 批量删除入口；成功后把刷新后的 `FinanceRepository` 写回 `financeRepositoryProvider`。
 - `FinanceRepository.deleteExistingTransactions(ids)` 调用数据库原子删除并执行现有目标同步刷新逻辑。
 - `AppDatabase.deleteTransactionsByIds(ids)` 在同一数据库事务内恢复所有相关账户余额并删除记录；任一 ID 不存在时抛出 `StateError`，不产生部分变更。

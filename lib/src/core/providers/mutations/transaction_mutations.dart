@@ -75,6 +75,14 @@ class TransactionMutations extends Notifier<void> {
     _repoNotifier.setRepository(updated);
   }
 
+  /// Persists the complete quick-template order in one atomic replacement.
+  Future<void> reorderTransactionTemplates(
+      List<String> orderedTemplateIds) async {
+    final updated =
+        await (await _repo).reorderTransactionTemplates(orderedTemplateIds);
+    _repoNotifier.setRepository(updated);
+  }
+
   /// Creates a recurring transaction rule.
   Future<void> addRecurringTransactionRule({
     required String name,

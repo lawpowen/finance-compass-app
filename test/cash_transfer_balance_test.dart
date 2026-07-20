@@ -7,7 +7,9 @@ import 'package:finance_app/src/core/models/transaction.dart';
 import 'package:finance_app/src/core/providers/mutations/transaction_mutations.dart';
 import 'package:finance_app/src/core/providers/repository_provider.dart';
 import 'package:finance_app/src/core/settings/app_theme_style.dart';
+import 'package:finance_app/src/core/settings/app_settings_controller.dart';
 import 'package:finance_app/src/core/theme/finance_theme.dart';
+import 'package:finance_app/src/features/home/home_screen.dart';
 import 'package:finance_app/src/features/transactions/transaction_composer_page.dart';
 import 'package:finance_app/src/features/transactions/transaction_form_dialog.dart';
 import 'package:flutter/material.dart';
@@ -147,16 +149,78 @@ void main() {
     expect(_balance(repository, 'source'), 750);
     expect(_balance(repository, 'target'), 350);
   });
+
+  testWidgets('account overview refreshes both sides of a live cash transfer',
+      (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final database = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(database.close);
+    final repository = await _repositoryWithCashAccounts(
+      database,
+      sourceName: 'Grab',
+      targetName: 'UOB One',
+    );
+    final container = ProviderContainer(
+      overrides: [
+        financeRepositoryProvider.overrideWith(
+          () => _TestRepositoryNotifier(repository),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp(
+          theme: buildFinanceTheme(AppThemeStyle.abyss)
+              .copyWith(splashFactory: NoSplash.splashFactory),
+          home: HomeScreen(settingsController: AppSettingsController()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('账户').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('现金').last);
+    await tester.pumpAndSettle();
+    expect(find.text('MYR 1,000.00'), findsOneWidget);
+    expect(find.text('MYR 100.00'), findsOneWidget);
+
+    await container.read(transactionMutationsProvider.notifier).addTransaction(
+          FinanceTransaction(
+            id: 'grab-to-uob-one',
+            type: TransactionType.transfer,
+            accountId: 'source',
+            toAccountId: 'target',
+            amount: 250,
+            currency: 'MYR',
+            toCurrency: 'MYR',
+            transactionDate: DateTime(2026, 7, 20),
+            status: TransactionStatus.actual,
+          ),
+        );
+    await tester.pumpAndSettle();
+
+    expect(find.text('MYR 750.00'), findsOneWidget);
+    expect(find.text('MYR 350.00'), findsOneWidget);
+  });
 }
 
 Future<FinanceRepository> _repositoryWithCashAccounts(
-  AppDatabase database,
-) async {
+  AppDatabase database, {
+  String sourceName = '现金账户 A',
+  String targetName = '现金账户 B',
+}) async {
   var repository = await FinanceRepository.load(database);
-  for (final account in const [
+  for (final account in [
     Account(
       id: 'source',
-      name: '现金账户 A',
+      name: sourceName,
       accountType: AccountType.cash,
       reportGroup: ReportGroup.cash,
       currency: 'MYR',
@@ -164,7 +228,7 @@ Future<FinanceRepository> _repositoryWithCashAccounts(
     ),
     Account(
       id: 'target',
-      name: '现金账户 B',
+      name: targetName,
       accountType: AccountType.cash,
       reportGroup: ReportGroup.cash,
       currency: 'MYR',

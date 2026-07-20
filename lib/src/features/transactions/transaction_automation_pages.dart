@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -25,7 +27,7 @@ class QuickTemplateManagerPage extends ConsumerWidget {
       trailing: const SizedBox.shrink(),
       children: [
         Text(
-          '前 5 个模板显示在闪电快捷面板',
+          '拖动右侧手柄调整顺序，前 5 个模板显示在闪电快捷面板',
           style: Theme.of(context).textTheme.bodySmall,
         ),
         const SizedBox(height: 10),
@@ -35,38 +37,47 @@ class QuickTemplateManagerPage extends ConsumerWidget {
             title: '还没有快速模板',
             subtitle: '点右下角加号，填写一笔交易内容并保存为模板。',
           ),
-        ...rows.take(5).indexed.map(
-              (entry) => _TemplateRow(
-                index: entry.$1 + 1,
-                row: entry.$2,
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => TemplateEditorPage(
-                      repository: current,
-                      row: entry.$2,
+        if (rows.isNotEmpty)
+          ReorderableListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            buildDefaultDragHandles: false,
+            itemCount: rows.length,
+            onReorderItem: (oldIndex, newIndex) {
+              unawaited(_reorder(ref, rows, oldIndex, newIndex));
+            },
+            itemBuilder: (context, index) {
+              final row = rows[index];
+              return Column(
+                key: ValueKey(row.template!.id),
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (index == 5) ...[
+                    const SizedBox(height: 16),
+                    Text(
+                      '其他模板',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 6),
+                  ],
+                  _TemplateRow(
+                    index: index < 5 ? index + 1 : null,
+                    dragIndex: index,
+                    row: row,
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => TemplateEditorPage(
+                          repository: current,
+                          row: row,
+                        ),
+                      ),
                     ),
                   ),
-                ),
-              ),
-            ),
-        const SizedBox(height: 16),
-        Text('其他模板', style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: 6),
-        ...rows.skip(5).map(
-              (row) => _TemplateRow(
-                row: row,
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => TemplateEditorPage(
-                      repository: current,
-                      row: row,
-                    ),
-                  ),
-                ),
-              ),
-            ),
+                ],
+              );
+            },
+          ),
         const SizedBox(height: 50),
         Align(
           alignment: Alignment.centerRight,
@@ -79,6 +90,23 @@ class QuickTemplateManagerPage extends ConsumerWidget {
         ),
       ],
     );
+  }
+
+  Future<void> _reorder(
+    WidgetRef ref,
+    List<_TemplatePresentation> rows,
+    int oldIndex,
+    int newIndex,
+  ) async {
+    if (oldIndex == newIndex) return;
+    final reordered = [...rows];
+    final moved = reordered.removeAt(oldIndex);
+    reordered.insert(newIndex, moved);
+    await ref
+        .read(transactionMutationsProvider.notifier)
+        .reorderTransactionTemplates(
+          reordered.map((row) => row.template!.id).toList(),
+        );
   }
 
   Future<void> _createTemplate(
@@ -850,10 +878,16 @@ class _RecurringPresentation extends _TemplatePresentation {
 }
 
 class _TemplateRow extends StatelessWidget {
-  const _TemplateRow({required this.row, required this.onTap, this.index});
+  const _TemplateRow({
+    required this.row,
+    required this.onTap,
+    this.index,
+    this.dragIndex,
+  });
   final _TemplatePresentation row;
   final VoidCallback onTap;
   final int? index;
+  final int? dragIndex;
 
   @override
   Widget build(BuildContext context) => InkWell(
@@ -898,7 +932,16 @@ class _TemplateRow extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 12),
-              const Icon(Icons.drag_handle_rounded),
+              if (dragIndex case final index?)
+                ReorderableDragStartListener(
+                  index: index,
+                  child: const Padding(
+                    padding: EdgeInsets.all(8),
+                    child: Icon(Icons.drag_handle_rounded),
+                  ),
+                )
+              else
+                const Icon(Icons.drag_handle_rounded),
               const Icon(Icons.chevron_right_rounded),
             ],
           ),
