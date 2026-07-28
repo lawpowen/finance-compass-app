@@ -308,7 +308,6 @@ class _CategoryEditorRow extends StatelessWidget {
             const SizedBox(width: 8),
             Expanded(child: Text(title)),
             SizedBox(width: 165, child: child),
-            const Icon(Icons.chevron_right_rounded),
           ],
         ),
       );

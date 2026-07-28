@@ -1,6 +1,6 @@
 # Finance Compass
 
-当前版本：`0.8.0+25`。工程文档索引见 [docs/README.md](docs/README.md)。
+当前版本：`0.8.0+40`。工程文档索引见 [docs/README.md](docs/README.md)。
 
 完整中文需求与设计文档请看：[finance-app-design.md](finance-app-design.md)。
 
@@ -16,6 +16,11 @@ This project is already beyond a simple MVP skeleton. It includes local persiste
 
 ## Current Highlights
 
+- 全应用交互门禁：可见箭头和启用控件必须执行真实操作；周期规则、预算月份、报表区间、货币格式和应用内提醒均已接入，计划能力明确禁用。
+- 交易页顶部三种口径为“实际消费”“实际现金”“信用/贷款”；“实际现金”卡以“需准备现金”为副标题，把已知现金流出与尚未安排的到期信用卡/贷款合并，已安排还款不重复计算，不再额外占用独立大卡。未来月份的现金流出按现金账户整笔进出计算，贷款转账使用完整月供。
+- 报表收入/支出统一为实际现金流入/流出；资产目标按不扣除信用卡和贷款的总资产计算；信用账户还款使用“选择同币种现金账户 → 确认金额”的专用流程。
+- 月度预算是按生效月延续的规则：新月份金额只覆盖该月及以后，更早月份继续使用当时有效的旧规则。
+
 - Cross-platform Flutter app for Android, Windows, iOS, macOS, Linux, and Web targets.
 - Local-first finance database using SQLite and Drift.
 - Multi-currency support for `MYR`, `USD`, `CNY`, and `TWD`.
@@ -25,6 +30,7 @@ This project is already beyond a simple MVP skeleton. It includes local persiste
 - Planned versus actual transaction states.
 - Transaction editing with confirmed deletion and finite signed amounts, including zero and negative values.
 - Credit-card statement history preserves each cycle's original bill amount after repayment, while remaining debt is calculated separately. Day-one statement cuts are labeled as the month that just ended, matching PayLater bill-month conventions.
+- Loan accounts calculate complete amortization schedules for equal installments, equal principal, and flat-rate loans, with an optional bank-quoted regular payment for equal-installment and flat-rate contracts.
 - Recurring transaction rules and compact quick templates.
 - Account cutoff-month calculations that exclude future transactions.
 - Investment and retirement snapshots with contribution, withdrawal, cost, cash balance, and PnL views.
@@ -76,11 +82,13 @@ Purpose:
 
 Key behavior:
 
-- Accounts page supports a selectable cutoff month.
-- All balances and asset summaries on this page respect that cutoff month.
-- Future transactions after the selected cutoff are excluded from displayed values.
+- Accounts page supports a real cutoff-month selector from the earliest ledger month through the current month.
+- All balances and asset summaries respect the selected month-end cutoff, and account details inherit the same cutoff.
+- Historical account details are explicitly read-only and offer a one-tap return to the current month; future and planned transactions are excluded.
 - Each account can show a balance trace explaining how the cutoff balance is derived.
 - Each account can be marked as reconciled up to a selected month.
+- Loan setup accepts the contract principal, annual rate, term, tracking start date, monthly payment day, repayment method, and an optional opening outstanding balance for loans first recorded mid-contract. The loan detail shows only the installments that remain to be tracked, including principal, interest, payment, and remaining principal.
+- Recording a scheduled loan payment creates a principal transfer to the loan plus a separate interest expense, so cash outflow and outstanding principal remain accurate.
 
 ### Transactions
 
@@ -102,6 +110,7 @@ Key behavior:
 - templates prefill amount, account, category, type, description, merchant, and currency
 - planned transactions are shown in planning views but do not change account balances
 - the transaction page defaults to actual records; switching to `包含预计` keeps actual records visible and adds planned records to the list, income, expense, and net cash-flow totals
+- the middle transaction-basis card becomes the unfiltered funding-need total for current and future months: known cash outflow plus uncovered credit-card and loan payments due in that month, without a second standalone card or duplicate repayment counting
 - recurring rules generate 1-12 selected months while preserving the rule's actual or planned status for every month
 
 ### Budgets
@@ -168,6 +177,7 @@ Represents real-world accounts such as:
 - crypto
 - trading
 - fund
+- loan
 
 Important fields:
 
@@ -347,7 +357,8 @@ Stores app-level metadata such as:
 
 - A transaction can be saved as a recurring rule.
 - Rules support monthly, every-2-months, quarterly, and yearly intervals.
-- Generating a rule asks for a 1-12 month range and avoids already generated months.
+- Saving a rule immediately creates planned transactions through the next three complete calendar months; future occurrences are always planned rather than posted to balances.
+- The automation page can extend a rule by a chosen 1-12 month range and avoids already generated months.
 
 ### Credit Card Reminders
 
@@ -355,6 +366,16 @@ Stores app-level metadata such as:
 - Credit-card accounts support a credit limit, statement day, and payment due day.
 - Legacy cards without those fields keep an explicitly estimated reminder on the 25th of the next month until setup is completed.
 - Card purchases remain ordinary transactions; billing dates are not stored per transaction.
+
+### Loan Amortization
+
+- Equal installments use the reducing-balance annuity formula. Equal-installment and flat-rate contracts may use a bank-quoted regular monthly payment; the final installment automatically reconciles the remaining principal and contractual interest.
+- Equal principal keeps the principal component level and produces a declining payment.
+- Flat-rate loans calculate interest from the original principal for the full term.
+- A mid-contract opening balance does not create historical payment transactions. Its future flat-rate rows keep the original contract's monthly interest basis and continue from the reported outstanding principal.
+- The first tracked payment is scheduled in the month after the tracking start date. Payment days 29–31 are clamped to the last day of shorter months.
+- The schedule is derived from account terms. After creating a loan, the app asks whether to generate every remaining installment as a planned principal transfer plus a planned interest expense; the same action remains available on the loan detail page.
+- Recording an actual installment replaces its matching planned pair. Only the principal transfer reduces the loan balance, while principal plus interest leaves the selected repayment account.
 
 ### Investment and Retirement Calculations
 

@@ -73,13 +73,71 @@ void main() {
     final list = tester.widget<ReorderableListView>(
       find.byType(ReorderableListView),
     );
-    list.onReorderItem!(5, 0);
+    list.onReorder!(5, 0);
     await tester.pumpAndSettle();
 
     final refreshed = await container.read(financeRepositoryProvider.future);
     expect(refreshed.transactionTemplates.first.id, 'tpl-5');
     expect(refreshed.transactionTemplates.take(5).map((item) => item.id),
         ['tpl-5', 'tpl-0', 'tpl-1', 'tpl-2', 'tpl-3']);
+  });
+
+  testWidgets(
+      'creating a quick template closes routes without lifecycle errors',
+      (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final database = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(database.close);
+    var repository = await FinanceRepository.load(database);
+    repository = await repository.addAccount(
+      const Account(
+        id: 'cash',
+        name: '现金账户',
+        accountType: AccountType.cash,
+        reportGroup: ReportGroup.cash,
+        currency: 'MYR',
+        currentBalance: 1000,
+      ),
+    );
+    final container = ProviderContainer(
+      overrides: [
+        financeRepositoryProvider.overrideWith(
+          () => _TestRepositoryNotifier(repository),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp(
+          theme: buildFinanceTheme(AppThemeStyle.abyss)
+              .copyWith(splashFactory: NoSplash.splashFactory),
+          home: QuickTemplateManagerPage(repository: repository),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.add));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, '12.50');
+    await tester.tap(find.text('保存').first);
+    await tester.pumpAndSettle();
+    expect(find.text('模板名称'), findsOneWidget);
+
+    await tester.tap(find.text('保存').last);
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    final refreshed = await container.read(financeRepositoryProvider.future);
+    expect(refreshed.transactionTemplates, hasLength(1));
+    expect(refreshed.transactionTemplates.single.amount, 12.5);
   });
 }
 

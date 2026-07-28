@@ -9,6 +9,7 @@ import '../../core/providers/mutations/account_mutations.dart';
 import '../../core/providers/mutations/transaction_mutations.dart';
 import '../../core/providers/repository_provider.dart';
 import '../../core/theme/finance_colors.dart';
+import '../../core/utils/id_generator.dart';
 import '../shared/compass_ui.dart';
 import '../transactions/transaction_composer_page.dart';
 import '../transactions/transaction_form_dialog.dart';
@@ -19,10 +20,12 @@ class CreditCardDetailScreen extends ConsumerStatefulWidget {
     super.key,
     required this.account,
     required this.repository,
+    this.cutoffDate,
   });
 
   final Account account;
   final FinanceRepository repository;
+  final DateTime? cutoffDate;
 
   @override
   ConsumerState<CreditCardDetailScreen> createState() =>
@@ -33,6 +36,13 @@ class _CreditCardDetailScreenState
     extends ConsumerState<CreditCardDetailScreen> {
   int selectedStatement = 0;
   DateTime? selectedHistoricalStatementDate;
+  DateTime? _historicalCutoff;
+
+  @override
+  void initState() {
+    super.initState();
+    _historicalCutoff = widget.cutoffDate;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -42,7 +52,15 @@ class _CreditCardDetailScreenState
       (item) => item.id == widget.account.id,
       orElse: () => widget.account,
     );
-    final now = DateTime.now();
+    final isHistoricalCutoff = _historicalCutoff != null;
+    final now = _historicalCutoff ?? DateTime.now();
+    final scopedTransactions = isHistoricalCutoff
+        ? liveRepository.transactions
+            .where(
+              (item) => !item.transactionDate.isAfter(now),
+            )
+            .toList()
+        : liveRepository.transactions;
     final statementDay = liveAccount.statementDay ?? 12;
     final paymentDay = liveAccount.paymentDueDay ?? 28;
     final currentPeriod = calculateCreditCardBillingPeriod(
@@ -52,15 +70,17 @@ class _CreditCardDetailScreenState
     );
     final summary = calculateCreditCardBilling(
       account: liveAccount,
-      transactions: liveRepository.transactions,
+      transactions: scopedTransactions,
+      now: now,
       balanceAtCutoff: liveRepository.accountBalanceAt(
         liveAccount.id,
         now,
       ),
     );
     final limit = liveAccount.creditLimit ?? 10000;
-    final usageAmount =
-        liveRepository.creditCardCommittedOutstandingBalance(liveAccount.id);
+    final usageAmount = isHistoricalCutoff
+        ? liveRepository.accountBalanceAt(liveAccount.id, now).abs()
+        : liveRepository.creditCardCommittedOutstandingBalance(liveAccount.id);
     final usage = (usageAmount / limit).clamp(0, 1).toDouble();
     final isSelectedStatement = selectedHistoricalStatementDate != null;
     final period = isSelectedStatement
@@ -77,12 +97,14 @@ class _CreditCardDetailScreenState
       liveAccount,
       period,
       unbilled: false,
+      cutoffDate: isHistoricalCutoff ? now : null,
     );
     final unbilledPurchases = _presentedPurchases(
       liveRepository,
       liveAccount,
       period,
       unbilled: true,
+      cutoffDate: isHistoricalCutoff ? now : null,
     );
     final purchases = isSelectedStatement || selectedStatement == 0
         ? billedPurchases
@@ -91,7 +113,7 @@ class _CreditCardDetailScreenState
       summary: summary,
       hasBilledActivity: hasCreditCardBilledActivity(
         account: liveAccount,
-        transactions: liveRepository.transactions,
+        transactions: scopedTransactions,
         now: now,
       ),
       now: now,
@@ -101,7 +123,7 @@ class _CreditCardDetailScreenState
             period,
             calculateCreditCardOriginalStatementAmount(
               accountId: liveAccount.id,
-              transactions: liveRepository.transactions,
+              transactions: scopedTransactions,
               period: period,
               statementAmountOverride:
                   liveRepository.creditCardStatementAmountOverride(
@@ -137,19 +159,31 @@ class _CreditCardDetailScreenState
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  PopupMenuButton<String>(
-                    icon: const Icon(Icons.more_vert_rounded),
-                    onSelected: (value) {
-                      if (value == 'settings') {
-                        _editAccount(context, liveAccount);
-                      }
-                    },
-                    itemBuilder: (_) => const [
-                      PopupMenuItem(value: 'settings', child: Text('账户设置')),
-                    ],
-                  ),
+                  if (!isHistoricalCutoff)
+                    PopupMenuButton<String>(
+                      icon: const Icon(Icons.more_vert_rounded),
+                      onSelected: (value) {
+                        if (value == 'settings') {
+                          _editAccount(context, liveAccount);
+                        }
+                      },
+                      itemBuilder: (_) => const [
+                        PopupMenuItem(value: 'settings', child: Text('账户设置')),
+                      ],
+                    ),
                 ],
               ),
+              if (isHistoricalCutoff) ...[
+                const SizedBox(height: 14),
+                _HistoricalCreditCardBanner(
+                  cutoffDate: now,
+                  onReturnCurrent: () => setState(() {
+                    _historicalCutoff = null;
+                    selectedHistoricalStatementDate = null;
+                    selectedStatement = 0;
+                  }),
+                ),
+              ],
               const SizedBox(height: 24),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -190,13 +224,15 @@ class _CreditCardDetailScreenState
                     child: Column(
                       children: [
                         CompassPrimaryButton(
+                          key: const Key('record-credit-card-repayment'),
                           label: display.paymentActionLabel,
                           height: 42,
-                          onPressed: display.canRepay
+                          onPressed: display.canRepay && !isHistoricalCutoff
                               ? () => _addRepayment(
                                     context,
                                     liveRepository,
                                     liveAccount,
+                                    display.amount,
                                   )
                               : null,
                         ),
@@ -334,16 +370,18 @@ class _CreditCardDetailScreenState
                   const SizedBox(width: 6),
                   FittedBox(
                     fit: BoxFit.scaleDown,
-                    child: TextButton(
-                      onPressed: () => _editAccount(context, liveAccount),
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text('查看账期规则'),
-                          Icon(Icons.chevron_right_rounded, size: 18),
-                        ],
-                      ),
-                    ),
+                    child: isHistoricalCutoff
+                        ? const Text('历史状态只读')
+                        : TextButton(
+                            onPressed: () => _editAccount(context, liveAccount),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text('查看账期规则'),
+                                Icon(Icons.chevron_right_rounded, size: 18),
+                              ],
+                            ),
+                          ),
                   ),
                 ],
               ),
@@ -353,11 +391,13 @@ class _CreditCardDetailScreenState
                         children: [
                           _PurchaseRow(
                             item: item,
-                            onTap: () => _editTransaction(
-                              context,
-                              liveRepository,
-                              item.transaction,
-                            ),
+                            onTap: isHistoricalCutoff
+                                ? null
+                                : () => _editTransaction(
+                                      context,
+                                      liveRepository,
+                                      item.transaction,
+                                    ),
                           ),
                           compassHairline,
                         ],
@@ -385,6 +425,7 @@ class _CreditCardDetailScreenState
                               : selectedStatement == 0
                                   ? '本期账单明细'
                                   : '未出账明细',
+                          editable: !isHistoricalCutoff,
                         ),
                 style: TextButton.styleFrom(alignment: Alignment.centerLeft),
                 child: Row(
@@ -553,8 +594,9 @@ class _CreditCardDetailScreenState
     BuildContext context,
     FinanceRepository repository,
     List<_PresentedPurchase> purchases,
-    String title,
-  ) async {
+    String title, {
+    required bool editable,
+  }) async {
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -570,10 +612,13 @@ class _CreditCardDetailScreenState
               ...purchases.map(
                 (item) => _PurchaseRow(
                   item: item,
-                  onTap: () {
-                    Navigator.pop(sheetContext);
-                    _editTransaction(context, repository, item.transaction);
-                  },
+                  onTap: editable
+                      ? () {
+                          Navigator.pop(sheetContext);
+                          _editTransaction(
+                              context, repository, item.transaction);
+                        }
+                      : null,
                 ),
               ),
             ],
@@ -587,48 +632,116 @@ class _CreditCardDetailScreenState
     BuildContext context,
     FinanceRepository repo,
     Account card,
+    double suggestedAmount,
   ) async {
-    final candidates =
-        repo.accounts.where((item) => item.id != card.id).toList();
-    if (candidates.isEmpty) {
+    final sources = repo.accounts
+        .where(
+          (item) =>
+              item.id != card.id &&
+              item.reportGroup == ReportGroup.cash &&
+              item.currency == card.currency,
+        )
+        .toList();
+    if (sources.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请先建立一个用于还款的资金账户。')),
+        SnackBar(content: Text('请先建立一个 ${card.currency} 资金账户。')),
       );
       return;
     }
-    final source = candidates.firstWhere(
-      (item) => item.reportGroup == ReportGroup.cash,
-      orElse: () => candidates.first,
+    final source = await showModalBottomSheet<Account>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+          children: [
+            Text('选择还款账户', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 8),
+            ...sources.map(
+              (item) => ListTile(
+                key: Key('credit-card-repayment-source-${item.id}'),
+                title: Text(item.name),
+                subtitle: Text(item.currency),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: () => Navigator.pop(sheetContext, item),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
+    if (!context.mounted || source == null) return;
+
+    final amountController = TextEditingController(
+      text: suggestedAmount.toStringAsFixed(2),
+    );
+    final amount = await showDialog<double>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('记录信用卡还款'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('从 ${source.name} 转账至 ${card.name}'),
+            const SizedBox(height: 14),
+            TextField(
+              key: const Key('credit-card-repayment-amount'),
+              controller: amountController,
+              autofocus: true,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(
+                labelText: '还款金额',
+                prefixText: '${card.currency} ',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            key: const Key('credit-card-repayment-confirm'),
+            onPressed: () {
+              final value = double.tryParse(amountController.text.trim());
+              if (value == null || value <= 0) {
+                ScaffoldMessenger.of(dialogContext).showSnackBar(
+                  const SnackBar(content: Text('请输入大于 0 的还款金额。')),
+                );
+                return;
+              }
+              Navigator.pop(dialogContext, value);
+            },
+            child: const Text('确认记录'),
+          ),
+        ],
+      ),
+    );
+    if (!context.mounted || amount == null) return;
+
     final now = DateTime.now();
-    final result = await Navigator.of(context).push<TransactionFormResult>(
-      MaterialPageRoute(
-        fullscreenDialog: true,
-        builder: (_) => TransactionComposerPage(
-          repository: repo,
-          title: '记录信用卡还款',
-          draft: FinanceTransaction(
-            id: 'draft_card_payment',
+    await ref.read(transactionMutationsProvider.notifier).addTransaction(
+          FinanceTransaction(
+            id: buildId('txn_card_payment'),
             type: TransactionType.transfer,
             accountId: source.id,
             toAccountId: card.id,
-            amount: 0,
+            amount: amount,
             currency: source.currency,
             toCurrency: card.currency,
             recordDate: now,
             transactionDate: now,
             description: '信用卡还款',
           ),
-        ),
-      ),
+        );
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('已从 ${source.name} 记录信用卡还款')),
     );
-    if (result == null) return;
-    final mutation = ref.read(transactionMutationsProvider.notifier);
-    if (result.transactions.length == 1) {
-      await mutation.addTransaction(result.transactions.first);
-    } else {
-      await mutation.addTransactions(result.transactions);
-    }
   }
 
   Future<void> _editTransaction(
@@ -660,6 +773,46 @@ class _CreditCardDetailScreenState
     if (result.transactions.length != 1) return;
     await mutations.updateTransaction(result.transactions.single);
   }
+}
+
+class _HistoricalCreditCardBanner extends StatelessWidget {
+  const _HistoricalCreditCardBanner({
+    required this.cutoffDate,
+    required this.onReturnCurrent,
+  });
+
+  final DateTime cutoffDate;
+  final VoidCallback onReturnCurrent;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        key: const Key('credit-card-historical-banner'),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: FinanceColors.compassOrange.withValues(alpha: .14),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Row(
+          children: [
+            const Icon(
+              Icons.history_rounded,
+              color: FinanceColors.compassOrange,
+              size: 20,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                '历史统计 · 截至 ${cutoffDate.year}年${cutoffDate.month}月末',
+              ),
+            ),
+            TextButton(
+              key: const Key('credit-card-return-current'),
+              onPressed: onReturnCurrent,
+              child: const Text('切换到当前'),
+            ),
+          ],
+        ),
+      );
 }
 
 class _BillingTimeline extends StatelessWidget {
@@ -788,46 +941,48 @@ class _PurchaseRow extends StatelessWidget {
   const _PurchaseRow({required this.item, required this.onTap});
 
   final _PresentedPurchase item;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
-  Widget build(BuildContext context) => InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          child: Row(
-            children: [
-              CompassIconBadge(icon: item.icon, outlined: true, size: 40),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(item.date,
-                        style: Theme.of(context).textTheme.bodySmall),
-                    Text(item.title,
-                        style: Theme.of(context).textTheme.titleSmall),
-                    Text(item.category,
-                        style: Theme.of(context).textTheme.bodySmall),
-                  ],
-                ),
-              ),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 110),
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text(
-                    compassMoney(item.amount),
-                    style: Theme.of(context).textTheme.titleSmall,
-                  ),
-                ),
-              ),
-              const Icon(Icons.chevron_right_rounded, size: 20),
-            ],
+  Widget build(BuildContext context) {
+    final content = Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Row(
+        children: [
+          CompassIconBadge(icon: item.icon, outlined: true, size: 40),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(item.date, style: Theme.of(context).textTheme.bodySmall),
+                Text(item.title, style: Theme.of(context).textTheme.titleSmall),
+                Text(item.category,
+                    style: Theme.of(context).textTheme.bodySmall),
+              ],
+            ),
           ),
-        ),
-      );
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 110),
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                compassMoney(item.amount),
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+            ),
+          ),
+          if (onTap != null) const Icon(Icons.chevron_right_rounded, size: 20),
+        ],
+      ),
+    );
+    if (onTap == null) return content;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: content,
+    );
+  }
 }
 
 class _StatusPill extends StatelessWidget {
@@ -875,10 +1030,12 @@ List<_PresentedPurchase> _presentedPurchases(
   Account account,
   CreditCardBillingPeriod period, {
   required bool unbilled,
+  DateTime? cutoffDate,
 }) {
   final matches = repository.transactions
       .where((item) =>
           item.accountId == account.id &&
+          (cutoffDate == null || !item.transactionDate.isAfter(cutoffDate)) &&
           (item.type == TransactionType.expense ||
               item.type == TransactionType.transfer) &&
           item.affectsBalance &&

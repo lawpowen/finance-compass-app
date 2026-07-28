@@ -5,6 +5,7 @@ import 'package:drift/native.dart';
 import 'package:finance_app/src/core/data/finance_repository.dart';
 import 'package:finance_app/src/core/database/app_database.dart'
     show AppDatabase;
+import 'package:finance_app/src/core/utils/month_key.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -68,6 +69,28 @@ void main() {
         expect(transaction.transferInAmount, transaction.amount);
       }
 
+      final now = DateTime.now();
+      final currentMonth = monthKeyFromDate(now);
+      final nextMonth = monthKeyFromDate(DateTime(now.year, now.month + 1));
+      final currentCash =
+          repository.actualCashFlowSummaryForMonth(currentMonth);
+      final nextCash = repository.actualCashFlowSummaryForMonth(
+        nextMonth,
+        includePlanned: true,
+      );
+      final nextFunding = repository.monthlyFundingNeedForMonth(
+        nextMonth,
+        includePlanned: true,
+      );
+      final activeNextBudgets = repository.activeBudgetsForMonth(nextMonth);
+      expect(
+        activeNextBudgets.map((budget) => budget.categoryId).toSet().length,
+        activeNextBudgets.length,
+        reason: 'Only the latest effective budget may be active per category.',
+      );
+      expect(repository.assetGoalSummaries(),
+          hasLength(repository.assetGoals.length));
+
       if (outputPath.isNotEmpty) {
         final output = File(outputPath).absolute;
         await output.parent.create(recursive: true);
@@ -84,6 +107,17 @@ void main() {
         '${repository.categories.length} categories, '
         '${repository.budgets.length} budgets, '
         '${repository.transactions.length} transactions; '
+        '${repository.assetGoals.length} asset goals; '
+        '$currentMonth cash in/out '
+        '${currentCash.inflow.toStringAsFixed(2)}/'
+        '${currentCash.outflow.toStringAsFixed(2)}; '
+        '$nextMonth planned cash in/out '
+        '${nextCash.inflow.toStringAsFixed(2)}/'
+        '${nextCash.outflow.toStringAsFixed(2)}; '
+        'funding need ${nextFunding.totalCashRequired.toStringAsFixed(2)} '
+        '(credit ${nextFunding.creditDue.toStringAsFixed(2)}, '
+        'loan ${nextFunding.loanDue.toStringAsFixed(2)}, '
+        'uncovered ${nextFunding.uncoveredDebtDue.toStringAsFixed(2)}); '
         'repaired ${repairIds.length} legacy same-currency transfers'
         '${outputPath.isEmpty ? '.' : '; wrote $outputPath.'}',
       );

@@ -93,6 +93,78 @@ void main() {
     expect(saved!.transactions.single.transactionDate, transactionDate);
   });
 
+  testWidgets('editing a loan payment preserves payment and principal amounts',
+      (tester) async {
+    final database = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(database.close);
+    var repository = await FinanceRepository.load(database);
+    repository = await repository.addAccount(
+      const Account(
+        id: 'cash-loan-payment',
+        name: '还款账户',
+        accountType: AccountType.bankSaving,
+        reportGroup: ReportGroup.cash,
+        currency: 'MYR',
+        currentBalance: 5000,
+      ),
+    );
+    repository = await repository.addAccount(
+      const Account(
+        id: 'loan-payment-target',
+        name: '车贷',
+        accountType: AccountType.loan,
+        reportGroup: ReportGroup.credit,
+        currency: 'MYR',
+        currentBalance: -71097,
+      ),
+    );
+    final draft = FinanceTransaction(
+      id: 'loan-payment-1',
+      type: TransactionType.transfer,
+      accountId: 'cash-loan-payment',
+      toAccountId: 'loan-payment-target',
+      amount: 1316,
+      toAmount: 1191.58,
+      currency: 'MYR',
+      toCurrency: 'MYR',
+      transactionDate: DateTime(2026, 7, 23),
+      description: '贷款月供 #1',
+    );
+    TransactionFormResult? saved;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFinanceTheme(AppThemeStyle.abyss),
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: FilledButton(
+              onPressed: () async {
+                saved = await Navigator.of(context).push<TransactionFormResult>(
+                  MaterialPageRoute(
+                    builder: (_) => TransactionComposerPage(
+                      repository: repository,
+                      draft: draft,
+                      editExisting: true,
+                    ),
+                  ),
+                );
+              },
+              child: const Text('编辑贷款月供'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('编辑贷款月供'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('保存修改').first);
+    await tester.pumpAndSettle();
+
+    expect(saved!.transactions.single.amount, 1316);
+    expect(saved!.transactions.single.toAmount, 1191.58);
+  });
+
   testWidgets('new composer directly generates a selected monthly range', (
     tester,
   ) async {

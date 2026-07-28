@@ -287,7 +287,7 @@ class _TypeTabBar extends StatelessWidget {
   }
 }
 
-class _CategorySection extends StatelessWidget {
+class _CategorySection extends StatefulWidget {
   const _CategorySection({
     required this.title,
     required this.count,
@@ -302,27 +302,56 @@ class _CategorySection extends StatelessWidget {
   final ValueChanged<_CategoryPresentation> onEdit;
 
   @override
+  State<_CategorySection> createState() => _CategorySectionState();
+}
+
+class _CategorySectionState extends State<_CategorySection> {
+  bool collapsed = false;
+
+  @override
   Widget build(BuildContext context) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Text(
-                title,
-                style: Theme.of(context)
-                    .textTheme
-                    .titleLarge
-                    ?.copyWith(color: color),
+          Semantics(
+            button: true,
+            expanded: !collapsed,
+            child: InkWell(
+              key: Key('category-section-${widget.title}'),
+              borderRadius: BorderRadius.circular(10),
+              onTap: () => setState(() => collapsed = !collapsed),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Row(
+                  children: [
+                    Text(
+                      widget.title,
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleLarge
+                          ?.copyWith(color: widget.color),
+                    ),
+                    const Spacer(),
+                    Text('${widget.count} 个',
+                        style: TextStyle(color: widget.color)),
+                    Icon(
+                      collapsed
+                          ? Icons.keyboard_arrow_down_rounded
+                          : Icons.keyboard_arrow_up_rounded,
+                    ),
+                  ],
+                ),
               ),
-              const Spacer(),
-              Text('$count 个', style: TextStyle(color: color)),
-              const Icon(Icons.keyboard_arrow_up_rounded),
-            ],
+            ),
           ),
-          const SizedBox(height: 8),
-          ...rows.map(
-            (row) => _CategoryRow(row: row, onTap: () => onEdit(row)),
-          ),
+          if (!collapsed) ...[
+            const SizedBox(height: 8),
+            ...widget.rows.map(
+              (row) => _CategoryRow(
+                row: row,
+                onTap: () => widget.onEdit(row),
+              ),
+            ),
+          ],
           const SizedBox(height: 20),
         ],
       );

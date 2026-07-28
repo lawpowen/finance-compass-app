@@ -89,6 +89,54 @@ class $AccountsTable extends Accounts with TableInfo<$AccountsTable, Account> {
   late final GeneratedColumn<int> paymentDueDay = GeneratedColumn<int>(
       'payment_due_day', aliasedName, true,
       type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _loanPrincipalMeta =
+      const VerificationMeta('loanPrincipal');
+  @override
+  late final GeneratedColumn<double> loanPrincipal = GeneratedColumn<double>(
+      'loan_principal', aliasedName, true,
+      type: DriftSqlType.double, requiredDuringInsert: false);
+  static const VerificationMeta _loanAnnualInterestRateMeta =
+      const VerificationMeta('loanAnnualInterestRate');
+  @override
+  late final GeneratedColumn<double> loanAnnualInterestRate =
+      GeneratedColumn<double>('loan_annual_interest_rate', aliasedName, true,
+          type: DriftSqlType.double, requiredDuringInsert: false);
+  static const VerificationMeta _loanTermMonthsMeta =
+      const VerificationMeta('loanTermMonths');
+  @override
+  late final GeneratedColumn<int> loanTermMonths = GeneratedColumn<int>(
+      'loan_term_months', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _loanStartDateMeta =
+      const VerificationMeta('loanStartDate');
+  @override
+  late final GeneratedColumn<DateTime> loanStartDate =
+      GeneratedColumn<DateTime>('loan_start_date', aliasedName, true,
+          type: DriftSqlType.dateTime, requiredDuringInsert: false);
+  static const VerificationMeta _loanTrackingStartDateMeta =
+      const VerificationMeta('loanTrackingStartDate');
+  @override
+  late final GeneratedColumn<DateTime> loanTrackingStartDate =
+      GeneratedColumn<DateTime>('loan_tracking_start_date', aliasedName, true,
+          type: DriftSqlType.dateTime, requiredDuringInsert: false);
+  static const VerificationMeta _loanPaymentDayMeta =
+      const VerificationMeta('loanPaymentDay');
+  @override
+  late final GeneratedColumn<int> loanPaymentDay = GeneratedColumn<int>(
+      'loan_payment_day', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _loanRepaymentMethodMeta =
+      const VerificationMeta('loanRepaymentMethod');
+  @override
+  late final GeneratedColumn<String> loanRepaymentMethod =
+      GeneratedColumn<String>('loan_repayment_method', aliasedName, true,
+          type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _loanQuotedMonthlyPaymentMeta =
+      const VerificationMeta('loanQuotedMonthlyPayment');
+  @override
+  late final GeneratedColumn<double> loanQuotedMonthlyPayment =
+      GeneratedColumn<double>('loan_quoted_monthly_payment', aliasedName, true,
+          type: DriftSqlType.double, requiredDuringInsert: false);
   static const VerificationMeta _createdAtMeta =
       const VerificationMeta('createdAt');
   @override
@@ -112,6 +160,14 @@ class $AccountsTable extends Accounts with TableInfo<$AccountsTable, Account> {
         creditLimit,
         statementDay,
         paymentDueDay,
+        loanPrincipal,
+        loanAnnualInterestRate,
+        loanTermMonths,
+        loanStartDate,
+        loanTrackingStartDate,
+        loanPaymentDay,
+        loanRepaymentMethod,
+        loanQuotedMonthlyPayment,
         createdAt
       ];
   @override
@@ -203,6 +259,55 @@ class $AccountsTable extends Accounts with TableInfo<$AccountsTable, Account> {
           paymentDueDay.isAcceptableOrUnknown(
               data['payment_due_day']!, _paymentDueDayMeta));
     }
+    if (data.containsKey('loan_principal')) {
+      context.handle(
+          _loanPrincipalMeta,
+          loanPrincipal.isAcceptableOrUnknown(
+              data['loan_principal']!, _loanPrincipalMeta));
+    }
+    if (data.containsKey('loan_annual_interest_rate')) {
+      context.handle(
+          _loanAnnualInterestRateMeta,
+          loanAnnualInterestRate.isAcceptableOrUnknown(
+              data['loan_annual_interest_rate']!, _loanAnnualInterestRateMeta));
+    }
+    if (data.containsKey('loan_term_months')) {
+      context.handle(
+          _loanTermMonthsMeta,
+          loanTermMonths.isAcceptableOrUnknown(
+              data['loan_term_months']!, _loanTermMonthsMeta));
+    }
+    if (data.containsKey('loan_start_date')) {
+      context.handle(
+          _loanStartDateMeta,
+          loanStartDate.isAcceptableOrUnknown(
+              data['loan_start_date']!, _loanStartDateMeta));
+    }
+    if (data.containsKey('loan_tracking_start_date')) {
+      context.handle(
+          _loanTrackingStartDateMeta,
+          loanTrackingStartDate.isAcceptableOrUnknown(
+              data['loan_tracking_start_date']!, _loanTrackingStartDateMeta));
+    }
+    if (data.containsKey('loan_payment_day')) {
+      context.handle(
+          _loanPaymentDayMeta,
+          loanPaymentDay.isAcceptableOrUnknown(
+              data['loan_payment_day']!, _loanPaymentDayMeta));
+    }
+    if (data.containsKey('loan_repayment_method')) {
+      context.handle(
+          _loanRepaymentMethodMeta,
+          loanRepaymentMethod.isAcceptableOrUnknown(
+              data['loan_repayment_method']!, _loanRepaymentMethodMeta));
+    }
+    if (data.containsKey('loan_quoted_monthly_payment')) {
+      context.handle(
+          _loanQuotedMonthlyPaymentMeta,
+          loanQuotedMonthlyPayment.isAcceptableOrUnknown(
+              data['loan_quoted_monthly_payment']!,
+              _loanQuotedMonthlyPaymentMeta));
+    }
     if (data.containsKey('created_at')) {
       context.handle(_createdAtMeta,
           createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta));
@@ -242,6 +347,25 @@ class $AccountsTable extends Accounts with TableInfo<$AccountsTable, Account> {
           .read(DriftSqlType.int, data['${effectivePrefix}statement_day']),
       paymentDueDay: attachedDatabase.typeMapping
           .read(DriftSqlType.int, data['${effectivePrefix}payment_due_day']),
+      loanPrincipal: attachedDatabase.typeMapping
+          .read(DriftSqlType.double, data['${effectivePrefix}loan_principal']),
+      loanAnnualInterestRate: attachedDatabase.typeMapping.read(
+          DriftSqlType.double,
+          data['${effectivePrefix}loan_annual_interest_rate']),
+      loanTermMonths: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}loan_term_months']),
+      loanStartDate: attachedDatabase.typeMapping.read(
+          DriftSqlType.dateTime, data['${effectivePrefix}loan_start_date']),
+      loanTrackingStartDate: attachedDatabase.typeMapping.read(
+          DriftSqlType.dateTime,
+          data['${effectivePrefix}loan_tracking_start_date']),
+      loanPaymentDay: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}loan_payment_day']),
+      loanRepaymentMethod: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}loan_repayment_method']),
+      loanQuotedMonthlyPayment: attachedDatabase.typeMapping.read(
+          DriftSqlType.double,
+          data['${effectivePrefix}loan_quoted_monthly_payment']),
       createdAt: attachedDatabase.typeMapping
           .read(DriftSqlType.dateTime, data['${effectivePrefix}created_at'])!,
     );
@@ -267,6 +391,14 @@ class Account extends DataClass implements Insertable<Account> {
   final double? creditLimit;
   final int? statementDay;
   final int? paymentDueDay;
+  final double? loanPrincipal;
+  final double? loanAnnualInterestRate;
+  final int? loanTermMonths;
+  final DateTime? loanStartDate;
+  final DateTime? loanTrackingStartDate;
+  final int? loanPaymentDay;
+  final String? loanRepaymentMethod;
+  final double? loanQuotedMonthlyPayment;
   final DateTime createdAt;
   const Account(
       {required this.id,
@@ -282,6 +414,14 @@ class Account extends DataClass implements Insertable<Account> {
       this.creditLimit,
       this.statementDay,
       this.paymentDueDay,
+      this.loanPrincipal,
+      this.loanAnnualInterestRate,
+      this.loanTermMonths,
+      this.loanStartDate,
+      this.loanTrackingStartDate,
+      this.loanPaymentDay,
+      this.loanRepaymentMethod,
+      this.loanQuotedMonthlyPayment,
       required this.createdAt});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -308,6 +448,33 @@ class Account extends DataClass implements Insertable<Account> {
     }
     if (!nullToAbsent || paymentDueDay != null) {
       map['payment_due_day'] = Variable<int>(paymentDueDay);
+    }
+    if (!nullToAbsent || loanPrincipal != null) {
+      map['loan_principal'] = Variable<double>(loanPrincipal);
+    }
+    if (!nullToAbsent || loanAnnualInterestRate != null) {
+      map['loan_annual_interest_rate'] =
+          Variable<double>(loanAnnualInterestRate);
+    }
+    if (!nullToAbsent || loanTermMonths != null) {
+      map['loan_term_months'] = Variable<int>(loanTermMonths);
+    }
+    if (!nullToAbsent || loanStartDate != null) {
+      map['loan_start_date'] = Variable<DateTime>(loanStartDate);
+    }
+    if (!nullToAbsent || loanTrackingStartDate != null) {
+      map['loan_tracking_start_date'] =
+          Variable<DateTime>(loanTrackingStartDate);
+    }
+    if (!nullToAbsent || loanPaymentDay != null) {
+      map['loan_payment_day'] = Variable<int>(loanPaymentDay);
+    }
+    if (!nullToAbsent || loanRepaymentMethod != null) {
+      map['loan_repayment_method'] = Variable<String>(loanRepaymentMethod);
+    }
+    if (!nullToAbsent || loanQuotedMonthlyPayment != null) {
+      map['loan_quoted_monthly_payment'] =
+          Variable<double>(loanQuotedMonthlyPayment);
     }
     map['created_at'] = Variable<DateTime>(createdAt);
     return map;
@@ -336,6 +503,30 @@ class Account extends DataClass implements Insertable<Account> {
       paymentDueDay: paymentDueDay == null && nullToAbsent
           ? const Value.absent()
           : Value(paymentDueDay),
+      loanPrincipal: loanPrincipal == null && nullToAbsent
+          ? const Value.absent()
+          : Value(loanPrincipal),
+      loanAnnualInterestRate: loanAnnualInterestRate == null && nullToAbsent
+          ? const Value.absent()
+          : Value(loanAnnualInterestRate),
+      loanTermMonths: loanTermMonths == null && nullToAbsent
+          ? const Value.absent()
+          : Value(loanTermMonths),
+      loanStartDate: loanStartDate == null && nullToAbsent
+          ? const Value.absent()
+          : Value(loanStartDate),
+      loanTrackingStartDate: loanTrackingStartDate == null && nullToAbsent
+          ? const Value.absent()
+          : Value(loanTrackingStartDate),
+      loanPaymentDay: loanPaymentDay == null && nullToAbsent
+          ? const Value.absent()
+          : Value(loanPaymentDay),
+      loanRepaymentMethod: loanRepaymentMethod == null && nullToAbsent
+          ? const Value.absent()
+          : Value(loanRepaymentMethod),
+      loanQuotedMonthlyPayment: loanQuotedMonthlyPayment == null && nullToAbsent
+          ? const Value.absent()
+          : Value(loanQuotedMonthlyPayment),
       createdAt: Value(createdAt),
     );
   }
@@ -357,6 +548,18 @@ class Account extends DataClass implements Insertable<Account> {
       creditLimit: serializer.fromJson<double?>(json['creditLimit']),
       statementDay: serializer.fromJson<int?>(json['statementDay']),
       paymentDueDay: serializer.fromJson<int?>(json['paymentDueDay']),
+      loanPrincipal: serializer.fromJson<double?>(json['loanPrincipal']),
+      loanAnnualInterestRate:
+          serializer.fromJson<double?>(json['loanAnnualInterestRate']),
+      loanTermMonths: serializer.fromJson<int?>(json['loanTermMonths']),
+      loanStartDate: serializer.fromJson<DateTime?>(json['loanStartDate']),
+      loanTrackingStartDate:
+          serializer.fromJson<DateTime?>(json['loanTrackingStartDate']),
+      loanPaymentDay: serializer.fromJson<int?>(json['loanPaymentDay']),
+      loanRepaymentMethod:
+          serializer.fromJson<String?>(json['loanRepaymentMethod']),
+      loanQuotedMonthlyPayment:
+          serializer.fromJson<double?>(json['loanQuotedMonthlyPayment']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
     );
   }
@@ -377,6 +580,17 @@ class Account extends DataClass implements Insertable<Account> {
       'creditLimit': serializer.toJson<double?>(creditLimit),
       'statementDay': serializer.toJson<int?>(statementDay),
       'paymentDueDay': serializer.toJson<int?>(paymentDueDay),
+      'loanPrincipal': serializer.toJson<double?>(loanPrincipal),
+      'loanAnnualInterestRate':
+          serializer.toJson<double?>(loanAnnualInterestRate),
+      'loanTermMonths': serializer.toJson<int?>(loanTermMonths),
+      'loanStartDate': serializer.toJson<DateTime?>(loanStartDate),
+      'loanTrackingStartDate':
+          serializer.toJson<DateTime?>(loanTrackingStartDate),
+      'loanPaymentDay': serializer.toJson<int?>(loanPaymentDay),
+      'loanRepaymentMethod': serializer.toJson<String?>(loanRepaymentMethod),
+      'loanQuotedMonthlyPayment':
+          serializer.toJson<double?>(loanQuotedMonthlyPayment),
       'createdAt': serializer.toJson<DateTime>(createdAt),
     };
   }
@@ -395,6 +609,14 @@ class Account extends DataClass implements Insertable<Account> {
           Value<double?> creditLimit = const Value.absent(),
           Value<int?> statementDay = const Value.absent(),
           Value<int?> paymentDueDay = const Value.absent(),
+          Value<double?> loanPrincipal = const Value.absent(),
+          Value<double?> loanAnnualInterestRate = const Value.absent(),
+          Value<int?> loanTermMonths = const Value.absent(),
+          Value<DateTime?> loanStartDate = const Value.absent(),
+          Value<DateTime?> loanTrackingStartDate = const Value.absent(),
+          Value<int?> loanPaymentDay = const Value.absent(),
+          Value<String?> loanRepaymentMethod = const Value.absent(),
+          Value<double?> loanQuotedMonthlyPayment = const Value.absent(),
           DateTime? createdAt}) =>
       Account(
         id: id ?? this.id,
@@ -412,6 +634,26 @@ class Account extends DataClass implements Insertable<Account> {
             statementDay.present ? statementDay.value : this.statementDay,
         paymentDueDay:
             paymentDueDay.present ? paymentDueDay.value : this.paymentDueDay,
+        loanPrincipal:
+            loanPrincipal.present ? loanPrincipal.value : this.loanPrincipal,
+        loanAnnualInterestRate: loanAnnualInterestRate.present
+            ? loanAnnualInterestRate.value
+            : this.loanAnnualInterestRate,
+        loanTermMonths:
+            loanTermMonths.present ? loanTermMonths.value : this.loanTermMonths,
+        loanStartDate:
+            loanStartDate.present ? loanStartDate.value : this.loanStartDate,
+        loanTrackingStartDate: loanTrackingStartDate.present
+            ? loanTrackingStartDate.value
+            : this.loanTrackingStartDate,
+        loanPaymentDay:
+            loanPaymentDay.present ? loanPaymentDay.value : this.loanPaymentDay,
+        loanRepaymentMethod: loanRepaymentMethod.present
+            ? loanRepaymentMethod.value
+            : this.loanRepaymentMethod,
+        loanQuotedMonthlyPayment: loanQuotedMonthlyPayment.present
+            ? loanQuotedMonthlyPayment.value
+            : this.loanQuotedMonthlyPayment,
         createdAt: createdAt ?? this.createdAt,
       );
   Account copyWithCompanion(AccountsCompanion data) {
@@ -441,6 +683,30 @@ class Account extends DataClass implements Insertable<Account> {
       paymentDueDay: data.paymentDueDay.present
           ? data.paymentDueDay.value
           : this.paymentDueDay,
+      loanPrincipal: data.loanPrincipal.present
+          ? data.loanPrincipal.value
+          : this.loanPrincipal,
+      loanAnnualInterestRate: data.loanAnnualInterestRate.present
+          ? data.loanAnnualInterestRate.value
+          : this.loanAnnualInterestRate,
+      loanTermMonths: data.loanTermMonths.present
+          ? data.loanTermMonths.value
+          : this.loanTermMonths,
+      loanStartDate: data.loanStartDate.present
+          ? data.loanStartDate.value
+          : this.loanStartDate,
+      loanTrackingStartDate: data.loanTrackingStartDate.present
+          ? data.loanTrackingStartDate.value
+          : this.loanTrackingStartDate,
+      loanPaymentDay: data.loanPaymentDay.present
+          ? data.loanPaymentDay.value
+          : this.loanPaymentDay,
+      loanRepaymentMethod: data.loanRepaymentMethod.present
+          ? data.loanRepaymentMethod.value
+          : this.loanRepaymentMethod,
+      loanQuotedMonthlyPayment: data.loanQuotedMonthlyPayment.present
+          ? data.loanQuotedMonthlyPayment.value
+          : this.loanQuotedMonthlyPayment,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
     );
   }
@@ -461,27 +727,44 @@ class Account extends DataClass implements Insertable<Account> {
           ..write('creditLimit: $creditLimit, ')
           ..write('statementDay: $statementDay, ')
           ..write('paymentDueDay: $paymentDueDay, ')
+          ..write('loanPrincipal: $loanPrincipal, ')
+          ..write('loanAnnualInterestRate: $loanAnnualInterestRate, ')
+          ..write('loanTermMonths: $loanTermMonths, ')
+          ..write('loanStartDate: $loanStartDate, ')
+          ..write('loanTrackingStartDate: $loanTrackingStartDate, ')
+          ..write('loanPaymentDay: $loanPaymentDay, ')
+          ..write('loanRepaymentMethod: $loanRepaymentMethod, ')
+          ..write('loanQuotedMonthlyPayment: $loanQuotedMonthlyPayment, ')
           ..write('createdAt: $createdAt')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(
-      id,
-      name,
-      accountType,
-      reportGroup,
-      currency,
-      initialBalance,
-      currentBalance,
-      institution,
-      note,
-      isActive,
-      creditLimit,
-      statementDay,
-      paymentDueDay,
-      createdAt);
+  int get hashCode => Object.hashAll([
+        id,
+        name,
+        accountType,
+        reportGroup,
+        currency,
+        initialBalance,
+        currentBalance,
+        institution,
+        note,
+        isActive,
+        creditLimit,
+        statementDay,
+        paymentDueDay,
+        loanPrincipal,
+        loanAnnualInterestRate,
+        loanTermMonths,
+        loanStartDate,
+        loanTrackingStartDate,
+        loanPaymentDay,
+        loanRepaymentMethod,
+        loanQuotedMonthlyPayment,
+        createdAt
+      ]);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -499,6 +782,14 @@ class Account extends DataClass implements Insertable<Account> {
           other.creditLimit == this.creditLimit &&
           other.statementDay == this.statementDay &&
           other.paymentDueDay == this.paymentDueDay &&
+          other.loanPrincipal == this.loanPrincipal &&
+          other.loanAnnualInterestRate == this.loanAnnualInterestRate &&
+          other.loanTermMonths == this.loanTermMonths &&
+          other.loanStartDate == this.loanStartDate &&
+          other.loanTrackingStartDate == this.loanTrackingStartDate &&
+          other.loanPaymentDay == this.loanPaymentDay &&
+          other.loanRepaymentMethod == this.loanRepaymentMethod &&
+          other.loanQuotedMonthlyPayment == this.loanQuotedMonthlyPayment &&
           other.createdAt == this.createdAt);
 }
 
@@ -516,6 +807,14 @@ class AccountsCompanion extends UpdateCompanion<Account> {
   final Value<double?> creditLimit;
   final Value<int?> statementDay;
   final Value<int?> paymentDueDay;
+  final Value<double?> loanPrincipal;
+  final Value<double?> loanAnnualInterestRate;
+  final Value<int?> loanTermMonths;
+  final Value<DateTime?> loanStartDate;
+  final Value<DateTime?> loanTrackingStartDate;
+  final Value<int?> loanPaymentDay;
+  final Value<String?> loanRepaymentMethod;
+  final Value<double?> loanQuotedMonthlyPayment;
   final Value<DateTime> createdAt;
   final Value<int> rowid;
   const AccountsCompanion({
@@ -532,6 +831,14 @@ class AccountsCompanion extends UpdateCompanion<Account> {
     this.creditLimit = const Value.absent(),
     this.statementDay = const Value.absent(),
     this.paymentDueDay = const Value.absent(),
+    this.loanPrincipal = const Value.absent(),
+    this.loanAnnualInterestRate = const Value.absent(),
+    this.loanTermMonths = const Value.absent(),
+    this.loanStartDate = const Value.absent(),
+    this.loanTrackingStartDate = const Value.absent(),
+    this.loanPaymentDay = const Value.absent(),
+    this.loanRepaymentMethod = const Value.absent(),
+    this.loanQuotedMonthlyPayment = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.rowid = const Value.absent(),
   });
@@ -549,6 +856,14 @@ class AccountsCompanion extends UpdateCompanion<Account> {
     this.creditLimit = const Value.absent(),
     this.statementDay = const Value.absent(),
     this.paymentDueDay = const Value.absent(),
+    this.loanPrincipal = const Value.absent(),
+    this.loanAnnualInterestRate = const Value.absent(),
+    this.loanTermMonths = const Value.absent(),
+    this.loanStartDate = const Value.absent(),
+    this.loanTrackingStartDate = const Value.absent(),
+    this.loanPaymentDay = const Value.absent(),
+    this.loanRepaymentMethod = const Value.absent(),
+    this.loanQuotedMonthlyPayment = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : id = Value(id),
@@ -571,6 +886,14 @@ class AccountsCompanion extends UpdateCompanion<Account> {
     Expression<double>? creditLimit,
     Expression<int>? statementDay,
     Expression<int>? paymentDueDay,
+    Expression<double>? loanPrincipal,
+    Expression<double>? loanAnnualInterestRate,
+    Expression<int>? loanTermMonths,
+    Expression<DateTime>? loanStartDate,
+    Expression<DateTime>? loanTrackingStartDate,
+    Expression<int>? loanPaymentDay,
+    Expression<String>? loanRepaymentMethod,
+    Expression<double>? loanQuotedMonthlyPayment,
     Expression<DateTime>? createdAt,
     Expression<int>? rowid,
   }) {
@@ -588,6 +911,18 @@ class AccountsCompanion extends UpdateCompanion<Account> {
       if (creditLimit != null) 'credit_limit': creditLimit,
       if (statementDay != null) 'statement_day': statementDay,
       if (paymentDueDay != null) 'payment_due_day': paymentDueDay,
+      if (loanPrincipal != null) 'loan_principal': loanPrincipal,
+      if (loanAnnualInterestRate != null)
+        'loan_annual_interest_rate': loanAnnualInterestRate,
+      if (loanTermMonths != null) 'loan_term_months': loanTermMonths,
+      if (loanStartDate != null) 'loan_start_date': loanStartDate,
+      if (loanTrackingStartDate != null)
+        'loan_tracking_start_date': loanTrackingStartDate,
+      if (loanPaymentDay != null) 'loan_payment_day': loanPaymentDay,
+      if (loanRepaymentMethod != null)
+        'loan_repayment_method': loanRepaymentMethod,
+      if (loanQuotedMonthlyPayment != null)
+        'loan_quoted_monthly_payment': loanQuotedMonthlyPayment,
       if (createdAt != null) 'created_at': createdAt,
       if (rowid != null) 'rowid': rowid,
     });
@@ -607,6 +942,14 @@ class AccountsCompanion extends UpdateCompanion<Account> {
       Value<double?>? creditLimit,
       Value<int?>? statementDay,
       Value<int?>? paymentDueDay,
+      Value<double?>? loanPrincipal,
+      Value<double?>? loanAnnualInterestRate,
+      Value<int?>? loanTermMonths,
+      Value<DateTime?>? loanStartDate,
+      Value<DateTime?>? loanTrackingStartDate,
+      Value<int?>? loanPaymentDay,
+      Value<String?>? loanRepaymentMethod,
+      Value<double?>? loanQuotedMonthlyPayment,
       Value<DateTime>? createdAt,
       Value<int>? rowid}) {
     return AccountsCompanion(
@@ -623,6 +966,17 @@ class AccountsCompanion extends UpdateCompanion<Account> {
       creditLimit: creditLimit ?? this.creditLimit,
       statementDay: statementDay ?? this.statementDay,
       paymentDueDay: paymentDueDay ?? this.paymentDueDay,
+      loanPrincipal: loanPrincipal ?? this.loanPrincipal,
+      loanAnnualInterestRate:
+          loanAnnualInterestRate ?? this.loanAnnualInterestRate,
+      loanTermMonths: loanTermMonths ?? this.loanTermMonths,
+      loanStartDate: loanStartDate ?? this.loanStartDate,
+      loanTrackingStartDate:
+          loanTrackingStartDate ?? this.loanTrackingStartDate,
+      loanPaymentDay: loanPaymentDay ?? this.loanPaymentDay,
+      loanRepaymentMethod: loanRepaymentMethod ?? this.loanRepaymentMethod,
+      loanQuotedMonthlyPayment:
+          loanQuotedMonthlyPayment ?? this.loanQuotedMonthlyPayment,
       createdAt: createdAt ?? this.createdAt,
       rowid: rowid ?? this.rowid,
     );
@@ -670,6 +1024,34 @@ class AccountsCompanion extends UpdateCompanion<Account> {
     if (paymentDueDay.present) {
       map['payment_due_day'] = Variable<int>(paymentDueDay.value);
     }
+    if (loanPrincipal.present) {
+      map['loan_principal'] = Variable<double>(loanPrincipal.value);
+    }
+    if (loanAnnualInterestRate.present) {
+      map['loan_annual_interest_rate'] =
+          Variable<double>(loanAnnualInterestRate.value);
+    }
+    if (loanTermMonths.present) {
+      map['loan_term_months'] = Variable<int>(loanTermMonths.value);
+    }
+    if (loanStartDate.present) {
+      map['loan_start_date'] = Variable<DateTime>(loanStartDate.value);
+    }
+    if (loanTrackingStartDate.present) {
+      map['loan_tracking_start_date'] =
+          Variable<DateTime>(loanTrackingStartDate.value);
+    }
+    if (loanPaymentDay.present) {
+      map['loan_payment_day'] = Variable<int>(loanPaymentDay.value);
+    }
+    if (loanRepaymentMethod.present) {
+      map['loan_repayment_method'] =
+          Variable<String>(loanRepaymentMethod.value);
+    }
+    if (loanQuotedMonthlyPayment.present) {
+      map['loan_quoted_monthly_payment'] =
+          Variable<double>(loanQuotedMonthlyPayment.value);
+    }
     if (createdAt.present) {
       map['created_at'] = Variable<DateTime>(createdAt.value);
     }
@@ -695,6 +1077,14 @@ class AccountsCompanion extends UpdateCompanion<Account> {
           ..write('creditLimit: $creditLimit, ')
           ..write('statementDay: $statementDay, ')
           ..write('paymentDueDay: $paymentDueDay, ')
+          ..write('loanPrincipal: $loanPrincipal, ')
+          ..write('loanAnnualInterestRate: $loanAnnualInterestRate, ')
+          ..write('loanTermMonths: $loanTermMonths, ')
+          ..write('loanStartDate: $loanStartDate, ')
+          ..write('loanTrackingStartDate: $loanTrackingStartDate, ')
+          ..write('loanPaymentDay: $loanPaymentDay, ')
+          ..write('loanRepaymentMethod: $loanRepaymentMethod, ')
+          ..write('loanQuotedMonthlyPayment: $loanQuotedMonthlyPayment, ')
           ..write('createdAt: $createdAt, ')
           ..write('rowid: $rowid')
           ..write(')'))
@@ -4810,6 +5200,14 @@ typedef $$AccountsTableCreateCompanionBuilder = AccountsCompanion Function({
   Value<double?> creditLimit,
   Value<int?> statementDay,
   Value<int?> paymentDueDay,
+  Value<double?> loanPrincipal,
+  Value<double?> loanAnnualInterestRate,
+  Value<int?> loanTermMonths,
+  Value<DateTime?> loanStartDate,
+  Value<DateTime?> loanTrackingStartDate,
+  Value<int?> loanPaymentDay,
+  Value<String?> loanRepaymentMethod,
+  Value<double?> loanQuotedMonthlyPayment,
   Value<DateTime> createdAt,
   Value<int> rowid,
 });
@@ -4827,6 +5225,14 @@ typedef $$AccountsTableUpdateCompanionBuilder = AccountsCompanion Function({
   Value<double?> creditLimit,
   Value<int?> statementDay,
   Value<int?> paymentDueDay,
+  Value<double?> loanPrincipal,
+  Value<double?> loanAnnualInterestRate,
+  Value<int?> loanTermMonths,
+  Value<DateTime?> loanStartDate,
+  Value<DateTime?> loanTrackingStartDate,
+  Value<int?> loanPaymentDay,
+  Value<String?> loanRepaymentMethod,
+  Value<double?> loanQuotedMonthlyPayment,
   Value<DateTime> createdAt,
   Value<int> rowid,
 });
@@ -4900,6 +5306,36 @@ class $$AccountsTableFilterComposer
 
   ColumnFilters<int> get paymentDueDay => $composableBuilder(
       column: $table.paymentDueDay, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<double> get loanPrincipal => $composableBuilder(
+      column: $table.loanPrincipal, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<double> get loanAnnualInterestRate => $composableBuilder(
+      column: $table.loanAnnualInterestRate,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get loanTermMonths => $composableBuilder(
+      column: $table.loanTermMonths,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<DateTime> get loanStartDate => $composableBuilder(
+      column: $table.loanStartDate, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<DateTime> get loanTrackingStartDate => $composableBuilder(
+      column: $table.loanTrackingStartDate,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get loanPaymentDay => $composableBuilder(
+      column: $table.loanPaymentDay,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get loanRepaymentMethod => $composableBuilder(
+      column: $table.loanRepaymentMethod,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<double> get loanQuotedMonthlyPayment => $composableBuilder(
+      column: $table.loanQuotedMonthlyPayment,
+      builder: (column) => ColumnFilters(column));
 
   ColumnFilters<DateTime> get createdAt => $composableBuilder(
       column: $table.createdAt, builder: (column) => ColumnFilters(column));
@@ -4978,6 +5414,38 @@ class $$AccountsTableOrderingComposer
       column: $table.paymentDueDay,
       builder: (column) => ColumnOrderings(column));
 
+  ColumnOrderings<double> get loanPrincipal => $composableBuilder(
+      column: $table.loanPrincipal,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<double> get loanAnnualInterestRate => $composableBuilder(
+      column: $table.loanAnnualInterestRate,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get loanTermMonths => $composableBuilder(
+      column: $table.loanTermMonths,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<DateTime> get loanStartDate => $composableBuilder(
+      column: $table.loanStartDate,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<DateTime> get loanTrackingStartDate => $composableBuilder(
+      column: $table.loanTrackingStartDate,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get loanPaymentDay => $composableBuilder(
+      column: $table.loanPaymentDay,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get loanRepaymentMethod => $composableBuilder(
+      column: $table.loanRepaymentMethod,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<double> get loanQuotedMonthlyPayment => $composableBuilder(
+      column: $table.loanQuotedMonthlyPayment,
+      builder: (column) => ColumnOrderings(column));
+
   ColumnOrderings<DateTime> get createdAt => $composableBuilder(
       column: $table.createdAt, builder: (column) => ColumnOrderings(column));
 }
@@ -5029,6 +5497,30 @@ class $$AccountsTableAnnotationComposer
 
   GeneratedColumn<int> get paymentDueDay => $composableBuilder(
       column: $table.paymentDueDay, builder: (column) => column);
+
+  GeneratedColumn<double> get loanPrincipal => $composableBuilder(
+      column: $table.loanPrincipal, builder: (column) => column);
+
+  GeneratedColumn<double> get loanAnnualInterestRate => $composableBuilder(
+      column: $table.loanAnnualInterestRate, builder: (column) => column);
+
+  GeneratedColumn<int> get loanTermMonths => $composableBuilder(
+      column: $table.loanTermMonths, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get loanStartDate => $composableBuilder(
+      column: $table.loanStartDate, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get loanTrackingStartDate => $composableBuilder(
+      column: $table.loanTrackingStartDate, builder: (column) => column);
+
+  GeneratedColumn<int> get loanPaymentDay => $composableBuilder(
+      column: $table.loanPaymentDay, builder: (column) => column);
+
+  GeneratedColumn<String> get loanRepaymentMethod => $composableBuilder(
+      column: $table.loanRepaymentMethod, builder: (column) => column);
+
+  GeneratedColumn<double> get loanQuotedMonthlyPayment => $composableBuilder(
+      column: $table.loanQuotedMonthlyPayment, builder: (column) => column);
 
   GeneratedColumn<DateTime> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
@@ -5091,6 +5583,14 @@ class $$AccountsTableTableManager extends RootTableManager<
             Value<double?> creditLimit = const Value.absent(),
             Value<int?> statementDay = const Value.absent(),
             Value<int?> paymentDueDay = const Value.absent(),
+            Value<double?> loanPrincipal = const Value.absent(),
+            Value<double?> loanAnnualInterestRate = const Value.absent(),
+            Value<int?> loanTermMonths = const Value.absent(),
+            Value<DateTime?> loanStartDate = const Value.absent(),
+            Value<DateTime?> loanTrackingStartDate = const Value.absent(),
+            Value<int?> loanPaymentDay = const Value.absent(),
+            Value<String?> loanRepaymentMethod = const Value.absent(),
+            Value<double?> loanQuotedMonthlyPayment = const Value.absent(),
             Value<DateTime> createdAt = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
@@ -5108,6 +5608,14 @@ class $$AccountsTableTableManager extends RootTableManager<
             creditLimit: creditLimit,
             statementDay: statementDay,
             paymentDueDay: paymentDueDay,
+            loanPrincipal: loanPrincipal,
+            loanAnnualInterestRate: loanAnnualInterestRate,
+            loanTermMonths: loanTermMonths,
+            loanStartDate: loanStartDate,
+            loanTrackingStartDate: loanTrackingStartDate,
+            loanPaymentDay: loanPaymentDay,
+            loanRepaymentMethod: loanRepaymentMethod,
+            loanQuotedMonthlyPayment: loanQuotedMonthlyPayment,
             createdAt: createdAt,
             rowid: rowid,
           ),
@@ -5125,6 +5633,14 @@ class $$AccountsTableTableManager extends RootTableManager<
             Value<double?> creditLimit = const Value.absent(),
             Value<int?> statementDay = const Value.absent(),
             Value<int?> paymentDueDay = const Value.absent(),
+            Value<double?> loanPrincipal = const Value.absent(),
+            Value<double?> loanAnnualInterestRate = const Value.absent(),
+            Value<int?> loanTermMonths = const Value.absent(),
+            Value<DateTime?> loanStartDate = const Value.absent(),
+            Value<DateTime?> loanTrackingStartDate = const Value.absent(),
+            Value<int?> loanPaymentDay = const Value.absent(),
+            Value<String?> loanRepaymentMethod = const Value.absent(),
+            Value<double?> loanQuotedMonthlyPayment = const Value.absent(),
             Value<DateTime> createdAt = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
@@ -5142,6 +5658,14 @@ class $$AccountsTableTableManager extends RootTableManager<
             creditLimit: creditLimit,
             statementDay: statementDay,
             paymentDueDay: paymentDueDay,
+            loanPrincipal: loanPrincipal,
+            loanAnnualInterestRate: loanAnnualInterestRate,
+            loanTermMonths: loanTermMonths,
+            loanStartDate: loanStartDate,
+            loanTrackingStartDate: loanTrackingStartDate,
+            loanPaymentDay: loanPaymentDay,
+            loanRepaymentMethod: loanRepaymentMethod,
+            loanQuotedMonthlyPayment: loanQuotedMonthlyPayment,
             createdAt: createdAt,
             rowid: rowid,
           ),

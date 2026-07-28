@@ -5,11 +5,15 @@ import '../../core/data/finance_repository.dart';
 import '../../core/models/account.dart';
 import '../../core/models/credit_card_billing.dart';
 import '../../core/providers/mutations/account_mutations.dart';
+import '../../core/providers/repository_provider.dart';
 import '../../core/theme/finance_colors.dart';
 import '../shared/compass_ui.dart';
+import '../settings/settings_reference_pages.dart';
 import 'account_detail_screen.dart';
 import 'account_form_dialog.dart';
+import 'asset_goals_page.dart';
 import 'credit_card_detail_screen.dart';
+import 'loan_detail_screen.dart';
 
 class AccountsV2Screen extends ConsumerStatefulWidget {
   const AccountsV2Screen({super.key, required this.repository});
@@ -22,15 +26,32 @@ class AccountsV2Screen extends ConsumerStatefulWidget {
 
 class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
   int selectedGroup = 1;
+  DateTime selectedCutoffMonth = DateTime(
+    DateTime.now().year,
+    DateTime.now().month,
+  );
 
   FinanceRepository get repository => widget.repository;
 
   @override
   Widget build(BuildContext context) {
+    final repository = widget.repository;
     final now = DateTime.now();
-    final cash = repository.totalAssetsByGroup(ReportGroup.cash);
-    final investment = repository.totalAssetsByGroup(ReportGroup.investment);
-    final retirement = repository.totalAssetsByGroup(ReportGroup.retirement);
+    final cutoffDate = _endOfMonth(selectedCutoffMonth);
+    final isHistorical = selectedCutoffMonth.year != now.year ||
+        selectedCutoffMonth.month != now.month;
+    final cash = repository.displayTotalAssetsByGroup(
+      ReportGroup.cash,
+      cutoffDate: cutoffDate,
+    );
+    final investment = repository.displayTotalAssetsByGroup(
+      ReportGroup.investment,
+      cutoffDate: cutoffDate,
+    );
+    final retirement = repository.displayTotalAssetsByGroup(
+      ReportGroup.retirement,
+      cutoffDate: cutoffDate,
+    );
     final totalAssets = cash + investment + retirement;
     final creditAccounts = repository.accounts
         .where((account) => account.accountType == AccountType.creditCard)
@@ -41,7 +62,7 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
     final creditLiability = creditAccounts.fold<double>(0, (sum, account) {
       return sum +
           repository.convertToBase(
-            repository.creditCardCommittedOutstandingBalance(account.id),
+            repository.accountBalanceAt(account.id, cutoffDate).abs(),
             account.currency,
           );
     });
@@ -49,13 +70,14 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
       0,
       (sum, account) =>
           sum +
-          repository
-              .accountBalanceAt(account.id, repository.currentMonthCutoffDate())
-              .abs(),
+          repository.convertToBase(
+            repository.accountBalanceAt(account.id, cutoffDate).abs(),
+            account.currency,
+          ),
     );
     final liabilities = creditLiability + loanLiability;
     final netAssets = totalAssets - liabilities;
-    final visibleAccounts = _accountsForGroup(selectedGroup);
+    final visibleAccounts = _accountsForGroup(repository, selectedGroup);
 
     return ListView(
       padding: compassPagePadding.copyWith(bottom: 30),
@@ -63,10 +85,30 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
         CompassPageHeader(
           title: '账户',
           actions: [
-            CompassIconBadge(
-              icon: Icons.person_rounded,
-              size: 38,
-              color: FinanceColors.compassTeal,
+            IconButton(
+              key: const Key('asset-goals-entry'),
+              tooltip: '资产目标',
+              onPressed: () => _openAssetGoals(context),
+              icon: const CompassIconBadge(
+                icon: Icons.flag_outlined,
+                size: 38,
+                outlined: true,
+              ),
+            ),
+            const SizedBox(width: 6),
+            IconButton(
+              tooltip: '个人账户',
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => AccountSyncPage(repository: repository),
+                ),
+              ),
+              icon: const CompassIconBadge(
+                icon: Icons.person_rounded,
+                size: 38,
+                color: FinanceColors.compassTeal,
+              ),
             ),
             const SizedBox(width: 10),
             SizedBox(
@@ -125,6 +167,38 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
           ],
         ),
         const SizedBox(height: 14),
+        CompassCard(
+          key: const Key('asset-goals-card'),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          onTap: () => _openAssetGoals(context),
+          child: Row(
+            children: [
+              const CompassIconBadge(
+                icon: Icons.flag_outlined,
+                size: 42,
+                outlined: true,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('资产目标',
+                        style: Theme.of(context).textTheme.titleMedium),
+                    Text(
+                      repository.assetGoals.isEmpty
+                          ? '设定并追踪总资产目标'
+                          : '${repository.assetGoals.length} 个目标 · 查看进度',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right_rounded),
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
         const CompassSectionTitle('资产分布'),
         const SizedBox(height: 9),
         CompassDistributionBar(
@@ -168,18 +242,55 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
           ],
         ),
         const SizedBox(height: 18),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.calendar_month_outlined, size: 18),
-            const SizedBox(width: 8),
-            Text(
-              '统计截止 · ${now.year}年${now.month}月',
-              style: Theme.of(context).textTheme.bodySmall,
+        Center(
+          child: Semantics(
+            button: true,
+            label: '选择账户统计截止月份',
+            child: InkWell(
+              key: const Key('account-cutoff-selector'),
+              borderRadius: BorderRadius.circular(20),
+              onTap: () => _selectCutoffMonth(context),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.calendar_month_outlined, size: 18),
+                    const SizedBox(width: 8),
+                    Text(
+                      '统计截止 · ${selectedCutoffMonth.year}年${selectedCutoffMonth.month}月',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    const SizedBox(width: 3),
+                    const Icon(Icons.arrow_drop_down_rounded, size: 18),
+                  ],
+                ),
+              ),
             ),
-            const Icon(Icons.arrow_drop_down_rounded, size: 18),
-          ],
+          ),
         ),
+        if (isHistorical) ...[
+          const SizedBox(height: 8),
+          Center(
+            child: Container(
+              key: const Key('account-historical-cutoff-banner'),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: FinanceColors.compassOrange.withValues(alpha: .14),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Text(
+                '历史统计 · 截至 ${selectedCutoffMonth.year}年${selectedCutoffMonth.month}月末',
+                style: const TextStyle(
+                  color: FinanceColors.compassOrange,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+        ],
         const SizedBox(height: 14),
         _AccountGroupSelector(
           selectedIndex: selectedGroup,
@@ -219,7 +330,13 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
             (account) => _AccountRow(
               account: account,
               repository: repository,
-              onTap: () => _openAccount(context, account),
+              cutoffDate: cutoffDate,
+              isHistorical: isHistorical,
+              onTap: () => _openAccount(
+                context,
+                account,
+                cutoffDate: isHistorical ? cutoffDate : null,
+              ),
             ),
           ),
         if (selectedGroup == 1) ...[
@@ -235,17 +352,137 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
     );
   }
 
-  List<Account> _accountsForGroup(int index) => switch (index) {
-        0 => repository.accountsByGroup(ReportGroup.cash),
-        1 => repository.accounts
+  List<Account> _accountsForGroup(
+    FinanceRepository activeRepository,
+    int index,
+  ) =>
+      switch (index) {
+        0 => activeRepository.accountsByGroup(ReportGroup.cash),
+        1 => activeRepository.accounts
             .where((item) => item.accountType == AccountType.creditCard)
             .toList(),
-        2 => repository.accounts
+        2 => activeRepository.accounts
             .where((item) => item.accountType == AccountType.loan)
             .toList(),
-        3 => repository.accountsByGroup(ReportGroup.investment),
-        _ => repository.accountsByGroup(ReportGroup.retirement),
+        3 => activeRepository.accountsByGroup(ReportGroup.investment),
+        _ => activeRepository.accountsByGroup(ReportGroup.retirement),
       };
+
+  Future<void> _selectCutoffMonth(BuildContext context) async {
+    final months = _availableCutoffMonths();
+    final selected = await showModalBottomSheet<DateTime>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) => SafeArea(
+        child: FractionallySizedBox(
+          heightFactor: .72,
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 12, 12),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '选择统计截止月份',
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        final now = DateTime.now();
+                        Navigator.pop(
+                          sheetContext,
+                          DateTime(now.year, now.month),
+                        );
+                      },
+                      child: const Text('返回本月'),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.pop(sheetContext),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ],
+                ),
+              ),
+              compassHairline,
+              Expanded(
+                child: ListView.separated(
+                  key: const Key('account-cutoff-month-list'),
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
+                  itemCount: months.length,
+                  separatorBuilder: (_, __) => compassHairline,
+                  itemBuilder: (_, index) {
+                    final month = months[index];
+                    final selected = month.year == selectedCutoffMonth.year &&
+                        month.month == selectedCutoffMonth.month;
+                    return ListTile(
+                      key: Key('account-cutoff-${month.year}-${month.month}'),
+                      leading: const CompassIconBadge(
+                        icon: Icons.calendar_month_outlined,
+                        size: 38,
+                        outlined: true,
+                      ),
+                      title: Text('${month.year}年${month.month}月'),
+                      subtitle: const Text('按该月最后一天的账本状态统计'),
+                      trailing: Icon(
+                        selected
+                            ? Icons.check_circle_rounded
+                            : Icons.chevron_right_rounded,
+                        color: selected
+                            ? FinanceColors.compassTeal
+                            : FinanceColors.compassMuted,
+                      ),
+                      onTap: () => Navigator.pop(sheetContext, month),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (!mounted || selected == null) return;
+    setState(() => selectedCutoffMonth = selected);
+  }
+
+  List<DateTime> _availableCutoffMonths() {
+    final now = DateTime.now();
+    final candidates = <DateTime>[
+      DateTime(now.year, now.month),
+      ...repository.transactions.map(
+        (item) => DateTime(
+          item.transactionDate.year,
+          item.transactionDate.month,
+        ),
+      ),
+      ...repository.snapshots.map(
+        (item) => DateTime(item.snapshotDate.year, item.snapshotDate.month),
+      ),
+      ...repository.accounts
+          .where((item) => item.loanTrackingStartDate != null)
+          .map(
+            (item) => DateTime(
+              item.loanTrackingStartDate!.year,
+              item.loanTrackingStartDate!.month,
+            ),
+          ),
+    ];
+    candidates
+        .removeWhere((item) => item.isAfter(DateTime(now.year, now.month)));
+    candidates.sort();
+    final first = candidates.first;
+    final result = <DateTime>[];
+    var cursor = DateTime(first.year, first.month);
+    final last = DateTime(now.year, now.month);
+    while (!cursor.isAfter(last)) {
+      result.add(cursor);
+      cursor = DateTime(cursor.year, cursor.month + 1);
+    }
+    return result.reversed.toList();
+  }
 
   Future<void> _editAccount(BuildContext context) async {
     final account = await showDialog<Account>(
@@ -254,15 +491,54 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
     );
     if (account != null) {
       await ref.read(accountMutationsProvider.notifier).addAccount(account);
+      if (!mounted || account.accountType != AccountType.loan) return;
+      final updatedRepository =
+          await ref.read(financeRepositoryProvider.future);
+      if (!mounted) return;
+      await Navigator.of(this.context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => LoanDetailScreen(
+            account: account,
+            repository: updatedRepository,
+            promptForPlannedGeneration: true,
+          ),
+        ),
+      );
     }
   }
 
-  void _openAccount(BuildContext context, Account account) {
+  void _openAssetGoals(BuildContext context) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => account.accountType == AccountType.creditCard
-            ? CreditCardDetailScreen(account: account, repository: repository)
-            : AccountDetailScreen(account: account, repository: repository),
+        builder: (_) => AssetGoalsPage(repository: repository),
+      ),
+    );
+  }
+
+  void _openAccount(
+    BuildContext context,
+    Account account, {
+    DateTime? cutoffDate,
+  }) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => switch (account.accountType) {
+          AccountType.creditCard => CreditCardDetailScreen(
+              account: account,
+              repository: repository,
+              cutoffDate: cutoffDate,
+            ),
+          AccountType.loan => LoanDetailScreen(
+              account: account,
+              repository: repository,
+              cutoffDate: cutoffDate,
+            ),
+          _ => AccountDetailScreen(
+              account: account,
+              repository: repository,
+              cutoffDate: cutoffDate,
+            ),
+        },
       ),
     );
   }
@@ -450,20 +726,28 @@ class _AccountRow extends StatelessWidget {
   const _AccountRow({
     required this.account,
     required this.repository,
+    required this.cutoffDate,
+    required this.isHistorical,
     required this.onTap,
   });
 
   final Account account;
   final FinanceRepository repository;
+  final DateTime cutoffDate;
+  final bool isHistorical;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final now = DateTime.now();
+    final now = isHistorical ? cutoffDate : DateTime.now();
+    final scopedTransactions = repository.transactions.where(
+      (item) => !item.transactionDate.isAfter(cutoffDate),
+    );
     final billing = account.accountType == AccountType.creditCard
         ? calculateCreditCardBilling(
             account: account,
-            transactions: repository.transactions,
+            transactions: scopedTransactions,
+            now: now,
             balanceAtCutoff: repository.accountBalanceAt(
               account.id,
               now,
@@ -477,7 +761,7 @@ class _AccountRow extends StatelessWidget {
               summary: billing,
               hasBilledActivity: hasCreditCardBilledActivity(
                 account: account,
-                transactions: repository.transactions,
+                transactions: scopedTransactions,
                 now: now,
               ),
               now: now,
@@ -488,15 +772,18 @@ class _AccountRow extends StatelessWidget {
         ? repository
             .accountBalanceAt(
               account.id,
-              repository.currentMonthCutoffDate(),
+              cutoffDate,
             )
             .abs()
-        : repository.creditCardCommittedOutstandingBalance(account.id);
+        : repository.accountBalanceAt(account.id, cutoffDate).abs();
     final subtitle = billing == null
-        ? [account.institution, account.currency]
-            .whereType<String>()
-            .where((item) => item.isNotEmpty)
-            .join(' · ')
+        ? [
+            account.institution,
+            if (account.accountType == AccountType.loan &&
+                account.hasCompleteLoanProfile)
+              '${account.loanAnnualInterestRate!.toStringAsFixed(2)}% · ${account.loanTermMonths}期',
+            account.currency,
+          ].whereType<String>().where((item) => item.isNotEmpty).join(' · ')
         : billing.isEstimated
             ? '账期日期待设置 · 当前为估算提醒'
             : '结算日 ${account.statementDay}日 · 还款日 ${account.paymentDueDay}日';
@@ -678,3 +965,6 @@ String _cardSuffix(Account account) {
       RegExp(r'\d').allMatches(account.note ?? '').map((m) => m[0]).join();
   return digits.length >= 4 ? digits.substring(digits.length - 4) : '1234';
 }
+
+DateTime _endOfMonth(DateTime month) =>
+    DateTime(month.year, month.month + 1, 0, 23, 59, 59, 999);

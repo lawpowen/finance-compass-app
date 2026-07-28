@@ -113,10 +113,26 @@ void main() {
 
     expect(_selectedBasisValue(tester), '- MYR 400');
 
+    await tester.tap(find.byKey(const Key('transaction-filter-account')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('现金账户').last);
+    await tester.pumpAndSettle();
+    expect(_selectedBasisValue(tester), '- MYR 100');
+    expect(find.text('支出 MYR 100'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('transaction-filter-account')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('全部').last);
+    await tester.pumpAndSettle();
+    expect(_selectedBasisValue(tester), '- MYR 400');
+
     await tester.tap(find.byKey(const Key('basis-card-cash')));
     await tester.pumpAndSettle();
-    expect(_selectedBasisValue(tester), '- MYR 300');
-    expect(find.text('流出 MYR 300'), findsOneWidget);
+    expect(find.text('实际现金'), findsOneWidget);
+    expect(_selectedBasisValue(tester), 'MYR 300');
+    expect(find.text('已知流出 MYR 300'), findsOneWidget);
+    expect(find.text('尚未安排 MYR 0'), findsOneWidget);
+    expect(find.byKey(const Key('monthly-funding-need-note')), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('basis-card-committed')));
     await tester.pumpAndSettle();
@@ -240,6 +256,16 @@ void main() {
         type: CategoryType.expense,
       ),
     );
+    repository = await repository.addAccount(
+      const Account(
+        id: 'loan',
+        name: '车贷',
+        accountType: AccountType.loan,
+        reportGroup: ReportGroup.credit,
+        currency: 'MYR',
+        currentBalance: -70000,
+      ),
+    );
     final now = DateTime.now();
     final futureDate = DateTime(now.year, now.month + 1, 5);
     repository = await repository.addTransactions([
@@ -264,6 +290,19 @@ void main() {
         transactionDate: DateTime(futureDate.year, futureDate.month, 6),
         status: TransactionStatus.actual,
         merchant: '已确定未来支出',
+      ),
+      FinanceTransaction(
+        id: 'future-loan-payment',
+        type: TransactionType.transfer,
+        accountId: 'cash',
+        toAccountId: 'loan',
+        amount: 1316,
+        toAmount: 1193.67,
+        currency: 'MYR',
+        toCurrency: 'MYR',
+        transactionDate: DateTime(futureDate.year, futureDate.month, 23),
+        status: TransactionStatus.planned,
+        merchant: '车贷月供',
       ),
     ]);
 
@@ -291,6 +330,18 @@ void main() {
         find.text('${futureDate.year}年${futureDate.month}月'), findsOneWidget);
     expect(find.text('未来保费'), findsOneWidget);
     expect(find.text('已确定未来支出'), findsOneWidget);
+    expect(find.text('车贷月供'), findsOneWidget);
+    expect(find.text('实际现金'), findsOneWidget);
+    expect(find.byKey(const Key('monthly-funding-need-card')), findsNothing);
+    expect(_selectedBasisValue(tester), '- MYR 240');
+
+    await tester.tap(find.byKey(const Key('basis-card-cash')));
+    await tester.pumpAndSettle();
+    expect(_selectedBasisValue(tester), 'MYR 1,556');
+    expect(find.text('需准备现金'), findsOneWidget);
+    expect(find.text('已知流出 MYR 1,556'), findsOneWidget);
+    expect(find.text('尚未安排 MYR 0'), findsOneWidget);
+    expect(find.byKey(const Key('monthly-funding-need-note')), findsOneWidget);
 
     await tester.tap(find.text('未来保费'));
     await tester.pumpAndSettle();

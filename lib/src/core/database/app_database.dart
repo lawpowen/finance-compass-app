@@ -43,7 +43,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 7;
+  int get schemaVersion => 9;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -79,6 +79,18 @@ class AppDatabase extends _$AppDatabase {
             await m.createTable(transactionTemplates);
             await m.createTable(recurringTransactionRules);
           }
+          if (from < 8) {
+            await m.addColumn(accounts, accounts.loanPrincipal);
+            await m.addColumn(accounts, accounts.loanAnnualInterestRate);
+            await m.addColumn(accounts, accounts.loanTermMonths);
+            await m.addColumn(accounts, accounts.loanStartDate);
+            await m.addColumn(accounts, accounts.loanPaymentDay);
+            await m.addColumn(accounts, accounts.loanRepaymentMethod);
+            await m.addColumn(accounts, accounts.loanQuotedMonthlyPayment);
+          }
+          if (from < 9) {
+            await m.addColumn(accounts, accounts.loanTrackingStartDate);
+          }
         },
         beforeOpen: (_) async {
           await _migrateLegacyPresetMetadata();
@@ -110,6 +122,19 @@ class AppDatabase extends _$AppDatabase {
             creditLimit: row.creditLimit,
             statementDay: row.statementDay,
             paymentDueDay: row.paymentDueDay,
+            loanPrincipal: row.loanPrincipal,
+            loanAnnualInterestRate: row.loanAnnualInterestRate,
+            loanTermMonths: row.loanTermMonths,
+            loanStartDate: row.loanStartDate,
+            loanTrackingStartDate: row.loanTrackingStartDate,
+            loanPaymentDay: row.loanPaymentDay,
+            loanRepaymentMethod: row.loanRepaymentMethod == null
+                ? null
+                : enumByName(
+                    model.LoanRepaymentMethod.values,
+                    row.loanRepaymentMethod!,
+                  ),
+            loanQuotedMonthlyPayment: row.loanQuotedMonthlyPayment,
           ),
         )
         .toList();
@@ -515,6 +540,14 @@ class AppDatabase extends _$AppDatabase {
                 creditLimit: Value(item.creditLimit),
                 statementDay: Value(item.statementDay),
                 paymentDueDay: Value(item.paymentDueDay),
+                loanPrincipal: Value(item.loanPrincipal),
+                loanAnnualInterestRate: Value(item.loanAnnualInterestRate),
+                loanTermMonths: Value(item.loanTermMonths),
+                loanStartDate: Value(item.loanStartDate),
+                loanTrackingStartDate: Value(item.loanTrackingStartDate),
+                loanPaymentDay: Value(item.loanPaymentDay),
+                loanRepaymentMethod: Value(item.loanRepaymentMethod?.name),
+                loanQuotedMonthlyPayment: Value(item.loanQuotedMonthlyPayment),
               ),
             )
             .toList(),
@@ -743,6 +776,14 @@ class AppDatabase extends _$AppDatabase {
         creditLimit: Value(account.creditLimit),
         statementDay: Value(account.statementDay),
         paymentDueDay: Value(account.paymentDueDay),
+        loanPrincipal: Value(account.loanPrincipal),
+        loanAnnualInterestRate: Value(account.loanAnnualInterestRate),
+        loanTermMonths: Value(account.loanTermMonths),
+        loanStartDate: Value(account.loanStartDate),
+        loanTrackingStartDate: Value(account.loanTrackingStartDate),
+        loanPaymentDay: Value(account.loanPaymentDay),
+        loanRepaymentMethod: Value(account.loanRepaymentMethod?.name),
+        loanQuotedMonthlyPayment: Value(account.loanQuotedMonthlyPayment),
       ),
     );
   }
@@ -762,6 +803,14 @@ class AppDatabase extends _$AppDatabase {
         creditLimit: Value(account.creditLimit),
         statementDay: Value(account.statementDay),
         paymentDueDay: Value(account.paymentDueDay),
+        loanPrincipal: Value(account.loanPrincipal),
+        loanAnnualInterestRate: Value(account.loanAnnualInterestRate),
+        loanTermMonths: Value(account.loanTermMonths),
+        loanStartDate: Value(account.loanStartDate),
+        loanTrackingStartDate: Value(account.loanTrackingStartDate),
+        loanPaymentDay: Value(account.loanPaymentDay),
+        loanRepaymentMethod: Value(account.loanRepaymentMethod?.name),
+        loanQuotedMonthlyPayment: Value(account.loanQuotedMonthlyPayment),
       ),
     );
   }
@@ -1356,12 +1405,12 @@ LazyDatabase _openConnection() {
   return LazyDatabase(() async {
     final directory = await getApplicationDocumentsDirectory();
     final file = File(p.join(directory.path, 'finance_app.sqlite'));
-    await _createPreV7MigrationBackup(file, directory);
+    await _createPreSchemaMigrationBackup(file, directory);
     return NativeDatabase.createInBackground(file);
   });
 }
 
-Future<void> _createPreV7MigrationBackup(
+Future<void> _createPreSchemaMigrationBackup(
   File databaseFile,
   Directory documentsDirectory,
 ) async {
@@ -1374,7 +1423,7 @@ Future<void> _createPreV7MigrationBackup(
       mode: sqlite.OpenMode.readOnly,
     );
     final version = source.userVersion;
-    if (version <= 0 || version >= 7) return;
+    if (version <= 0 || version >= 9) return;
 
     final timestamp = DateTime.now()
         .toIso8601String()
@@ -1384,7 +1433,7 @@ Future<void> _createPreV7MigrationBackup(
       p.join(
         documentsDirectory.path,
         'finance_compass_backups',
-        'pre_v7_$timestamp',
+        'pre_v9_$timestamp',
       ),
     );
     await backupDirectory.create(recursive: true);
@@ -1396,6 +1445,8 @@ Future<void> _createPreV7MigrationBackup(
       'transactions',
       'asset_snapshots',
       'app_meta',
+      'transaction_templates',
+      'recurring_transaction_rules',
     ];
     final tables = <String, List<Map<String, Object?>>>{};
     for (final tableName in tableNames) {
@@ -1414,7 +1465,7 @@ Future<void> _createPreV7MigrationBackup(
       const JsonEncoder.withIndent(' ').convert({
         'backup_type': 'pre_schema_migration',
         'source_schema_version': version,
-        'target_schema_version': 7,
+        'target_schema_version': 9,
         'exported_at': DateTime.now().toIso8601String(),
         'tables': tables,
       }),
@@ -1433,7 +1484,7 @@ Future<void> _createPreV7MigrationBackup(
       }
     }
   } catch (_) {
-    // Never upgrade an existing v1-v6 database without a verified restore
+    // Never upgrade an existing database without a verified restore
     // point. Surfacing the error keeps the original file untouched.
     rethrow;
   } finally {

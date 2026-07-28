@@ -53,6 +53,7 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
     ref.watch(financeRepositoryProvider);
     final now = DateTime.now();
     final month = DateTime(now.year, now.month + monthOffset);
+    final monthKey = '${month.year}-${month.month.toString().padLeft(2, '0')}';
     final realForMonth = repository.transactions
         .where((item) =>
             item.transactionDate.year == month.year &&
@@ -60,26 +61,36 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
         .toList()
       ..sort((a, b) => b.transactionDate.compareTo(a.transactionDate));
     final allForMonth = realForMonth;
-    final visible = allForMonth.where((item) {
-      final matchesStatus =
-          includePlanned || item.status != TransactionStatus.planned;
+    bool matchesActiveFilters(FinanceTransaction item) {
       final matchesAccount = accountFilter == null ||
           item.accountId == accountFilter ||
           item.toAccountId == accountFilter;
       final matchesCategory =
           categoryFilter == null || item.categoryId == categoryFilter;
-      return matchesStatus &&
-          matchesAccount &&
+      return matchesAccount &&
           matchesCategory &&
           (typeFilter == null || item.type == typeFilter);
-    }).toList();
-    final scopedTransactions = allForMonth
+    }
+
+    final filteredForMonth = allForMonth.where(matchesActiveFilters).toList();
+    final visible = filteredForMonth
         .where((item) =>
             includePlanned || item.status != TransactionStatus.planned)
         .toList();
+    final fundingNeed = monthOffset >= 0
+        ? repository.monthlyFundingNeedForMonth(
+            monthKey,
+            includePlanned: includePlanned,
+          )
+        : null;
     final basisSummaries = {
       for (final basis in _TransactionBasis.values)
-        basis: _summaryFor(basis, scopedTransactions, allForMonth),
+        basis: _summaryFor(
+          basis,
+          visible,
+          filteredForMonth,
+          fundingNeed: fundingNeed,
+        ),
     };
     final selectedSummary = basisSummaries[selectedBasis]!;
 
@@ -195,12 +206,25 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
                 ),
               ],
             ),
+            if (selectedBasis == _TransactionBasis.cash &&
+                fundingNeed != null) ...[
+              const SizedBox(height: 7),
+              Text(
+                '到期信用 ${compassMoney(fundingNeed.creditDue, decimals: 0)} · '
+                '到期贷款 ${compassMoney(fundingNeed.loanDue, decimals: 0)} · '
+                '已包含 ${compassMoney(fundingNeed.coveredDebtPayments, decimals: 0)}；'
+                '总额不重复，且不受下方筛选影响。',
+                key: const Key('monthly-funding-need-note'),
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
             const SizedBox(height: 10),
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
                 children: [
                   _QuickFilterPill(
+                    key: const Key('transaction-filter-account'),
                     icon: Icons.account_balance_wallet_outlined,
                     label: accountFilter == null
                         ? '全部账户'
@@ -209,12 +233,14 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
                     onTap: _pickAccountFilter,
                   ),
                   _QuickFilterPill(
+                    key: const Key('transaction-filter-type'),
                     icon: Icons.list_alt_rounded,
                     label: typeFilter == null ? '全部类型' : _typeName(typeFilter!),
                     selected: typeFilter != null,
                     onTap: _pickTypeFilter,
                   ),
                   _QuickFilterPill(
+                    key: const Key('transaction-filter-category'),
                     icon: Icons.sell_outlined,
                     label: categoryFilter == null
                         ? '全部类别'
@@ -266,8 +292,9 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
   _BasisSummary _summaryFor(
     _TransactionBasis basis,
     List<FinanceTransaction> scopedTransactions,
-    List<FinanceTransaction> allForMonth,
-  ) {
+    List<FinanceTransaction> allForMonth, {
+    MonthlyFundingNeed? fundingNeed,
+  }) {
     switch (basis) {
       case _TransactionBasis.consumption:
         final income = scopedTransactions
@@ -283,7 +310,7 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
               (sum, item) => sum + repository.transactionAmountInBase(item),
             );
         return _BasisSummary(
-          title: '消费发生',
+          title: '实际消费',
           subtitle: '按交易发生日',
           value: income - expense,
           primaryLabel: '收入',
@@ -303,15 +330,29 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
             outflow += -delta;
           }
         }
+        if (fundingNeed != null) {
+          return _BasisSummary(
+            title: '实际现金',
+            subtitle: '需准备现金',
+            value: fundingNeed.totalCashRequired,
+            primaryLabel: '已知流出',
+            primary: fundingNeed.knownCashOutflow,
+            secondaryLabel: '尚未安排',
+            secondary: fundingNeed.uncoveredDebtDue,
+            icon: Icons.account_balance_wallet_outlined,
+            valueIsOutflow: true,
+          );
+        }
         return _BasisSummary(
-          title: '现金收付',
-          subtitle: '按现金账户变动',
-          value: inflow - outflow,
+          title: '实际现金',
+          subtitle: '历史实际现金流出',
+          value: outflow,
           primaryLabel: '流入',
           primary: inflow,
           secondaryLabel: '流出',
           secondary: outflow,
-          icon: Icons.swap_horiz_rounded,
+          icon: Icons.account_balance_wallet_outlined,
+          valueIsOutflow: true,
         );
       case _TransactionBasis.committed:
         var additions = 0.0;
@@ -326,7 +367,9 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
         }
         final cutoff = repository.currentMonthCutoffDate();
         final currentCommitted = repository.accounts
-            .where((account) => account.reportGroup == ReportGroup.credit)
+            .where((account) =>
+                account.reportGroup == ReportGroup.credit &&
+                (accountFilter == null || account.id == accountFilter))
             .fold<double>(0, (sum, account) {
           final balance = account.accountType == AccountType.creditCard
               ? repository.convertToBase(
@@ -342,7 +385,7 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
                 .fold<double>(0, (sum, item) => sum + _creditDebtDelta(item))
             : 0.0;
         return _BasisSummary(
-          title: '已承诺',
+          title: '信用/贷款',
           subtitle: includePlanned ? '当前＋本月预计' : '当前信用与分期义务',
           value: (currentCommitted + plannedDelta)
               .clamp(0.0, double.infinity)
@@ -646,7 +689,9 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
         );
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('周期规则「${result.name}」已保存')),
+      SnackBar(
+        content: Text('周期规则「${result.name}」已保存，并生成未来 3 个完整月份的预计交易'),
+      ),
     );
   }
 
@@ -1020,6 +1065,7 @@ class _BasisSummary {
     required this.secondaryLabel,
     required this.secondary,
     required this.icon,
+    this.valueIsOutflow = false,
   });
 
   final String title;
@@ -1030,6 +1076,7 @@ class _BasisSummary {
   final String secondaryLabel;
   final double secondary;
   final IconData icon;
+  final bool valueIsOutflow;
 }
 
 class _BasisCards extends StatelessWidget {
@@ -1105,7 +1152,7 @@ class _BasisCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final valueColor = summary.value < 0
+    final valueColor = summary.valueIsOutflow || summary.value < 0
         ? FinanceColors.compassOrange
         : FinanceColors.compassTeal;
     return Material(
@@ -1210,7 +1257,13 @@ class _FlowLegend extends StatelessWidget {
             decoration: BoxDecoration(color: color, shape: BoxShape.circle),
           ),
           const SizedBox(width: 6),
-          Text(label, style: Theme.of(context).textTheme.bodySmall),
+          Expanded(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(label, style: Theme.of(context).textTheme.bodySmall),
+            ),
+          ),
         ],
       );
 }
@@ -1291,6 +1344,7 @@ class _StatusButton extends StatelessWidget {
 
 class _QuickFilterPill extends StatelessWidget {
   const _QuickFilterPill({
+    super.key,
     required this.icon,
     required this.label,
     required this.selected,

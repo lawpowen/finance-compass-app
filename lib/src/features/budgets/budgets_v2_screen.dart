@@ -501,6 +501,7 @@ class _BudgetEditorPageState extends State<BudgetEditorPage> {
   late double threshold;
   late bool rollover;
   late String? categoryId;
+  late String effectiveMonthKey;
 
   @override
   void initState() {
@@ -512,6 +513,7 @@ class _BudgetEditorPageState extends State<BudgetEditorPage> {
     );
     threshold = widget.initialBudget?.alertThreshold ?? .8;
     rollover = widget.initialBudget?.rolloverEnabled ?? true;
+    effectiveMonthKey = widget.monthKey;
     categoryId = widget.initialBudget?.categoryId ??
         widget.repository
             .categoriesByType(CategoryType.expense)
@@ -549,12 +551,16 @@ class _BudgetEditorPageState extends State<BudgetEditorPage> {
               Row(
                 children: [
                   const CompassBackButton(),
-                  const Spacer(),
-                  Text(
+                  Expanded(
+                    child: Text(
                       '${widget.initialBudget == null ? '新增' : '编辑'}$categoryName预算',
-                      style: Theme.of(context).textTheme.titleLarge),
-                  const Spacer(),
-                  const Icon(Icons.more_vert_rounded),
+                      style: Theme.of(context).textTheme.titleLarge,
+                      textAlign: TextAlign.center,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 48),
                 ],
               ),
               const SizedBox(height: 28),
@@ -577,7 +583,7 @@ class _BudgetEditorPageState extends State<BudgetEditorPage> {
                       ),
                     ),
                     const SizedBox(height: 6),
-                    Text(_monthLabel(widget.monthKey),
+                    Text(_monthLabel(effectiveMonthKey),
                         style: Theme.of(context).textTheme.bodySmall),
                   ],
                 ),
@@ -606,7 +612,15 @@ class _BudgetEditorPageState extends State<BudgetEditorPage> {
               _BudgetEditorRow(
                 icon: Icons.calendar_month_outlined,
                 title: '生效月份',
-                value: _monthLabel(widget.monthKey),
+                value: _monthLabel(effectiveMonthKey),
+                onTap: _pickMonth,
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(40, 0, 0, 12),
+                child: Text(
+                  '从该月起持续生效，直到同一类别设置新的月份预算。',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
               ),
               _BudgetEditorRow(
                 icon: Icons.notifications_none_rounded,
@@ -635,8 +649,9 @@ class _BudgetEditorPageState extends State<BudgetEditorPage> {
               ),
               const SizedBox(height: 8),
               TextButton.icon(
-                onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('下月结转会在月末按本月实际支出计算。')),
+                onPressed: () => _showNextMonthPreview(
+                  base: base,
+                  carried: carried,
                 ),
                 icon: const Icon(Icons.trending_up_rounded),
                 label: const Text('预览下月预算  ›'),
@@ -661,12 +676,16 @@ class _BudgetEditorPageState extends State<BudgetEditorPage> {
       );
       return;
     }
+    final initial = widget.initialBudget;
+    final updatesSameRule = initial != null &&
+        initial.categoryId == categoryId &&
+        initial.monthKey == effectiveMonthKey;
     Navigator.pop(
       context,
       Budget(
-        id: widget.initialBudget?.id ?? buildId('budget'),
+        id: updatesSameRule ? initial.id : buildId('budget'),
         categoryId: categoryId!,
-        monthKey: widget.monthKey,
+        monthKey: effectiveMonthKey,
         amount: amount,
         alertThreshold: threshold,
         rolloverEnabled: rollover,
@@ -702,6 +721,72 @@ class _BudgetEditorPageState extends State<BudgetEditorPage> {
     if (selected != null && mounted) {
       setState(() => categoryId = selected.id);
     }
+  }
+
+  Future<void> _pickMonth() async {
+    final current = _monthDateFromKey(effectiveMonthKey);
+    final months = List.generate(
+      25,
+      (index) => DateTime(current.year, current.month + index - 12),
+    );
+    final selected = await showModalBottomSheet<DateTime>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+          children: [
+            Text('选择生效月份', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 8),
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8),
+              child: Text('新金额会从所选月份开始沿用；更早月份的预算记录会保留。'),
+            ),
+            for (final month in months)
+              ListTile(
+                title: Text('${month.year}年${month.month}月'),
+                trailing: monthKeyFromDate(month) == effectiveMonthKey
+                    ? const Icon(Icons.check_rounded)
+                    : null,
+                onTap: () => Navigator.pop(sheetContext, month),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (selected != null && mounted) {
+      setState(() => effectiveMonthKey = monthKeyFromDate(selected));
+    }
+  }
+
+  Future<void> _showNextMonthPreview({
+    required double base,
+    required double carried,
+  }) async {
+    final actual = widget.presentation?.actual ?? 0;
+    final planned = widget.presentation?.planned ?? 0;
+    final projectedCarry = rollover ? base + carried - actual - planned : 0.0;
+    final month = _monthDateFromKey(effectiveMonthKey);
+    final nextMonth = DateTime(month.year, month.month + 1);
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('${nextMonth.year}年${nextMonth.month}月预算预览'),
+        content: Text(
+          '基础预算：${compassMoney(base)}\n'
+          '预计结转：${compassMoney(projectedCarry)}\n'
+          '预计可用：${compassMoney(base + projectedCarry)}\n\n'
+          '按当前实际与预计支出计算，月底前仍会随交易变化。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -1183,7 +1268,7 @@ class _BudgetEditorRow extends StatelessWidget {
         icon: icon,
         title: title,
         value: value,
-        onTap: onTap ?? _noop,
+        onTap: onTap,
       );
 }
 
@@ -1231,7 +1316,6 @@ class _BudgetEditorInputRow extends StatelessWidget {
                 ),
               ),
             ),
-            const Icon(Icons.chevron_right_rounded),
           ],
         ),
       );
@@ -1263,11 +1347,14 @@ String _monthLabel(String monthKey) {
   return '${parts[0]}年${int.tryParse(parts[1]) ?? parts[1]}月';
 }
 
+DateTime _monthDateFromKey(String monthKey) {
+  final parts = monthKey.split('-');
+  return DateTime(int.parse(parts[0]), int.parse(parts[1]));
+}
+
 String _accountName(FinanceRepository repository, String accountId) {
   for (final account in repository.accounts) {
     if (account.id == accountId) return account.name;
   }
   return '已删除账户';
 }
-
-void _noop() {}

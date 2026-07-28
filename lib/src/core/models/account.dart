@@ -20,6 +20,12 @@ enum ReportGroup {
   retirement,
 }
 
+enum LoanRepaymentMethod {
+  equalInstallment,
+  equalPrincipal,
+  flatRate,
+}
+
 class Account {
   const Account({
     required this.id,
@@ -35,6 +41,14 @@ class Account {
     this.creditLimit,
     this.statementDay,
     this.paymentDueDay,
+    this.loanPrincipal,
+    this.loanAnnualInterestRate,
+    this.loanTermMonths,
+    this.loanStartDate,
+    this.loanTrackingStartDate,
+    this.loanPaymentDay,
+    this.loanRepaymentMethod,
+    this.loanQuotedMonthlyPayment,
   });
 
   final String id;
@@ -50,8 +64,30 @@ class Account {
   final double? creditLimit;
   final int? statementDay;
   final int? paymentDueDay;
+  final double? loanPrincipal;
+  final double? loanAnnualInterestRate;
+  final int? loanTermMonths;
+  final DateTime? loanStartDate;
+  final DateTime? loanTrackingStartDate;
+  final int? loanPaymentDay;
+  final LoanRepaymentMethod? loanRepaymentMethod;
+  final double? loanQuotedMonthlyPayment;
 
   bool get hasCompleteCreditCardProfile =>
       accountType != AccountType.creditCard ||
       (creditLimit != null && statementDay != null && paymentDueDay != null);
+
+  bool get hasCompleteLoanProfile =>
+      accountType != AccountType.loan ||
+      (loanPrincipal != null &&
+          loanPrincipal! > 0 &&
+          loanAnnualInterestRate != null &&
+          loanAnnualInterestRate! >= 0 &&
+          loanTermMonths != null &&
+          loanTermMonths! > 0 &&
+          loanStartDate != null &&
+          loanPaymentDay != null &&
+          loanPaymentDay! >= 1 &&
+          loanPaymentDay! <= 31 &&
+          loanRepaymentMethod != null);
 }

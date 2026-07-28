@@ -74,7 +74,8 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
     amountController.addListener(_updateTransferEstimateIfAllowed);
     toAmountController.addListener(_markToAmountEdited);
     _updateTransferEstimate(
-      force: draft?.toAmount == null || _isSameCurrencyTransfer,
+      force: draft?.toAmount == null ||
+          (_isSameCurrencyTransfer && !_isStructuredLoanPayment),
     );
   }
 
@@ -361,7 +362,6 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                   icon: Icons.attach_file_rounded,
                   title: '附件',
                   value: '计划中（此版本尚未提供）',
-                  onTap: () => _showPlannedFeature('附件'),
                 ),
                 if (!widget.editExisting && widget.allowRecurringGeneration)
                   _ComposerRow(
@@ -376,8 +376,7 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                   _ComposerRow(
                     icon: Icons.repeat_rounded,
                     title: '周期规则',
-                    value: '由周期计划管理',
-                    onTap: () => _showPlannedFeature('请在“周期计划”中修改这条规则'),
+                    value: '请在规则中心修改',
                   ),
               ],
               const SizedBox(height: 24),
@@ -440,6 +439,16 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
         targetCurrency.trim().toUpperCase();
   }
 
+  bool get _isStructuredLoanPayment {
+    final draft = widget.draft;
+    return draft != null &&
+        draft.type == TransactionType.transfer &&
+        draft.accountId == accountId &&
+        draft.toAccountId == toAccountId &&
+        draft.toAmount != null &&
+        RegExp(r'^贷款月供 #\d+$').hasMatch(draft.description ?? '');
+  }
+
   void _markToAmountEdited() {
     if (!_isAutoSettingToAmount) {
       _toAmountEditedByUser = true;
@@ -452,6 +461,7 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
 
   void _updateTransferEstimate({bool force = false}) {
     if (type != TransactionType.transfer || toAccountId == null) return;
+    if (_isStructuredLoanPayment) return;
     if (!force && _toAmountEditedByUser && !_isSameCurrencyTransfer) return;
     final amount = double.tryParse(amountController.text.trim());
     if (amount == null || !amount.isFinite) return;
@@ -560,12 +570,6 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
     );
   }
 
-  void _showPlannedFeature(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
-  }
-
   Future<T?> _pickFromSheet<T>({
     required String title,
     required List<T> items,
@@ -653,12 +657,12 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
     final isSameCurrencyTransfer = type == TransactionType.transfer &&
         sourceCurrency.trim().toUpperCase() ==
             (targetCurrency ?? sourceCurrency).trim().toUpperCase();
-    final transferInAmount =
-        type == TransactionType.transfer && !isSameCurrencyTransfer
-            ? double.tryParse(toAmountController.text.trim())
-            : null;
+    final transferInAmount = type == TransactionType.transfer &&
+            (!isSameCurrencyTransfer || _isStructuredLoanPayment)
+        ? double.tryParse(toAmountController.text.trim())
+        : null;
     if (type == TransactionType.transfer &&
-        !isSameCurrencyTransfer &&
+        (!isSameCurrencyTransfer || _isStructuredLoanPayment) &&
         (transferInAmount == null || !transferInAmount.isFinite)) {
       return;
     }
@@ -670,9 +674,9 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
       categoryId: categoryId,
       amount: amount,
       currency: sourceCurrency,
-      // A same-currency transfer has one canonical amount. Keeping a stale
-      // quick-template toAmount (especially zero) would make the receiving
-      // account diverge from the source account.
+      // Normal same-currency transfers have one canonical amount. Loan
+      // payments are the deliberate exception: amount is the full cash
+      // payment while toAmount is only the principal reduction.
       toAmount: transferInAmount,
       toCurrency: targetCurrency,
       recordDate:
@@ -778,45 +782,46 @@ class _ComposerRow extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.value,
-    required this.onTap,
+    this.onTap,
   });
 
   final IconData icon;
   final String title;
   final String value;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
-  Widget build(BuildContext context) => InkWell(
-        onTap: onTap,
-        child: Container(
-          constraints: const BoxConstraints(minHeight: 50),
-          decoration: const BoxDecoration(
-            border: Border(
-              bottom: BorderSide(color: FinanceColors.compassBorder),
+  Widget build(BuildContext context) {
+    final content = Container(
+      constraints: const BoxConstraints(minHeight: 50),
+      decoration: const BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: FinanceColors.compassBorder),
+        ),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 38,
+            child: Icon(icon, color: FinanceColors.compassTeal),
+          ),
+          const SizedBox(width: 8),
+          Expanded(child: Text(title)),
+          Flexible(
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall,
             ),
           ),
-          child: Row(
-            children: [
-              SizedBox(
-                width: 38,
-                child: Icon(icon, color: FinanceColors.compassTeal),
-              ),
-              const SizedBox(width: 8),
-              Expanded(child: Text(title)),
-              Flexible(
-                child: Text(
-                  value,
-                  textAlign: TextAlign.right,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ),
-              const Icon(Icons.chevron_right_rounded, size: 20),
-            ],
-          ),
-        ),
-      );
+          if (onTap != null) const Icon(Icons.chevron_right_rounded, size: 20),
+        ],
+      ),
+    );
+    if (onTap == null) return content;
+    return InkWell(onTap: onTap, child: content);
+  }
 }
 
 class _ComposerInputRow extends StatelessWidget {
@@ -862,7 +867,6 @@ class _ComposerInputRow extends StatelessWidget {
                 ),
               ),
             ),
-            const Icon(Icons.chevron_right_rounded, size: 20),
           ],
         ),
       );

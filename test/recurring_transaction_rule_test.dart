@@ -87,7 +87,7 @@ void main() {
     expect(rule.status, TransactionStatus.planned);
   });
 
-  test('repository generation keeps the rule status in future months',
+  test('saving a rule automatically creates three full months of plans',
       () async {
     final now = DateTime.now();
     final start = DateTime(now.year, now.month + 1, 15);
@@ -133,22 +133,15 @@ void main() {
         .singleWhere((item) => item.name == 'Actual installments');
     final plannedRule = repository.recurringTransactionRules
         .singleWhere((item) => item.name == 'Planned installments');
-    repository = await repository.generateRecurringTransactions(
-      actualRule.id,
-      monthsAhead: 2,
-    );
-    repository = await repository.generateRecurringTransactions(
-      plannedRule.id,
-      monthsAhead: 2,
-    );
-
     final actualRows = repository.transactions
         .where((item) => item.recurringRuleId == actualRule.id);
     final plannedRows = repository.transactions
         .where((item) => item.recurringRuleId == plannedRule.id);
     expect(actualRows, isNotEmpty);
+    expect(actualRows, hasLength(3));
     expect(actualRows.map((item) => item.status),
-        everyElement(TransactionStatus.actual));
+        everyElement(TransactionStatus.planned));
+    expect(plannedRows, hasLength(3));
     expect(plannedRows, isNotEmpty);
     expect(plannedRows.map((item) => item.status),
         everyElement(TransactionStatus.planned));

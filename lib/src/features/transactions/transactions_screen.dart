@@ -1082,20 +1082,19 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
     BuildContext context,
     FinanceTransaction transaction,
   ) async {
-    final controller = TextEditingController(
-      text: transaction.description ??
-          transaction.merchant ??
-          _categoryNameOrFallback(
-            widget.repository,
-            transaction.categoryId ?? '',
-          ),
-    );
+    var pendingName = transaction.description ??
+        transaction.merchant ??
+        _categoryNameOrFallback(
+          widget.repository,
+          transaction.categoryId ?? '',
+        );
     final name = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('保存为模板'),
-        content: TextField(
-          controller: controller,
+        content: TextFormField(
+          initialValue: pendingName,
+          onChanged: (value) => pendingName = value,
           decoration: const InputDecoration(
             labelText: '模板名称',
             border: OutlineInputBorder(),
@@ -1108,13 +1107,12 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
             child: const Text('取消'),
           ),
           FilledButton(
-            onPressed: () => Navigator.of(context).pop(controller.text.trim()),
+            onPressed: () => Navigator.of(context).pop(pendingName.trim()),
             child: const Text('保存'),
           ),
         ],
       ),
     );
-    controller.dispose();
     if (!context.mounted || name == null || name.trim().isEmpty) {
       return;
     }
@@ -1136,14 +1134,12 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
     BuildContext context,
     FinanceTransaction transaction,
   ) async {
-    final nameController = TextEditingController(
-      text: transaction.description ??
-          transaction.merchant ??
-          _categoryNameOrFallback(
-            widget.repository,
-            transaction.categoryId ?? '',
-          ),
-    );
+    var pendingName = transaction.description ??
+        transaction.merchant ??
+        _categoryNameOrFallback(
+          widget.repository,
+          transaction.categoryId ?? '',
+        );
     var intervalMonths = 1;
     final result = await showDialog<_RecurringRuleDraft>(
       context: context,
@@ -1153,8 +1149,9 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              TextField(
-                controller: nameController,
+              TextFormField(
+                initialValue: pendingName,
+                onChanged: (value) => pendingName = value,
                 decoration: const InputDecoration(
                   labelText: '规则名称',
                   border: OutlineInputBorder(),
@@ -1190,7 +1187,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
             FilledButton(
               onPressed: () => Navigator.of(context).pop(
                 _RecurringRuleDraft(
-                  name: nameController.text.trim(),
+                  name: pendingName.trim(),
                   intervalMonths: intervalMonths,
                 ),
               ),
@@ -1200,7 +1197,6 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
         ),
       ),
     );
-    nameController.dispose();
     if (!context.mounted || result == null || result.name.isEmpty) {
       return;
     }
@@ -1215,7 +1211,9 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
       return;
     }
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('周期规则「${result.name}」已保存')),
+      SnackBar(
+        content: Text('周期规则「${result.name}」已保存，并生成未来 3 个完整月份的预计交易'),
+      ),
     );
   }
 

@@ -13,6 +13,7 @@ import '../models/budget.dart';
 import '../models/category.dart';
 import '../models/credit_card_billing.dart';
 import '../models/forecast_summary.dart';
+import '../models/loan_amortization.dart';
 import '../models/monthly_summary.dart';
 import '../models/transaction.dart';
 import '../models/transaction_preset.dart' as preset;
@@ -22,6 +23,7 @@ import '../utils/month_key.dart';
 import 'sample_data.dart';
 
 class FinanceRepository {
+  static const uncategorizedCashOutflowKey = '__cash_outflow_uncategorized__';
   static const _exchangeRatesMetaKey = 'exchange_rates_to_base_json';
   static const _currencyPriorityMetaKey = 'currency_priority_json';
 
@@ -312,7 +314,7 @@ class FinanceRepository {
     return [
       AssetGoal(
         id: 'goal_legacy',
-        name: '净资产目标',
+        name: '资产目标',
         targetAmount: legacyAmount,
         reachedAt: legacyReachedAtRaw == null
             ? null
@@ -360,11 +362,12 @@ class FinanceRepository {
   }
 
   double totalTargetAssets() {
-    return displayTotalAssets(includeCredit: true);
+    return displayTotalAssets(includeCredit: false);
   }
 
   List<AssetGoalHistoryPoint> totalAssetHistory({
     DateTime? cutoffDate,
+    bool includeCredit = true,
   }) {
     final targetCutoff = cutoffDate ?? currentMonthCutoffDate();
     final monthKeys = <String>{
@@ -384,7 +387,8 @@ class FinanceRepository {
         AssetGoalHistoryPoint(
           date: now,
           label: '${now.year}-${now.month.toString().padLeft(2, '0')}',
-          totalAssets: totalTargetAssets(),
+          totalAssets:
+              totalAssetsAt(targetCutoff, includeCredit: includeCredit),
         ),
       ];
     }
@@ -398,7 +402,7 @@ class FinanceRepository {
       return AssetGoalHistoryPoint(
         date: date,
         label: monthKey,
-        totalAssets: totalAssetsAt(date),
+        totalAssets: totalAssetsAt(date, includeCredit: includeCredit),
       );
     }).toList();
   }
@@ -407,8 +411,14 @@ class FinanceRepository {
     DateTime? cutoffDate,
   }) {
     final targetCutoff = cutoffDate ?? currentMonthCutoffDate();
-    final history = totalAssetHistory(cutoffDate: targetCutoff);
-    final currentAssets = totalAssetsAt(targetCutoff);
+    final history = totalAssetHistory(
+      cutoffDate: targetCutoff,
+      includeCredit: false,
+    );
+    final currentAssets = totalAssetsAt(
+      targetCutoff,
+      includeCredit: false,
+    );
     final summaries = assetGoals.map((goal) {
       AssetGoalHistoryPoint? reachedPoint;
       for (final point in history) {
@@ -941,13 +951,9 @@ class FinanceRepository {
     );
     final startMonth = DateTime(now.year, now.month);
     var runningCash = displayTotalAssetsByGroup(
-          ReportGroup.cash,
-          cutoffDate: todayCutoff,
-        ) +
-        displayTotalAssetsByGroup(
-          ReportGroup.credit,
-          cutoffDate: todayCutoff,
-        );
+      ReportGroup.cash,
+      cutoffDate: todayCutoff,
+    );
 
     return List.generate(months, (index) {
       final monthDate = DateTime(startMonth.year, startMonth.month + index);
@@ -963,22 +969,14 @@ class FinanceRepository {
             transaction.status != TransactionStatus.planned) {
           continue;
         }
-        final delta = _cashFlowDelta(transaction);
+        final delta = _actualCashFlowDelta(transaction);
         if (delta == 0) {
           continue;
         }
-        switch (transaction.type) {
-          case TransactionType.income:
-            income += delta;
-            break;
-          case TransactionType.expense:
-            expense += delta.abs();
-            break;
-          case TransactionType.transfer:
-            transfers += delta;
-            break;
-          case TransactionType.adjustment:
-            break;
+        if (delta > 0) {
+          income += delta;
+        } else {
+          expense += -delta;
         }
       }
 
@@ -995,7 +993,7 @@ class FinanceRepository {
     });
   }
 
-  /// Net cash/credit-account movement for transactions dated inside an exact
+  /// Net cash-account movement for transactions dated inside an exact
   /// calendar window. Both planned and future-dated actual records are
   /// included because this method is used by forward-looking UI projections.
   double cashFlowNetBetween({
@@ -1021,8 +1019,303 @@ class FinanceRepository {
       return !date.isBefore(start) && !date.isAfter(end);
     }).fold<double>(
       0,
-      (sum, transaction) => sum + _cashFlowDelta(transaction),
+      (sum, transaction) => sum + _actualCashFlowDelta(transaction),
     );
+  }
+
+  /// Actual movement of cash-group accounts for the requested months.
+  ///
+  /// Credit-card purchases are excluded until cash is used to repay the card.
+  /// Transfers between two cash accounts net to zero. Planned records are
+  /// excluded unless [includePlanned] is explicitly enabled. Optional filters
+  /// select the same transaction set shown by the transactions page before the
+  /// cash movement is calculated.
+  CashFlowSummary actualCashFlowSummaryForMonths(
+    Iterable<String> monthKeys, {
+    bool includePlanned = false,
+    String? accountId,
+    TransactionType? type,
+    String? categoryId,
+  }) {
+    final allowedMonths = monthKeys.toSet();
+    var inflow = 0.0;
+    var outflow = 0.0;
+    for (final transaction in _transactions) {
+      if (!allowedMonths.contains(_monthKey(transaction.transactionDate)) ||
+          (!includePlanned &&
+              transaction.status == TransactionStatus.planned) ||
+          (accountId != null &&
+              transaction.accountId != accountId &&
+              transaction.toAccountId != accountId) ||
+          (type != null && transaction.type != type) ||
+          (categoryId != null && transaction.categoryId != categoryId)) {
+        continue;
+      }
+      final delta = _actualCashFlowDelta(transaction);
+      if (delta >= 0) {
+        inflow += delta;
+      } else {
+        outflow += -delta;
+      }
+    }
+    return CashFlowSummary(inflow: inflow, outflow: outflow);
+  }
+
+  CashFlowSummary actualCashFlowSummaryForMonth(
+    String monthKey, {
+    bool includePlanned = false,
+    String? accountId,
+    TransactionType? type,
+    String? categoryId,
+  }) {
+    return actualCashFlowSummaryForMonths(
+      [monthKey],
+      includePlanned: includePlanned,
+      accountId: accountId,
+      type: type,
+      categoryId: categoryId,
+    );
+  }
+
+  /// Total cash that must be available for a calendar month.
+  ///
+  /// Known cash outflow already includes actual transfers and, when requested,
+  /// planned transfers. Credit-card and loan instalments that are due in the
+  /// month are added only when no matching payment is already represented in
+  /// that cash outflow, so repayments are never counted twice.
+  MonthlyFundingNeed monthlyFundingNeedForMonth(
+    String monthKey, {
+    bool includePlanned = true,
+  }) {
+    final parts = monthKey.split('-');
+    if (parts.length != 2) {
+      throw ArgumentError.value(monthKey, 'monthKey', 'Expected YYYY-MM');
+    }
+    final year = int.tryParse(parts[0]);
+    final month = int.tryParse(parts[1]);
+    if (year == null || month == null || month < 1 || month > 12) {
+      throw ArgumentError.value(monthKey, 'monthKey', 'Expected YYYY-MM');
+    }
+
+    final monthStart = DateTime(year, month);
+    final monthEnd = DateTime(year, month + 1, 0, 23, 59, 59, 999);
+    final cashFlow = actualCashFlowSummaryForMonth(
+      monthKey,
+      includePlanned: includePlanned,
+    );
+
+    final creditDueByAccount = <String, _CreditDueSnapshot>{};
+    final checkpoints = <DateTime>{monthStart};
+    for (final account in _accounts.where(
+      (item) =>
+          item.isActive &&
+          item.accountType == AccountType.creditCard &&
+          item.hasCompleteCreditCardProfile,
+    )) {
+      checkpoints.add(_clampedMonthDay(year, month, account.statementDay!));
+    }
+    final orderedCheckpoints = checkpoints.toList()..sort();
+    for (final checkpoint in orderedCheckpoints) {
+      for (final reminder in creditCardPaymentReminders(asOf: checkpoint)) {
+        if (reminder.dueDate.year != year || reminder.dueDate.month != month) {
+          continue;
+        }
+        creditDueByAccount[reminder.account.id] = _CreditDueSnapshot(
+          amount: convertToBase(
+            reminder.amountDue,
+            reminder.account.currency,
+          ),
+          asOf: checkpoint,
+        );
+      }
+    }
+
+    var creditDue = 0.0;
+    var creditCovered = 0.0;
+    for (final entry in creditDueByAccount.entries) {
+      final due = entry.value.amount;
+      creditDue += due;
+      final covered = _transactions.where((transaction) {
+        final date = transaction.transactionDate;
+        if (transaction.type != TransactionType.transfer ||
+            transaction.toAccountId != entry.key ||
+            date.isBefore(monthStart) ||
+            date.isAfter(monthEnd)) {
+          return false;
+        }
+        if (transaction.status == TransactionStatus.planned) {
+          return includePlanned;
+        }
+        return date.isAfter(entry.value.asOf);
+      }).fold<double>(
+        0,
+        (sum, transaction) => sum + transferIncomingAmountInBase(transaction),
+      );
+      creditCovered += covered.clamp(0.0, due).toDouble();
+    }
+
+    var loanDue = 0.0;
+    var loanCovered = 0.0;
+    for (final loan in _accounts.where(
+      (item) =>
+          item.isActive &&
+          item.accountType == AccountType.loan &&
+          item.hasCompleteLoanProfile,
+    )) {
+      LoanAmortizationSchedule schedule;
+      try {
+        schedule = calculateLoanAmortization(
+          principal: loan.loanPrincipal!,
+          annualInterestRatePercent: loan.loanAnnualInterestRate!,
+          termMonths: loan.loanTermMonths!,
+          startDate: loan.loanTrackingStartDate ?? loan.loanStartDate!,
+          paymentDay: loan.loanPaymentDay!,
+          method: loan.loanRepaymentMethod!,
+          quotedMonthlyPayment: loan.loanQuotedMonthlyPayment,
+          openingPrincipal: loan.initialBalance.abs(),
+        );
+      } on ArgumentError {
+        continue;
+      }
+
+      for (final installment in schedule.installments.where(
+        (item) => item.dueDate.year == year && item.dueDate.month == month,
+      )) {
+        final paidBeforeMonth = _transactions.any((transaction) =>
+            transaction.status != TransactionStatus.planned &&
+            transaction.transactionDate.isBefore(monthStart) &&
+            _isLoanInstallmentTransfer(
+                transaction, loan.id, installment.number));
+        if (paidBeforeMonth) continue;
+
+        final due = convertToBase(installment.payment, loan.currency);
+        loanDue += due;
+        final covered = _loanInstallmentCoverageInMonth(
+          loanId: loan.id,
+          installmentNumber: installment.number,
+          monthStart: monthStart,
+          monthEnd: monthEnd,
+          includePlanned: includePlanned,
+        );
+        loanCovered += covered.clamp(0.0, due).toDouble();
+      }
+    }
+
+    return MonthlyFundingNeed(
+      monthKey: monthKey,
+      cashInflow: cashFlow.inflow,
+      knownCashOutflow: cashFlow.outflow,
+      creditDue: creditDue,
+      loanDue: loanDue,
+      coveredDebtPayments: creditCovered + loanCovered,
+    );
+  }
+
+  double _loanInstallmentCoverageInMonth({
+    required String loanId,
+    required int installmentNumber,
+    required DateTime monthStart,
+    required DateTime monthEnd,
+    required bool includePlanned,
+  }) {
+    final matchingTransfers = _transactions.where((transaction) {
+      final date = transaction.transactionDate;
+      return !date.isBefore(monthStart) &&
+          !date.isAfter(monthEnd) &&
+          (includePlanned || transaction.status != TransactionStatus.planned) &&
+          transaction.type == TransactionType.transfer &&
+          transaction.toAccountId == loanId;
+    }).toList();
+    var covered = matchingTransfers.fold<double>(
+      0,
+      (sum, transaction) => sum + transactionAmountInBase(transaction),
+    );
+
+    // Legacy plans stored principal and interest as two records. The transfer
+    // identifies the loan; the companion interest expense shares source, date
+    // and instalment number and must also cover the due payment.
+    for (final transfer in matchingTransfers.where(
+      (item) => item.description == '贷款本金 #$installmentNumber',
+    )) {
+      covered += _transactions.where((transaction) {
+        final date = transaction.transactionDate;
+        return transaction.type == TransactionType.expense &&
+            transaction.accountId == transfer.accountId &&
+            transaction.description == '贷款利息 #$installmentNumber' &&
+            _sameDay(date, transfer.transactionDate) &&
+            !date.isBefore(monthStart) &&
+            !date.isAfter(monthEnd) &&
+            (includePlanned || transaction.status != TransactionStatus.planned);
+      }).fold<double>(
+        0,
+        (sum, transaction) => sum + transactionAmountInBase(transaction),
+      );
+    }
+    return covered;
+  }
+
+  bool _isLoanInstallmentTransfer(
+    FinanceTransaction transaction,
+    String loanId,
+    int installmentNumber,
+  ) {
+    if (transaction.type != TransactionType.transfer ||
+        transaction.toAccountId != loanId) {
+      return false;
+    }
+    final description = transaction.description ?? '';
+    return description == '贷款月供 #$installmentNumber' ||
+        description == '贷款本金 #$installmentNumber';
+  }
+
+  DateTime _clampedMonthDay(int year, int month, int day) {
+    final lastDay = DateTime(year, month + 1, 0).day;
+    return DateTime(year, month, day.clamp(1, lastDay));
+  }
+
+  bool _sameDay(DateTime left, DateTime right) =>
+      left.year == right.year &&
+      left.month == right.month &&
+      left.day == right.day;
+
+  Map<String, double> actualCashOutflowByCategoryForMonths(
+    Iterable<String> monthKeys,
+  ) {
+    final keys = monthKeys.toList();
+    final result = <String, double>{};
+    for (final category in _categories) {
+      final outflow = actualCashFlowSummaryForMonths(
+        keys,
+        categoryId: category.id,
+      ).outflow;
+      if (outflow > 0) {
+        result[category.id] = outflow;
+      }
+    }
+    final total = actualCashFlowSummaryForMonths(keys).outflow;
+    final categorized =
+        result.values.fold<double>(0, (sum, item) => sum + item);
+    final uncategorized = total - categorized;
+    if (uncategorized > .005) {
+      result[uncategorizedCashOutflowKey] = uncategorized;
+    }
+    return result;
+  }
+
+  Map<String, double> actualCashOutflowByAccountForMonth(String monthKey) {
+    final result = <String, double>{};
+    for (final account in _accounts.where(
+      (item) => item.reportGroup == ReportGroup.cash,
+    )) {
+      final outflow = actualCashFlowSummaryForMonth(
+        monthKey,
+        accountId: account.id,
+      ).outflow;
+      if (outflow > 0) {
+        result[account.id] = outflow;
+      }
+    }
+    return result;
   }
 
   List<CreditCardPaymentReminder> creditCardPaymentReminders({
@@ -1073,15 +1366,16 @@ class FinanceRepository {
 
   List<MonthlySummary> monthlySummaries({required int months}) {
     final monthKeys = _recentMonthKeys(months);
-    return monthKeys
-        .map(
-          (monthKey) => MonthlySummary(
-            monthKey: monthKey,
-            income: totalIncomeForMonth(monthKey),
-            expense: totalExpenseForMonth(monthKey),
-          ),
-        )
-        .toList();
+    return monthKeys.map(
+      (monthKey) {
+        final cashFlow = actualCashFlowSummaryForMonth(monthKey);
+        return MonthlySummary(
+          monthKey: monthKey,
+          income: cashFlow.inflow,
+          expense: cashFlow.outflow,
+        );
+      },
+    ).toList();
   }
 
   List<Budget> reusableBudgets() {
@@ -1467,7 +1761,11 @@ class FinanceRepository {
       ...recurringTransactionRules.where((item) => item.name != name),
       rule,
     ]);
-    return refresh();
+    final refreshed = await refresh();
+    return refreshed.generateRecurringTransactions(
+      rule.id,
+      monthsAhead: 3,
+    );
   }
 
   Future<FinanceRepository> deleteRecurringTransactionRule(
@@ -1506,7 +1804,8 @@ class FinanceRepository {
     }
 
     final now = DateTime.now();
-    final endDate = DateTime(now.year, now.month + monthsAhead, now.day);
+    final today = DateTime(now.year, now.month, now.day);
+    final endDate = DateTime(now.year, now.month + monthsAhead + 1, 0);
     final generatedKeys = {...activeRule.generatedMonthKeys};
     final transactions = <FinanceTransaction>[];
     var generatedCount = 0;
@@ -1518,14 +1817,15 @@ class FinanceRepository {
 
     while (!cursor.isAfter(endDate)) {
       final currentMonthKey = _monthKey(cursor);
-      if (!generatedKeys.contains(currentMonthKey) &&
+      if (cursor.isAfter(today) &&
+          !generatedKeys.contains(currentMonthKey) &&
           (activeRule.endDate == null ||
               !cursor.isAfter(activeRule.endDate!))) {
         transactions.add(
           activeRule.toTransaction(
             id: '${buildId('txn')}_${generatedCount++}',
             date: cursor,
-            status: activeRule.status,
+            status: TransactionStatus.planned,
           ),
         );
         generatedKeys.add(currentMonthKey);
@@ -1561,7 +1861,7 @@ class FinanceRepository {
       'format_version': 3,
       'transaction_date_semantics': 'occurrence_date',
       'app_version': '0.8.0',
-      'schema_version': 7,
+      'schema_version': 9,
       'exported_at': DateTime.now().toIso8601String(),
       'meta': exportableMeta,
       'accounts': _accounts
@@ -1580,6 +1880,15 @@ class FinanceRepository {
               'credit_limit': item.creditLimit,
               'statement_day': item.statementDay,
               'payment_due_day': item.paymentDueDay,
+              'loan_principal': item.loanPrincipal,
+              'loan_annual_interest_rate': item.loanAnnualInterestRate,
+              'loan_term_months': item.loanTermMonths,
+              'loan_start_date': item.loanStartDate?.toIso8601String(),
+              'loan_tracking_start_date':
+                  item.loanTrackingStartDate?.toIso8601String(),
+              'loan_payment_day': item.loanPaymentDay,
+              'loan_repayment_method': item.loanRepaymentMethod?.name,
+              'loan_quoted_monthly_payment': item.loanQuotedMonthlyPayment,
             },
           )
           .toList(),
@@ -1880,6 +2189,23 @@ class FinanceRepository {
             creditLimit: (item['credit_limit'] as num?)?.toDouble(),
             statementDay: (item['statement_day'] as num?)?.toInt(),
             paymentDueDay: (item['payment_due_day'] as num?)?.toInt(),
+            loanPrincipal: (item['loan_principal'] as num?)?.toDouble(),
+            loanAnnualInterestRate:
+                (item['loan_annual_interest_rate'] as num?)?.toDouble(),
+            loanTermMonths: (item['loan_term_months'] as num?)?.toInt(),
+            loanStartDate: item['loan_start_date'] == null
+                ? null
+                : DateTime.parse(item['loan_start_date'] as String),
+            loanTrackingStartDate: item['loan_tracking_start_date'] == null
+                ? null
+                : DateTime.parse(item['loan_tracking_start_date'] as String),
+            loanPaymentDay: (item['loan_payment_day'] as num?)?.toInt(),
+            loanRepaymentMethod: item['loan_repayment_method'] == null
+                ? null
+                : LoanRepaymentMethod.values
+                    .byName(item['loan_repayment_method'] as String),
+            loanQuotedMonthlyPayment:
+                (item['loan_quoted_monthly_payment'] as num?)?.toDouble(),
           ),
         )
         .toList();
@@ -2489,45 +2815,31 @@ class FinanceRepository {
     }
   }
 
-  double _cashFlowDelta(FinanceTransaction transaction) {
-    double deltaFor(String accountId, double amount, String currency) {
-      final account = _accounts.firstWhere(
-        (item) => item.id == accountId,
-        orElse: () => Account(
-          id: accountId,
-          name: accountId,
-          accountType: AccountType.other,
-          reportGroup: ReportGroup.investment,
-          currency: transaction.currency,
-          currentBalance: 0,
-        ),
-      );
-      if (account.reportGroup != ReportGroup.cash &&
-          account.reportGroup != ReportGroup.credit) {
-        return 0;
+  double _actualCashFlowDelta(FinanceTransaction transaction) {
+    Account? accountFor(String accountId) {
+      for (final account in _accounts) {
+        if (account.id == accountId) return account;
       }
-      return convertToBase(amount, currency);
+      return null;
     }
 
+    final source = accountFor(transaction.accountId);
+    final target = transaction.toAccountId == null
+        ? null
+        : accountFor(transaction.toAccountId!);
+    final amount = transactionAmountInBase(transaction);
     switch (transaction.type) {
       case TransactionType.income:
-        return deltaFor(
-            transaction.accountId, transaction.amount, transaction.currency);
+        return source?.reportGroup == ReportGroup.cash ? amount : 0;
       case TransactionType.expense:
-        return deltaFor(
-            transaction.accountId, -transaction.amount, transaction.currency);
+        return source?.reportGroup == ReportGroup.cash ? -amount : 0;
       case TransactionType.adjustment:
-        return 0;
+        return source?.reportGroup == ReportGroup.cash ? amount : 0;
       case TransactionType.transfer:
-        var delta = deltaFor(
-            transaction.accountId, -transaction.amount, transaction.currency);
-        final toAccountId = transaction.toAccountId;
-        if (toAccountId != null) {
-          delta += deltaFor(
-            toAccountId,
-            transaction.transferInAmount,
-            transaction.transferInCurrency,
-          );
+        var delta = 0.0;
+        if (source?.reportGroup == ReportGroup.cash) delta -= amount;
+        if (target?.reportGroup == ReportGroup.cash) {
+          delta += transferIncomingAmountInBase(transaction);
         }
         return delta;
     }
@@ -2991,6 +3303,58 @@ class CashFlowProjectionPoint {
   final double transfers;
   final double net;
   final double endingCash;
+}
+
+class CashFlowSummary {
+  const CashFlowSummary({
+    required this.inflow,
+    required this.outflow,
+  });
+
+  final double inflow;
+  final double outflow;
+
+  double get net => inflow - outflow;
+}
+
+class MonthlyFundingNeed {
+  const MonthlyFundingNeed({
+    required this.monthKey,
+    required this.cashInflow,
+    required this.knownCashOutflow,
+    required this.creditDue,
+    required this.loanDue,
+    required this.coveredDebtPayments,
+  });
+
+  final String monthKey;
+  final double cashInflow;
+  final double knownCashOutflow;
+  final double creditDue;
+  final double loanDue;
+
+  /// Portion of [totalDebtDue] already represented by a payment transaction.
+  final double coveredDebtPayments;
+
+  double get totalDebtDue => creditDue + loanDue;
+
+  double get uncoveredDebtDue => (totalDebtDue - coveredDebtPayments)
+      .clamp(0.0, double.infinity)
+      .toDouble();
+
+  /// Cash outflow already recorded for the month plus debt due without a
+  /// matching payment transaction. Repayments already in cash outflow are not
+  /// added for a second time.
+  double get totalCashRequired => knownCashOutflow + uncoveredDebtDue;
+
+  double get projectedNetAfterFunding => cashInflow - totalCashRequired;
+}
+
+class _CreditDueSnapshot {
+  const _CreditDueSnapshot({required this.amount, required this.asOf});
+
+  final double amount;
+  final DateTime asOf;
 }
 
 class CreditCardPaymentReminder {

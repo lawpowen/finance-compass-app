@@ -7,7 +7,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sqlite3/sqlite3.dart' as sqlite;
 
 void main() {
-  test('v6 data upgrades in place and migrates preset metadata', () async {
+  test('v6 data upgrades through schema v9 without changing old data',
+      () async {
     final directory = await Directory.systemTemp.createTemp('finance_v7_test');
     final file = File('${directory.path}/finance.sqlite');
     final legacy = sqlite.sqlite3.open(file.path);
@@ -139,11 +140,14 @@ void main() {
     final transactions = await database.fetchTransactions();
     final templates = await database.fetchTransactionTemplates();
 
-    expect(database.schemaVersion, 7);
+    expect(database.schemaVersion, 9);
     final card = accounts.singleWhere((item) => item.id == 'card');
     expect(card.currentBalance, -321.45);
     expect(card.creditLimit, isNull);
     expect(card.statementDay, isNull);
+    expect(card.loanPrincipal, isNull);
+    expect(card.loanRepaymentMethod, isNull);
+    expect(card.loanTrackingStartDate, isNull);
     expect(
       transactions
           .singleWhere((item) => item.id == 'card_purchase')

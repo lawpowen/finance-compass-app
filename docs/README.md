@@ -6,6 +6,7 @@
 - [系统架构](ARCHITECTURE.md)
 - [模块设计](MODULE_DESIGN.md)
 - [UI 参考基线](UI_REFERENCE.md)
+- [全应用交互审计](INTERACTION_AUDIT.md)
 - [数据设计与迁移](DATA_DESIGN.md)
 - [接口与导入导出](INTERFACES.md)
 - [安全与运维](SECURITY_AND_OPERATIONS.md)

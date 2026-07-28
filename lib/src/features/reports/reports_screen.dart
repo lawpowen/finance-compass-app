@@ -7,7 +7,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/data/finance_repository.dart';
 import '../../core/database/database_provider.dart';
 import '../../core/models/account.dart';
-import '../../core/models/category.dart';
 import '../../core/models/monthly_summary.dart';
 import '../../core/models/period_comparison.dart';
 import '../../core/utils/currency_formatter.dart';
@@ -113,25 +112,29 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
     final currentMonthKey = monthKeyFromDate(now);
     final monthKeys = _monthKeysForRange(rangeType, now);
 
-    final rawSummaries = monthKeys
-        .map(
-          (monthKey) => MonthlySummary(
-            monthKey: monthKey,
-            income: repository.totalIncomeForMonth(monthKey),
-            expense: repository.totalExpenseForMonth(monthKey),
-          ),
-        )
-        .toList();
+    final rawSummaries = monthKeys.map(
+      (monthKey) {
+        final cashFlow = repository.actualCashFlowSummaryForMonth(monthKey);
+        return MonthlySummary(
+          monthKey: monthKey,
+          income: cashFlow.inflow,
+          expense: cashFlow.outflow,
+        );
+      },
+    ).toList();
     final displaySummaries = measureMode == ReportMeasureMode.monthly
         ? rawSummaries
         : _toCumulativeSummaries(rawSummaries);
 
-    final currentIncome = repository.totalIncomeForMonth(currentMonthKey);
-    final currentExpense = repository.totalExpenseForMonth(currentMonthKey);
+    final currentCashFlow =
+        repository.actualCashFlowSummaryForMonth(currentMonthKey);
+    final currentIncome = currentCashFlow.inflow;
+    final currentExpense = currentCashFlow.outflow;
     final lastMonth = DateTime(now.year, now.month - 1);
     final lastMonthKey = monthKeyFromDate(lastMonth);
-    final lastIncome = repository.totalIncomeForMonth(lastMonthKey);
-    final lastExpense = repository.totalExpenseForMonth(lastMonthKey);
+    final lastCashFlow = repository.actualCashFlowSummaryForMonth(lastMonthKey);
+    final lastIncome = lastCashFlow.inflow;
+    final lastExpense = lastCashFlow.outflow;
 
     if (_isLoadingOrder) {
       return const Center(child: CircularProgressIndicator());
@@ -331,12 +334,12 @@ class _QuickOverviewSection extends StatelessWidget {
             maxColumns: 4,
             children: [
               FinanceMetricCard(
-                label: '收入',
+                label: '现金流入',
                 value: formatMoney(currentIncome),
                 color: FinanceColors.income,
               ),
               FinanceMetricCard(
-                label: '支出',
+                label: '现金流出',
                 value: formatMoney(currentExpense),
                 color: FinanceColors.expense,
               ),
@@ -379,7 +382,7 @@ class _QuickOverviewSection extends StatelessWidget {
                   SizedBox(
                     width: cardWidth,
                     child: PeriodComparisonCard(
-                      label: '收入对比',
+                      label: '现金流入对比',
                       currentPeriodLabel: '本月 $currentMonthKey',
                       previousPeriodLabel: '上月 $previousMonthKey',
                       comparison: incomeComparison,
@@ -390,7 +393,7 @@ class _QuickOverviewSection extends StatelessWidget {
                   SizedBox(
                     width: cardWidth,
                     child: PeriodComparisonCard(
-                      label: '支出对比',
+                      label: '现金流出对比',
                       currentPeriodLabel: '本月 $currentMonthKey',
                       previousPeriodLabel: '上月 $previousMonthKey',
                       comparison: expenseComparison,
@@ -446,7 +449,8 @@ class _TrendAnalysisSection extends StatelessWidget {
 
     return SectionCard(
       title: '趋势分析',
-      subtitle: measureMode == ReportMeasureMode.monthly ? '月度收支趋势' : '累计收支趋势',
+      subtitle:
+          measureMode == ReportMeasureMode.monthly ? '月度实际现金流趋势' : '累计实际现金流趋势',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -516,12 +520,12 @@ class _TrendAnalysisSection extends StatelessWidget {
             maxColumns: 4,
             children: [
               FinanceMetricCard(
-                label: '收入合计',
+                label: '现金流入合计',
                 value: formatMoney(totalIncome),
                 color: FinanceColors.income,
               ),
               FinanceMetricCard(
-                label: '支出合计',
+                label: '现金流出合计',
                 value: formatMoney(totalExpense),
                 color: FinanceColors.expense,
               ),
@@ -533,7 +537,7 @@ class _TrendAnalysisSection extends StatelessWidget {
                     : FinanceColors.expense,
               ),
               FinanceMetricCard(
-                label: '储蓄率',
+                label: '现金结余率',
                 value: savingsRate == null
                     ? '不可用'
                     : '${savingsRate.toStringAsFixed(1)}%',
@@ -576,9 +580,9 @@ class _TrendAnalysisSection extends StatelessWidget {
             const Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                _LegendItem(color: FinanceColors.income, label: '收入'),
+                _LegendItem(color: FinanceColors.income, label: '现金流入'),
                 SizedBox(width: 16),
-                _LegendItem(color: FinanceColors.expense, label: '支出'),
+                _LegendItem(color: FinanceColors.expense, label: '现金流出'),
               ],
             ),
           ],
@@ -889,28 +893,17 @@ class _ExpenseAnalysisSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final categoryTotals = repository.categoryTotalsForMonths(
-      type: CategoryType.expense,
-      monthKeys: monthKeys,
-    );
+    final categoryTotals =
+        repository.actualCashOutflowByCategoryForMonths(monthKeys);
 
     final sortedCategories = categoryTotals.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
     final totalExpense =
-        sortedCategories.fold<double>(0, (sum, e) => sum + e.value);
+        repository.actualCashFlowSummaryForMonths(monthKeys).outflow;
 
     // Account ranking
-    final accounts = repository.accounts;
-    final accountExpenses = <String, double>{};
-    for (final account in accounts) {
-      final expense = repository
-          .expenseBreakdownForAccount(account.id, currentMonthKey)
-          .values
-          .fold<double>(0, (sum, amount) => sum + amount);
-      if (expense > 0) {
-        accountExpenses[account.id] = expense;
-      }
-    }
+    final accountExpenses =
+        repository.actualCashOutflowByAccountForMonth(currentMonthKey);
     final sortedAccounts = accountExpenses.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
 
@@ -918,7 +911,9 @@ class _ExpenseAnalysisSection extends StatelessWidget {
 
     // Prepare pie chart data
     final categoryPieData = sortedCategories.take(8).map((e) {
-      final name = repository.categoryName(e.key);
+      final name = e.key == FinanceRepository.uncategorizedCashOutflowKey
+          ? '转账还款等未分类现金流出'
+          : repository.categoryName(e.key);
       final percentage =
           totalExpense > 0 ? (e.value / totalExpense * 100) : 0.0;
       return _PieData(label: name, value: e.value, percentage: percentage);
@@ -932,15 +927,15 @@ class _ExpenseAnalysisSection extends StatelessWidget {
     }).toList();
 
     return SectionCard(
-      title: '支出分析',
+      title: '现金流出分析',
       subtitle: monthKeys.length == 1
-          ? '$currentMonthKey 本月支出 ${formatMoney(totalExpense)}'
-          : '${monthKeys.first} 至 ${monthKeys.last} 支出 ${formatMoney(totalExpense)}',
+          ? '$currentMonthKey 本月实际现金流出 ${formatMoney(totalExpense)}'
+          : '${monthKeys.first} 至 ${monthKeys.last} 实际现金流出 ${formatMoney(totalExpense)}',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Category pie chart
-          Text('支出分类',
+          Text('现金流出分类',
               style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
           const SizedBox(height: 12),
           if (categoryPieData.isNotEmpty)
@@ -966,7 +961,7 @@ class _ExpenseAnalysisSection extends StatelessWidget {
           const SizedBox(height: 16),
           // Account pie chart
           if (sortedAccounts.isNotEmpty) ...[
-            Text('账户支出',
+            Text('现金账户流出',
                 style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
             const SizedBox(height: 12),
             Row(
@@ -1332,8 +1327,9 @@ class _FutureForecastSection extends StatelessWidget {
     double avgIncome = 0;
     double avgExpense = 0;
     for (final month in historyMonths) {
-      avgIncome += repository.totalIncomeForMonth(month);
-      avgExpense += repository.totalExpenseForMonth(month);
+      final cashFlow = repository.actualCashFlowSummaryForMonth(month);
+      avgIncome += cashFlow.inflow;
+      avgExpense += cashFlow.outflow;
     }
     avgIncome /= 3;
     avgExpense /= 3;
@@ -1343,13 +1339,14 @@ class _FutureForecastSection extends StatelessWidget {
       final date = DateTime(now.year, now.month - 2 + i);
       return monthKeyFromDate(date);
     });
-    final recentData = recentMonths
-        .map((month) => _MonthlyData(
-              monthKey: month,
-              income: repository.totalIncomeForMonth(month),
-              expense: repository.totalExpenseForMonth(month),
-            ))
-        .toList();
+    final recentData = recentMonths.map((month) {
+      final cashFlow = repository.actualCashFlowSummaryForMonth(month);
+      return _MonthlyData(
+        monthKey: month,
+        income: cashFlow.inflow,
+        expense: cashFlow.outflow,
+      );
+    }).toList();
 
     return SectionCard(
       title: '财务预测',
@@ -1375,7 +1372,7 @@ class _FutureForecastSection extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('月均储蓄',
+                      Text('月均现金结余',
                           style:
                               TextStyle(fontSize: 12, color: Colors.grey[600])),
                       Text(
@@ -1389,7 +1386,7 @@ class _FutureForecastSection extends StatelessWidget {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    Text('储蓄率',
+                    Text('现金结余率',
                         style:
                             TextStyle(fontSize: 11, color: Colors.grey[600])),
                     Text(
@@ -1413,26 +1410,26 @@ class _FutureForecastSection extends StatelessWidget {
             children: [
               Expanded(
                   child: _ForecastItem(
-                      label: '月均收入',
+                      label: '月均现金流入',
                       value: formatMoney(avgIncome),
                       color: FinanceColors.income)),
               const SizedBox(width: 12),
               Expanded(
                   child: _ForecastItem(
-                      label: '月均支出',
+                      label: '月均现金流出',
                       value: formatMoney(avgExpense),
                       color: FinanceColors.expense)),
               const SizedBox(width: 12),
               Expanded(
                   child: _ForecastItem(
-                      label: '月均储蓄',
+                      label: '月均现金结余',
                       value: formatMoney(avgIncome - avgExpense),
                       color: FinanceColors.info)),
             ],
           ),
           const SizedBox(height: 16),
           // Recent 3 months
-          Text('近3个月实际',
+          Text('近3个月实际现金流',
               style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
           const SizedBox(height: 8),
           ...recentData.map((data) => _MonthlyDataCard(data: data)),
@@ -1732,11 +1729,11 @@ class _MonthlyDataCard extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               _MiniMetric(
-                  label: '收入',
+                  label: '现金流入',
                   value: formatMoney(data.income),
                   color: FinanceColors.income),
               _MiniMetric(
-                  label: '支出',
+                  label: '现金流出',
                   value: formatMoney(data.expense),
                   color: FinanceColors.expense),
               _MiniMetric(
@@ -1785,11 +1782,11 @@ class _ForecastDataCard extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               _MiniMetric(
-                  label: '收入',
+                  label: '现金流入',
                   value: formatMoney(point.income),
                   color: FinanceColors.income),
               _MiniMetric(
-                  label: '支出',
+                  label: '现金流出',
                   value: formatMoney(point.expense),
                   color: FinanceColors.expense),
               _MiniMetric(

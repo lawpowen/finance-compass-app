@@ -1,5 +1,24 @@
 # Design QA
 
+## 2026-07-21 账户统计截止交互
+
+1. 修复前健康度：失败。Windows Debug 账户页显示“统计截止 · 2026年7月”及向下箭头，但点击后没有菜单或状态变化。证据：`artifacts/interaction-audit/2026-07-21-cutoff/01-before-account-cutoff.png` 与 `02-before-cutoff-no-response.png`。
+2. 月份选择器健康度：通过。build 35 的整行点击会打开居中底部面板，当前月有选中标记，历史月份有明确导航箭头，并提供“返回本月”和关闭入口。证据：`03-after-cutoff-picker.png`。
+3. 历史汇总健康度：通过。选择 2026 年 6 月后净资产、资产、负债和资产分布同步变化，控件显示所选月份，并出现橙色“历史统计：截至 2026年6月末”提示。证据：`04-after-historical-cutoff.png`。
+4. 详情与防回归健康度：通过。Widget 回归确认普通、投资、信用卡和贷款详情继承截止日期、隐藏写入操作并可返回本月；类别分组整行折叠；输入框、禁用项和只读预览不再带误导箭头。
+
+视觉验收使用 1266×713 Windows 客户区和 390×844 Widget 回归。当前证据不能替代屏幕阅读器、完整键盘遍历、超大字体和所有桌面尺寸的专项无障碍认证。
+
+## 2026-07-21 loan account flow
+
+- Checked `AccountFormDialog` and `LoanDetailScreen` at a 390×844 logical-pixel viewport with the production Abyss theme.
+- The loan form exposes contract principal, annual rate, term, tracking start date, payment day, repayment method, optional bank installment, optional opening outstanding balance and a compact remaining-payment preview without horizontal overflow.
+- The detail summary keeps three monetary metrics width-safe, while the primary action uses the compact “记录第 N 期还款” label; the amount and principal/interest split remain visible in the confirmation dialog.
+- The full installment list scrolls vertically and shows date, state, principal, interest, payment and remaining principal. Recording the first period changes its state to “已记录” and advances the action to the next period.
+- A newly created loan opens its detail page and asks whether to generate the remaining plan. The persistent secondary action can generate or complete all planned principal-transfer and interest-expense pairs after a repayment account is chosen; recording an installment removes that period's planned pair.
+- Automated Widget rendering detected an initial 3.2-pixel overflow in the long action label; shortening the label removed the issue. Final 390×844 regression completed without RenderFlex exceptions.
+- Known follow-up: physical-device review is still required for very large font scaling and long localized institution/account names.
+
 ## Evidence
 
 - Visual sources of truth for this correction: `artifacts/ui-reference/supplemental-budget-overview.png` and `artifacts/ui-reference/27-appearance.png`.
@@ -118,3 +137,45 @@ final result: passed
 - Functional and repository tests cover these semantic changes; no new visual primitive or overflow risk was introduced, so the existing 390×844 visual baseline remains applicable without a new capture.
 
 final result: passed
+# 2026-07-21 全应用交互接线审计
+
+- 已在 Windows Debug 应用逐页检查总览、账户、交易、预算、报表、设置、规则中心、周期计划和周期规则编辑。
+- 修复了周期规则编辑行、预算月份/预览、报表区间、货币格式、应用内提醒、总览明细等装饰性入口；直接输入框与纯信息行不再显示误导箭头。
+- 未实现的系统通知、Google 登录、系统主题跟随和附件保持明确“计划中”并禁用。
+- 新增 feature 源码静态门禁及 390×844 Widget 回归。截图证据不等同于完整无障碍认证，后续仍需专项验证屏幕阅读器和键盘遍历。
+# 2026-07-21 贷款月供金额修正
+
+- 交易列表与预计现金流以完整月供为主金额，不再把本金分项冒充月供。
+- 贷款详情仍展示本金和利息拆分；实际入账时现金减少完整月供，贷款余额只减少本金。
+- 旧预计本金/利息组合自动合并，实际历史记录不自动改写。
+# 2026-07-21 贷款删除与补齐计数
+
+- 删除已记录月供后，主操作必须回退到被删除的最早期次。
+- 预计按钮显示精确缺口，不再写“补齐全部”。
+- 缺口为零时按钮禁用并显示“预计交易已补齐”。
+# 2026-07-22 build 36 现金口径与资产目标 QA
+
+- 账户页新增旗标与资产目标摘要卡，两处均进入同一真实管理页；390×844 Widget 回归完成空状态、新增对话框、保存后目标卡和 provider 刷新，未出现布局异常。
+- 预算编辑标题改为弹性居中并限制单行省略；生效月说明在 390 像素宽度换行，避免英文长类别名导致横向溢出。
+- 交易快速筛选以稳定 key 覆盖账户、类型和类别，筛选后顶部金额与双指标同步变化；未来月份 RM 1,316 贷款月供在现金卡显示完整流出。
+- 报表文案改为现金流入、现金流出和现金结余率；现金流出分类为无类别还款保留明确的“转账还款等未分类现金流出”，不隐藏与总额的差异。
+- 本轮以 390×844 Widget 交互和最新真实 JSON 数据验证为视觉/数据 QA；未新增截图参考图，既有 0.8.0 深海主题、间距、卡片和触控尺寸基线保持不变。
+
+# 2026-07-22 build 37 总资产目标与信用还款 QA
+
+- 资产目标页标题下方明确写“按总资产变化”，摘要写“当前总资产”；目标算法与 UI 使用同一排除信用负债的历史序列，避免标签与数值口径不一致。
+- 信用账户还款保留原顶部主按钮位置，点击后先展示同币种现金账户底部列表，再显示金额确认框；390×844 Widget 回归覆盖选择、改额、确认及双方余额刷新。
+- 历史截止状态继续禁用还款；无同币种现金账户时显示明确提示，不展示无法完成的空确认框。
+
+# 2026-07-22 build 38 月度资金需求 QA
+
+- 修改前的交易页把消费、现金和承诺拆成三张口径卡，用户浏览未来月份时没有一个可直接备款的全月总额；证据保存于 `artifacts/audit/transaction-funding-needs/01-before.jpg`。
+- 修改后在“已发生/包含预计”下方新增高优先级“月需准备现金”卡，橙色主金额与四项拆分保持既有深海主题、字号、圆角和颜色语义；Windows 1266×713 实机没有横向溢出，证据保存于 `artifacts/audit/transaction-funding-needs/02-after-august.jpg`。
+- 卡片明确说明全月汇总不受下方筛选影响、已包含还款不重复计算。语义标签朗读总额、已记录现金流出和尚未安排还款；截图不能替代屏幕阅读器、键盘焦点和触控目标专项认证。
+
+# 2026-07-22 build 39 资金需求卡片整合 QA
+
+- 独立资金需求大卡已移除，避免重复展示同一金额并把交易列表继续向下推；顶部三卡改名为“实际消费”“实际现金”“信用/贷款”，中间卡以“需准备现金”为选中副标题，沿用既有宽窄切换、深海配色和橙色现金流出语义。
+- 选中中间卡时，原两项解释位显示“已知流出/尚未安排”，下方仅增加一行到期信用、到期贷款、已包含和筛选边界说明；未选中时不显示额外说明。
+- 390×844 Widget 回归覆盖未来月份、MYR 1,556 总额、独立大卡不存在及解释指标；长金额解释使用弹性缩放，不产生 RenderFlex 溢出。
+- Windows 1266×713 Debug 实机复核 2026 年 8 月：选中“实际现金”后显示 MYR 7,206、“已知流出 MYR 3,621”“尚未安排 MYR 3,585”及单行到期拆分，交易列表不再被第二张大卡下推。

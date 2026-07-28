@@ -8,24 +8,45 @@ import '../../core/utils/month_key.dart';
 import '../shared/compass_ui.dart';
 import 'reports_screen.dart';
 
-class ReportsV2Screen extends StatelessWidget {
+enum _ReportOverviewRange { yearToDate, last12Months, allTime }
+
+class ReportsV2Screen extends StatefulWidget {
   const ReportsV2Screen({super.key, required this.repository});
 
   final FinanceRepository repository;
 
   @override
+  State<ReportsV2Screen> createState() => _ReportsV2ScreenState();
+}
+
+class _ReportsV2ScreenState extends State<ReportsV2Screen> {
+  _ReportOverviewRange range = _ReportOverviewRange.yearToDate;
+
+  FinanceRepository get repository => widget.repository;
+
+  @override
   Widget build(BuildContext context) {
     final now = DateTime.now();
     final netWorth = repository.totalAssets();
-    final startOfYear = repository.totalAssetsAt(DateTime(now.year, 1, 1));
-    final growth = netWorth - startOfYear;
-    final growthRate = startOfYear == 0 ? 0.0 : growth / startOfYear;
+    final allHistory = repository.totalAssetHistory();
+    final rangeStart = switch (range) {
+      _ReportOverviewRange.yearToDate => DateTime(now.year, 1, 1),
+      _ReportOverviewRange.last12Months =>
+        DateTime(now.year, now.month - 11, 1),
+      _ReportOverviewRange.allTime =>
+        allHistory.isEmpty ? DateTime(now.year, 1, 1) : allHistory.first.date,
+    };
+    final startingNetWorth = repository.totalAssetsAt(rangeStart);
+    final growth = netWorth - startingNetWorth;
+    final growthRate =
+        startingNetWorth == 0 ? 0.0 : growth / startingNetWorth.abs();
     final cash = repository.totalAssetsByGroup(ReportGroup.cash);
     final investment = repository.totalAssetsByGroup(ReportGroup.investment);
     final retirement = repository.totalAssetsByGroup(ReportGroup.retirement);
     final creditBalance = repository.totalAssetsByGroup(ReportGroup.credit);
     final debt = creditBalance < 0 ? -creditBalance : 0.0;
-    final history = repository.totalAssetHistory();
+    final history =
+        allHistory.where((point) => !point.date.isBefore(rangeStart)).toList();
     final chartValues = history.isEmpty
         ? <double>[netWorth]
         : history.map((point) => point.totalAssets).toList();
@@ -33,38 +54,64 @@ class ReportsV2Screen extends StatelessWidget {
     String percent(double value) =>
         positiveTotal <= 0 ? '0%' : '${(value / positiveTotal * 100).round()}%';
     final monthKey = monthKeyFromDate(now);
-    final income = repository.totalIncomeForMonth(monthKey);
-    final expense = repository.totalExpenseForMonth(monthKey);
+    final cashFlow = repository.actualCashFlowSummaryForMonth(monthKey);
+    final income = cashFlow.inflow;
+    final expense = cashFlow.outflow;
     final savingsRate = income <= 0 ? 0.0 : (income - expense) / income;
     final budget = repository.totalEffectiveBudgetForMonth(monthKey);
     final budgetUsed = repository.totalBudgetExpenseForMonth(monthKey) +
         repository.totalPlannedBudgetExpenseForMonth(monthKey);
     final budgetRate = budget <= 0 ? 0.0 : budgetUsed / budget;
     final forecast = repository.forecastSummary(months: 3);
+    final rangeLabel = switch (range) {
+      _ReportOverviewRange.yearToDate => '${now.year}年至今',
+      _ReportOverviewRange.last12Months => '最近12个月',
+      _ReportOverviewRange.allTime => '全部时间',
+    };
     return ListView(
       padding: compassPagePadding.copyWith(bottom: 28),
       children: [
         CompassPageHeader(
           title: '报表',
           actions: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-              decoration: BoxDecoration(
-                border: Border.all(color: FinanceColors.compassBorder),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Row(
-                children: [
-                  Text('${now.year}年至今'),
-                  const Icon(Icons.keyboard_arrow_down_rounded),
-                ],
+            PopupMenuButton<_ReportOverviewRange>(
+              initialValue: range,
+              tooltip: '选择报表范围',
+              onSelected: (value) => setState(() => range = value),
+              itemBuilder: (_) => const [
+                PopupMenuItem(
+                  value: _ReportOverviewRange.yearToDate,
+                  child: Text('今年至今'),
+                ),
+                PopupMenuItem(
+                  value: _ReportOverviewRange.last12Months,
+                  child: Text('最近 12 个月'),
+                ),
+                PopupMenuItem(
+                  value: _ReportOverviewRange.allTime,
+                  child: Text('全部时间'),
+                ),
+              ],
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                decoration: BoxDecoration(
+                  border: Border.all(color: FinanceColors.compassBorder),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Row(
+                  children: [
+                    Text(rangeLabel),
+                    const Icon(Icons.keyboard_arrow_down_rounded),
+                  ],
+                ),
               ),
             ),
             const SizedBox(width: 12),
             IconButton(
               onPressed: () => SharePlus.instance.share(
                 ShareParams(
-                  text: 'Finance Compass ${now.year} 年报表\n'
+                  text: 'Finance Compass $rangeLabel 报表\n'
                       '净资产 ${compassMoney(netWorth)}\n'
                       '年内变化 ${compassMoney(growth)}',
                   subject: 'Finance Compass 报表',
@@ -88,7 +135,7 @@ class ReportsV2Screen extends StatelessWidget {
         const SizedBox(height: 4),
         Text.rich(
           TextSpan(
-            text: '今年增长 ',
+            text: '$rangeLabel 变化 ',
             children: [
               TextSpan(
                 text:
@@ -213,8 +260,8 @@ class ReportsV2Screen extends StatelessWidget {
         const SizedBox(height: 4),
         _HealthSignal(
           icon: Icons.trending_up_rounded,
-          title: '储蓄率',
-          subtitle: '${now.month}月实际收入与支出计算',
+          title: '现金结余率',
+          subtitle: '${now.month}月实际现金流入与流出计算',
           value: '${(savingsRate * 100).toStringAsFixed(0)}%',
           color: savingsRate >= 0
               ? FinanceColors.compassTeal
@@ -245,7 +292,7 @@ class ReportsV2Screen extends StatelessWidget {
         _HealthSignal(
           icon: Icons.account_balance_wallet_outlined,
           title: '近 3 个月平均月度现金流',
-          subtitle: '根据已记录的收入与支出计算',
+          subtitle: '根据实际现金流入与流出计算',
           value: compassMoney(forecast.averageMonthlySavings, decimals: 0),
           color: forecast.averageMonthlySavings >= 0
               ? FinanceColors.compassTeal

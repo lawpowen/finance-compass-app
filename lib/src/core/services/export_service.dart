@@ -76,6 +76,18 @@ class ExportService {
               'institution': item.institution,
               'note': item.note,
               'is_active': item.isActive,
+              'credit_limit': item.creditLimit,
+              'statement_day': item.statementDay,
+              'payment_due_day': item.paymentDueDay,
+              'loan_principal': item.loanPrincipal,
+              'loan_annual_interest_rate': item.loanAnnualInterestRate,
+              'loan_term_months': item.loanTermMonths,
+              'loan_start_date': item.loanStartDate?.toIso8601String(),
+              'loan_tracking_start_date':
+                  item.loanTrackingStartDate?.toIso8601String(),
+              'loan_payment_day': item.loanPaymentDay,
+              'loan_repayment_method': item.loanRepaymentMethod?.name,
+              'loan_quoted_monthly_payment': item.loanQuotedMonthlyPayment,
             },
           )
           .toList(),
@@ -182,6 +194,26 @@ class ExportService {
             institution: item['institution'] as String?,
             note: item['note'] as String?,
             isActive: item['is_active'] as bool? ?? true,
+            creditLimit: (item['credit_limit'] as num?)?.toDouble(),
+            statementDay: (item['statement_day'] as num?)?.toInt(),
+            paymentDueDay: (item['payment_due_day'] as num?)?.toInt(),
+            loanPrincipal: (item['loan_principal'] as num?)?.toDouble(),
+            loanAnnualInterestRate:
+                (item['loan_annual_interest_rate'] as num?)?.toDouble(),
+            loanTermMonths: (item['loan_term_months'] as num?)?.toInt(),
+            loanStartDate: item['loan_start_date'] == null
+                ? null
+                : DateTime.parse(item['loan_start_date'] as String),
+            loanTrackingStartDate: item['loan_tracking_start_date'] == null
+                ? null
+                : DateTime.parse(item['loan_tracking_start_date'] as String),
+            loanPaymentDay: (item['loan_payment_day'] as num?)?.toInt(),
+            loanRepaymentMethod: item['loan_repayment_method'] == null
+                ? null
+                : LoanRepaymentMethod.values
+                    .byName(item['loan_repayment_method'] as String),
+            loanQuotedMonthlyPayment:
+                (item['loan_quoted_monthly_payment'] as num?)?.toDouble(),
           ),
         )
         .toList();

@@ -38,18 +38,19 @@ class ReportService {
   // 月度汇总
   // ---------------------------------------------------------------------------
 
-  /// 最近 [months] 个月的月度汇总（含实际收入/支出）。
+  /// 最近 [months] 个月的月度汇总（实际现金流入/流出）。
   List<MonthlySummary> monthlySummaries({required int months}) {
     final monthKeys = _recentMonthKeys(months);
-    return monthKeys
-        .map(
-          (monthKey) => MonthlySummary(
-            monthKey: monthKey,
-            income: totalIncomeForMonth(monthKey),
-            expense: totalExpenseForMonth(monthKey),
-          ),
-        )
-        .toList();
+    return monthKeys.map(
+      (monthKey) {
+        final cashFlow = actualCashFlowSummaryForMonth(monthKey);
+        return MonthlySummary(
+          monthKey: monthKey,
+          income: cashFlow.inflow,
+          expense: cashFlow.outflow,
+        );
+      },
+    ).toList();
   }
 
   /// 未来 [months] 个月的支出预测（含计划交易）。
@@ -157,13 +158,9 @@ class ReportService {
     final startMonth = DateTime(now.year, now.month);
     final cutoffDate = accountService.currentMonthCutoffDate();
     var runningCash = accountService.displayTotalAssetsByGroup(
-          ReportGroup.cash,
-          cutoffDate: cutoffDate,
-        ) +
-        accountService.displayTotalAssetsByGroup(
-          ReportGroup.credit,
-          cutoffDate: cutoffDate,
-        );
+      ReportGroup.cash,
+      cutoffDate: cutoffDate,
+    );
 
     return List.generate(months, (index) {
       final monthDate = DateTime(startMonth.year, startMonth.month + index);
@@ -179,22 +176,14 @@ class ReportService {
             transaction.status != TransactionStatus.planned) {
           continue;
         }
-        final delta = _cashFlowDelta(transaction);
+        final delta = _actualCashFlowDelta(transaction);
         if (delta == 0) {
           continue;
         }
-        switch (transaction.type) {
-          case TransactionType.income:
-            income += delta;
-            break;
-          case TransactionType.expense:
-            expense += delta.abs();
-            break;
-          case TransactionType.transfer:
-            transfers += delta;
-            break;
-          case TransactionType.adjustment:
-            break;
+        if (delta > 0) {
+          income += delta;
+        } else {
+          expense += -delta;
         }
       }
 
@@ -262,6 +251,25 @@ class ReportService {
         .fold(0, (sum, item) => sum + _transactionAmountInBase(item));
   }
 
+  /// 指定月份现金账户的实际流入与流出，不包含计划交易。
+  CashFlowSummary actualCashFlowSummaryForMonth(String monthKey) {
+    var inflow = 0.0;
+    var outflow = 0.0;
+    for (final transaction in _transactions.where(
+      (item) =>
+          item.status != TransactionStatus.planned &&
+          serviceMonthKey(item.transactionDate) == monthKey,
+    )) {
+      final delta = _actualCashFlowDelta(transaction);
+      if (delta >= 0) {
+        inflow += delta;
+      } else {
+        outflow += -delta;
+      }
+    }
+    return CashFlowSummary(inflow: inflow, outflow: outflow);
+  }
+
   /// 指定月份的计划收入合计（基准货币）。
   double plannedIncomeForMonth(String monthKey) {
     return _transactions
@@ -300,43 +308,31 @@ class ReportService {
     });
   }
 
-  /// 交易对现金流的影响（仅现金/信用卡账户）。
-  double _cashFlowDelta(FinanceTransaction transaction) {
-    double deltaFor(String accountId, double amount, String currency) {
-      final account = _accounts.firstWhere(
-        (item) => item.id == accountId,
-        orElse: () => Account(
-          id: accountId,
-          name: accountId,
-          accountType: AccountType.other,
-          reportGroup: ReportGroup.investment,
-          currency: transaction.currency,
-          currentBalance: 0,
-        ),
-      );
-      if (account.reportGroup != ReportGroup.cash &&
-          account.reportGroup != ReportGroup.credit) {
-        return 0;
+  double _actualCashFlowDelta(FinanceTransaction transaction) {
+    Account? accountFor(String id) {
+      for (final account in _accounts) {
+        if (account.id == id) return account;
       }
-      return currencyService.convertToBase(amount, currency);
+      return null;
     }
 
+    final source = accountFor(transaction.accountId);
+    final target = transaction.toAccountId == null
+        ? null
+        : accountFor(transaction.toAccountId!);
+    final amount = _transactionAmountInBase(transaction);
     switch (transaction.type) {
       case TransactionType.income:
-        return deltaFor(
-            transaction.accountId, transaction.amount, transaction.currency);
+        return source?.reportGroup == ReportGroup.cash ? amount : 0;
       case TransactionType.expense:
-        return deltaFor(
-            transaction.accountId, -transaction.amount, transaction.currency);
+        return source?.reportGroup == ReportGroup.cash ? -amount : 0;
       case TransactionType.adjustment:
-        return 0;
+        return source?.reportGroup == ReportGroup.cash ? amount : 0;
       case TransactionType.transfer:
-        var delta = deltaFor(
-            transaction.accountId, -transaction.amount, transaction.currency);
-        final toAccountId = transaction.toAccountId;
-        if (toAccountId != null) {
-          delta += deltaFor(
-            toAccountId,
+        var delta = 0.0;
+        if (source?.reportGroup == ReportGroup.cash) delta -= amount;
+        if (target?.reportGroup == ReportGroup.cash) {
+          delta += currencyService.convertToBase(
             transaction.transferInAmount,
             transaction.transferInCurrency,
           );

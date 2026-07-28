@@ -114,9 +114,9 @@ class AccountService {
                     : accountBalanceAtBase(account.id, targetDate)));
   }
 
-  /// 目标资产（包含信用卡/负债后的净资产）。
+  /// 目标资产（不扣除信用卡与贷款等负债）。
   double totalTargetAssets() {
-    return displayTotalAssets(includeCredit: true);
+    return displayTotalAssets(includeCredit: false);
   }
 
   /// 截至 [date] 的总资产（基准货币）。

@@ -273,7 +273,7 @@ class AssetService {
     return [
       AssetGoal(
         id: 'goal_legacy',
-        name: '净资产目标',
+        name: '资产目标',
         targetAmount: legacyAmount,
         reachedAt: legacyReachedAtRaw == null
             ? null
@@ -282,9 +282,10 @@ class AssetService {
     ];
   }
 
-  /// 净资产历史走势（按月）。
+  /// 资产历史走势（按月）。
   List<AssetGoalHistoryPoint> totalAssetHistory({
     DateTime? cutoffDate,
+    bool includeCredit = true,
   }) {
     final targetCutoff = cutoffDate ?? _currentMonthCutoffDate();
     final monthKeys = <String>{
@@ -304,7 +305,10 @@ class AssetService {
         AssetGoalHistoryPoint(
           date: now,
           label: '${now.year}-${now.month.toString().padLeft(2, '0')}',
-          totalAssets: _totalTargetAssets(targetCutoff),
+          totalAssets: _totalAssetsAt(
+            targetCutoff,
+            includeCredit: includeCredit,
+          ),
         ),
       ];
     }
@@ -318,7 +322,7 @@ class AssetService {
       return AssetGoalHistoryPoint(
         date: date,
         label: monthKey,
-        totalAssets: _totalAssetsAt(date),
+        totalAssets: _totalAssetsAt(date, includeCredit: includeCredit),
       );
     }).toList();
   }
@@ -328,8 +332,14 @@ class AssetService {
     DateTime? cutoffDate,
   }) {
     final targetCutoff = cutoffDate ?? _currentMonthCutoffDate();
-    final history = totalAssetHistory(cutoffDate: targetCutoff);
-    final currentAssets = _totalAssetsAt(targetCutoff);
+    final history = totalAssetHistory(
+      cutoffDate: targetCutoff,
+      includeCredit: false,
+    );
+    final currentAssets = _totalAssetsAt(
+      targetCutoff,
+      includeCredit: false,
+    );
     final summaries = assetGoals.map((goal) {
       AssetGoalHistoryPoint? reachedPoint;
       for (final point in history) {
@@ -437,10 +447,6 @@ class AssetService {
   DateTime _currentMonthCutoffDate() {
     final now = DateTime.now();
     return DateTime(now.year, now.month + 1, 0, 23, 59, 59, 999);
-  }
-
-  double _totalTargetAssets(DateTime cutoffDate) {
-    return _totalAssetsAt(cutoffDate);
   }
 
   double _totalAssetsAt(DateTime date, {bool includeCredit = true}) {

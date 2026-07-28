@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import '../../core/data/finance_repository.dart';
 import '../../core/settings/app_settings_controller.dart';
 import '../../core/theme/finance_colors.dart';
-import '../categories/category_manage_screen.dart';
 import '../shared/compass_ui.dart';
 import 'settings_screen.dart';
 import 'settings_reference_pages.dart';
@@ -132,7 +131,9 @@ class SettingsV2Screen extends StatelessWidget {
         CompassSettingsRow(
           icon: Icons.notifications_none_rounded,
           title: '通知与提醒',
-          value: '已开启',
+          value: repository.metaValues['notifications_enabled'] == 'false'
+              ? '已关闭'
+              : '应用内已开启',
           onTap: () => Navigator.push(
             context,
             MaterialPageRoute(
@@ -304,146 +305,4 @@ class _LocalProfileRow extends StatelessWidget {
       ),
     );
   }
-}
-
-class _LocalAccountPage extends StatelessWidget {
-  const _LocalAccountPage();
-  @override
-  Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: const Text('个人账户')),
-        body: ListView(
-          padding: compassPagePadding,
-          children: [
-            const Center(
-              child: CircleAvatar(
-                radius: 42,
-                backgroundColor: Color(0xFF2B7B77),
-                child: Text('L',
-                    style: TextStyle(fontSize: 30, color: Colors.white)),
-              ),
-            ),
-            const SizedBox(height: 18),
-            Center(
-                child: Text('本地个人账户',
-                    style: Theme.of(context).textTheme.titleLarge)),
-            const SizedBox(height: 8),
-            const Center(child: Text('所有资料目前只保存在这台设备。')),
-            const SizedBox(height: 28),
-            const CompassCard(
-              child: Row(children: [
-                Icon(Icons.cloud_off_outlined,
-                    color: FinanceColors.compassTeal),
-                SizedBox(width: 14),
-                Expanded(child: Text('Google 登录与云同步已预留，尚未实现；登录不会覆盖本机资料。')),
-              ]),
-            ),
-          ],
-        ),
-      );
-}
-
-class _RuleCenterPage extends StatelessWidget {
-  const _RuleCenterPage({required this.repository});
-  final FinanceRepository repository;
-  @override
-  Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: const Text('类别、模板与周期规则')),
-        body: ListView(
-          padding: compassPagePadding,
-          children: [
-            CompassSettingsRow(
-              icon: Icons.category_outlined,
-              title: '类别管理',
-              value: '${repository.categories.length}',
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => CategoryManageScreen(repository: repository),
-                ),
-              ),
-            ),
-            const Divider(),
-            const SizedBox(height: 18),
-            const CompassSectionTitle('快速模板'),
-            const SizedBox(height: 8),
-            if (repository.transactionTemplates.isEmpty)
-              const CompassCard(child: Text('还没有快速模板，可在交易页面从一笔交易建立。'))
-            else
-              ...repository.transactionTemplates.map((item) => ListTile(
-                    leading: const CompassIconBadge(icon: Icons.bolt_rounded),
-                    title: Text(item.name),
-                    subtitle: Text(
-                        compassMoney(item.amount, currency: item.currency)),
-                  )),
-            const SizedBox(height: 24),
-            const CompassSectionTitle('周期规则'),
-            const SizedBox(height: 8),
-            if (repository.recurringTransactionRules.isEmpty)
-              const CompassCard(child: Text('还没有周期规则。'))
-            else
-              ...repository.recurringTransactionRules.map((item) => ListTile(
-                    leading: const CompassIconBadge(icon: Icons.repeat_rounded),
-                    title: Text(item.name),
-                    subtitle: Text(
-                        '每 ${item.intervalMonths} 个月 · ${item.isActive ? '启用' : '停用'}'),
-                  )),
-          ],
-        ),
-      );
-}
-
-class _NotificationPage extends StatefulWidget {
-  const _NotificationPage({required this.repository});
-  final FinanceRepository repository;
-  @override
-  State<_NotificationPage> createState() => _NotificationPageState();
-}
-
-class _NotificationPageState extends State<_NotificationPage> {
-  late bool creditCard;
-  late bool budget;
-  late bool recurring;
-
-  @override
-  void initState() {
-    super.initState();
-    creditCard =
-        widget.repository.metaValues['notification_credit_card'] != 'false';
-    budget = widget.repository.metaValues['notification_budget'] != 'false';
-    recurring =
-        widget.repository.metaValues['notification_recurring'] != 'false';
-  }
-
-  Future<void> _save(String key, bool value) =>
-      widget.repository.database.setMetaValue(key, '$value');
-  @override
-  Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: const Text('通知与提醒')),
-        body: ListView(padding: compassPagePadding, children: [
-          SwitchListTile(
-              value: creditCard,
-              onChanged: (v) {
-                setState(() => creditCard = v);
-                _save('notification_credit_card', v);
-              },
-              title: const Text('信用卡还款提醒'),
-              subtitle: const Text('根据账户结算日与还款日计算')),
-          SwitchListTile(
-              value: budget,
-              onChanged: (v) {
-                setState(() => budget = v);
-                _save('notification_budget', v);
-              },
-              title: const Text('预算预警'),
-              subtitle: const Text('接近或超过预算时提醒')),
-          SwitchListTile(
-              value: recurring,
-              onChanged: (v) {
-                setState(() => recurring = v);
-                _save('notification_recurring', v);
-              },
-              title: const Text('周期交易提醒'),
-              subtitle: const Text('预计交易生成后提醒')),
-        ]),
-      );
 }

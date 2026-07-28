@@ -83,7 +83,7 @@ void main() {
     expect(payload['transaction_date_semantics'], 'occurrence_date');
     expect((payload['accounts'] as List), hasLength(1));
     expect((payload['categories'] as List), hasLength(1));
-    expect((payload['transactions'] as List), hasLength(1));
+    expect((payload['transactions'] as List), hasLength(4));
     expect(
       (payload['transaction_templates'] as List).single['sort_order'],
       4,
@@ -99,7 +99,7 @@ void main() {
     final preview = await repository.previewImportJson(file.path);
     expect(preview.accounts, 1);
     expect(preview.categories, 1);
-    expect(preview.transactions, 1);
+    expect(preview.transactions, 4);
 
     const pathProviderChannel =
         MethodChannel('plugins.flutter.io/path_provider');
@@ -117,7 +117,17 @@ void main() {
     importedRepository = await importedRepository.importJsonSnapshot(file.path);
     expect(importedRepository.accounts.single.id, 'cash');
     expect(importedRepository.categories.single.id, 'food');
-    expect(importedRepository.transactions.single.merchant, 'Lunch');
+    expect(
+      importedRepository.transactions
+          .singleWhere((item) => item.id == transaction.id)
+          .merchant,
+      'Lunch',
+    );
+    expect(
+      importedRepository.transactions
+          .where((item) => item.status == TransactionStatus.planned),
+      hasLength(3),
+    );
     expect(importedRepository.transactionTemplates.single.sortOrder, 4);
     expect(
         importedRepository.recurringTransactionRules.single.isActive, isFalse);

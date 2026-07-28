@@ -43,7 +43,7 @@ class QuickTemplateManagerPage extends ConsumerWidget {
             physics: const NeverScrollableScrollPhysics(),
             buildDefaultDragHandles: false,
             itemCount: rows.length,
-            onReorderItem: (oldIndex, newIndex) {
+            onReorder: (oldIndex, newIndex) {
               unawaited(_reorder(ref, rows, oldIndex, newIndex));
             },
             itemBuilder: (context, index) {
@@ -188,7 +188,7 @@ class _TemplateEditorPageState extends ConsumerState<TemplateEditorPage> {
     );
     return _AutomationShell(
       title: '编辑模板',
-      trailing: const Icon(Icons.more_vert_rounded),
+      trailing: const SizedBox(width: 24),
       children: [
         Row(
           children: [
@@ -446,7 +446,7 @@ class _RecurringPlanPageState extends ConsumerState<RecurringPlanPage> {
           icon: Icons.calendar_month_outlined,
           title: '选择生成周期',
           subtitle: '可直接选择未来 1–12 个月，已生成月份不会重复',
-          onTap: allRows.isEmpty ? _noop : () => _generateAll(allRows),
+          onTap: allRows.isEmpty ? null : () => _generateAll(allRows),
         ),
         const SizedBox(height: 18),
         Text('ⓘ  规则生成的是预计交易；发生后可转为实际',
@@ -522,7 +522,7 @@ class _RecurringPlanPageState extends ConsumerState<RecurringPlanPage> {
     }
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('未来 $months 个月的周期交易已按规则状态生成。')),
+        SnackBar(content: Text('未来 $months 个月的周期交易已生成为预计记录。')),
       );
     }
   }
@@ -554,7 +554,7 @@ class _RecurringPlanPageState extends ConsumerState<RecurringPlanPage> {
         );
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('每月周期规则已建立。')),
+        const SnackBar(content: Text('每月周期规则已建立，并生成未来 3 个完整月份的预计交易。')),
       );
     }
   }
@@ -578,6 +578,7 @@ class _RecurringRuleEditorPageState
     extends ConsumerState<RecurringRuleEditorPage> {
   late bool active;
   late int intervalMonths;
+  late DateTime? endDate;
   late final TextEditingController nameController;
   late FinanceTransaction draft;
 
@@ -587,6 +588,7 @@ class _RecurringRuleEditorPageState
     final model = widget.row.rule!;
     active = model.isActive;
     intervalMonths = model.intervalMonths;
+    endDate = model.endDate;
     nameController = TextEditingController(text: model.name);
     draft = widget.row.draft!;
   }
@@ -607,10 +609,23 @@ class _RecurringRuleEditorPageState
           : nameController.text.trim(),
       repository: widget.repository,
     );
-    final start = widget.row.rule!.startDate;
+    final start = draft.transactionDate;
     return _AutomationShell(
       title: '编辑周期规则',
-      trailing: const Icon(Icons.more_vert_rounded),
+      trailing: PopupMenuButton<String>(
+        tooltip: '规则操作',
+        onSelected: (value) {
+          if (value == 'toggle') setState(() => active = !active);
+          if (value == 'delete') _delete();
+        },
+        itemBuilder: (_) => [
+          PopupMenuItem(
+            value: 'toggle',
+            child: Text(active ? '暂停规则' : '启用规则'),
+          ),
+          const PopupMenuItem(value: 'delete', child: Text('删除规则')),
+        ],
+      ),
       children: [
         Row(
           children: [
@@ -679,32 +694,48 @@ class _RecurringRuleEditorPageState
         ),
         const SizedBox(height: 24),
         _AutomationRow(
-            icon: Icons.description_outlined, title: '交易内容', value: row.name),
+          icon: Icons.description_outlined,
+          title: '交易内容',
+          value: row.name,
+          onTap: _editDraft,
+        ),
         _AutomationRow(
           icon: Icons.account_balance_wallet_outlined,
           title: '金额与账户',
           value: '${compassMoney(row.amount)} · ${row.account}',
+          onTap: _editDraft,
         ),
         _AutomationRow(
-            icon: Icons.sell_outlined, title: '类别', value: row.category),
+          icon: Icons.sell_outlined,
+          title: '类别',
+          value: row.category,
+          onTap: _editDraft,
+        ),
         _AutomationRow(
           icon: Icons.repeat_rounded,
           title: '重复频率',
           value: intervalMonths == 1 ? '每月' : '每 $intervalMonths 个月',
+          onTap: _pickInterval,
         ),
         _AutomationRow(
-            icon: Icons.calendar_month_outlined,
-            title: '发生日期',
-            value: '每月 ${start.day} 日'),
+          icon: Icons.calendar_month_outlined,
+          title: '发生日期',
+          value: '每月 ${start.day} 日',
+          onTap: _pickStartDate,
+        ),
         _AutomationRow(
           icon: Icons.flag_outlined,
           title: '结束条件',
-          value: widget.row.rule!.endDate == null ? '从不结束' : '已设置结束日期',
+          value: endDate == null
+              ? '从不结束'
+              : '${endDate!.year}-${endDate!.month.toString().padLeft(2, '0')}-${endDate!.day.toString().padLeft(2, '0')}',
+          onTap: _pickEndCondition,
         ),
-        const _AutomationRow(
+        _AutomationRow(
           icon: Icons.event_repeat_outlined,
-          title: '生成范围',
-          value: '未来 3 个月',
+          title: '补生成预计交易',
+          value: '选择未来 1–12 个月',
+          onTap: _generateForRule,
         ),
         const SizedBox(height: 12),
         CompassPrimaryButton(
@@ -754,6 +785,134 @@ class _RecurringRuleEditorPageState
     }
   }
 
+  Future<void> _pickInterval() async {
+    final value = await showModalBottomSheet<int>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+          children: [
+            Text('重复频率', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 8),
+            for (final months in const [1, 2, 3, 6, 12])
+              ListTile(
+                title: Text(months == 1 ? '每月' : '每 $months 个月'),
+                trailing: intervalMonths == months
+                    ? const Icon(Icons.check_rounded)
+                    : null,
+                onTap: () => Navigator.pop(sheetContext, months),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (value != null && mounted) setState(() => intervalMonths = value);
+  }
+
+  Future<void> _pickStartDate() async {
+    final selected = await showDatePicker(
+      context: context,
+      initialDate: draft.transactionDate,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2200),
+      helpText: '选择周期开始日期',
+    );
+    if (selected == null || !mounted) return;
+    setState(() {
+      draft = FinanceTransaction(
+        id: draft.id,
+        type: draft.type,
+        accountId: draft.accountId,
+        toAccountId: draft.toAccountId,
+        categoryId: draft.categoryId,
+        amount: draft.amount,
+        currency: draft.currency,
+        toAmount: draft.toAmount,
+        toCurrency: draft.toCurrency,
+        recordDate: draft.recordDate,
+        transactionDate: selected,
+        status: draft.status,
+        recurringRuleId: draft.recurringRuleId,
+        description: draft.description,
+        merchant: draft.merchant,
+      );
+    });
+  }
+
+  Future<void> _pickEndCondition() async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.all_inclusive_rounded),
+              title: const Text('从不结束'),
+              onTap: () => Navigator.pop(sheetContext, 'never'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.event_rounded),
+              title: const Text('选择结束日期'),
+              onTap: () => Navigator.pop(sheetContext, 'date'),
+            ),
+            const SizedBox(height: 12),
+          ],
+        ),
+      ),
+    );
+    if (action == 'never' && mounted) {
+      setState(() => endDate = null);
+      return;
+    }
+    if (action != 'date' || !mounted) return;
+    final selected = await showDatePicker(
+      context: context,
+      initialDate:
+          endDate ?? draft.transactionDate.add(const Duration(days: 365)),
+      firstDate: draft.transactionDate,
+      lastDate: DateTime(2200),
+      helpText: '选择周期结束日期',
+    );
+    if (selected != null && mounted) setState(() => endDate = selected);
+  }
+
+  Future<void> _generateForRule() async {
+    final months = await showModalBottomSheet<int>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: List.generate(12, (index) {
+              final value = index + 1;
+              return ActionChip(
+                label: Text('$value 个月'),
+                onPressed: () => Navigator.pop(sheetContext, value),
+              );
+            }),
+          ),
+        ),
+      ),
+    );
+    if (months == null || !mounted) return;
+    await ref
+        .read(transactionMutationsProvider.notifier)
+        .generateRecurringTransactions(widget.row.rule!.id,
+            monthsAhead: months);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已补生成未来 $months 个月的预计交易。')),
+      );
+    }
+  }
+
   Future<void> _delete() async {
     final confirmed = await _confirmDelete(context, '删除这个周期规则？');
     if (!confirmed || !mounted) return;
@@ -788,7 +947,7 @@ class _RecurringRuleEditorPageState
       status: draft.status,
       description: draft.description,
       merchant: draft.merchant,
-      endDate: existing.endDate,
+      endDate: endDate,
       generatedMonthKeys: existing.generatedMonthKeys,
       isActive: active,
     );
@@ -981,7 +1140,7 @@ class _RecurringRow extends StatelessWidget {
                   children: [
                     Text(row.name,
                         style: Theme.of(context).textTheme.titleMedium),
-                    Text('每月  |  ${row.account}',
+                    Text('每 ${row.rule!.intervalMonths} 个月  |  ${row.account}',
                         style: Theme.of(context).textTheme.bodySmall),
                   ],
                 ),
@@ -1008,17 +1167,19 @@ class _AutomationRow extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.value,
+    this.onTap,
   });
   final IconData icon;
   final String title;
   final String value;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) => CompassSettingsRow(
         icon: icon,
         title: title,
         value: value,
-        onTap: _noop,
+        onTap: onTap,
       );
 }
 
@@ -1186,15 +1347,16 @@ Future<String?> _askForName(
   BuildContext context, {
   required String initialValue,
   required String title,
-}) async {
-  final controller = TextEditingController(text: initialValue);
-  final value = await showDialog<String>(
+}) {
+  var pendingName = initialValue;
+  return showDialog<String>(
     context: context,
     builder: (dialogContext) => AlertDialog(
       title: Text(title),
-      content: TextField(
-        controller: controller,
+      content: TextFormField(
+        initialValue: initialValue,
         autofocus: true,
+        onChanged: (value) => pendingName = value,
         decoration: const InputDecoration(labelText: '名称'),
       ),
       actions: [
@@ -1204,7 +1366,7 @@ Future<String?> _askForName(
         ),
         FilledButton(
           onPressed: () {
-            final text = controller.text.trim();
+            final text = pendingName.trim();
             if (text.isNotEmpty) Navigator.pop(dialogContext, text);
           },
           child: const Text('保存'),
@@ -1212,8 +1374,6 @@ Future<String?> _askForName(
       ],
     ),
   );
-  controller.dispose();
-  return value;
 }
 
 Future<bool> _confirmDelete(BuildContext context, String message) async =>
@@ -1271,5 +1431,3 @@ class _AutomationEmptyState extends StatelessWidget {
         ),
       );
 }
-
-void _noop() {}

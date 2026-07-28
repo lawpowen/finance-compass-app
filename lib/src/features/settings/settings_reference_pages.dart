@@ -8,6 +8,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../../core/data/finance_repository.dart';
 import '../../core/providers/mutations/export_mutations.dart';
+import '../../core/providers/repository_provider.dart';
 import '../../core/services/ai_analysis_service.dart';
 import '../../core/settings/app_settings_controller.dart';
 import '../../core/settings/app_theme_style.dart';
@@ -73,7 +74,6 @@ class _AccountSyncPageState extends State<AccountSyncPage> {
                 Text('使用 Google 登录', style: TextStyle(fontSize: 18)),
                 Spacer(),
                 Text('计划中'),
-                Icon(Icons.chevron_right_rounded),
               ],
             ),
           ),
@@ -107,13 +107,11 @@ class _AccountSyncPageState extends State<AccountSyncPage> {
             icon: Icons.cloud_upload_outlined,
             title: '同步前自动备份',
             value: '随 Google 同步开放',
-            onTap: _noop,
           ),
           const CompassSettingsRow(
             icon: Icons.warning_amber_rounded,
             title: '发现冲突',
             value: '保留两份并提醒选择',
-            onTap: _noop,
           ),
           Text('ⓘ  仅同步应用数据，不上传导出的 JSON / CSV 文件',
               style: Theme.of(context).textTheme.bodySmall),
@@ -135,7 +133,7 @@ class _AccountSyncPageState extends State<AccountSyncPage> {
       );
 }
 
-class CurrencyDisplayPage extends StatefulWidget {
+class CurrencyDisplayPage extends ConsumerStatefulWidget {
   const CurrencyDisplayPage({
     super.key,
     required this.repository,
@@ -145,12 +143,41 @@ class CurrencyDisplayPage extends StatefulWidget {
   final AppSettingsController settingsController;
 
   @override
-  State<CurrencyDisplayPage> createState() => _CurrencyDisplayPageState();
+  ConsumerState<CurrencyDisplayPage> createState() =>
+      _CurrencyDisplayPageState();
 }
 
-class _CurrencyDisplayPageState extends State<CurrencyDisplayPage> {
-  int symbol = 0;
-  int separator = 0;
+class _CurrencyDisplayPageState extends ConsumerState<CurrencyDisplayPage> {
+  late int symbol;
+  late int separator;
+
+  @override
+  void initState() {
+    super.initState();
+    symbol = widget.repository.metaValues['currency_symbol_style'] == 'symbol'
+        ? 0
+        : 1;
+    separator =
+        widget.repository.metaValues['number_separator_style'] == 'space_comma'
+            ? 1
+            : 0;
+  }
+
+  String _previewMoney(double value, String currency) {
+    final parts = value.toStringAsFixed(2).split('.');
+    final grouped = parts.first.replaceAllMapped(
+      RegExp(r'\B(?=(\d{3})+(?!\d))'),
+      (_) => separator == 1 ? ' ' : ',',
+    );
+    final prefix = symbol == 0
+        ? switch (currency) {
+            'MYR' => 'RM',
+            'CNY' => 'RMB',
+            _ => currency,
+          }
+        : currency;
+    return '$prefix $grouped${separator == 1 ? ',' : '.'}${parts.last}';
+  }
 
   void _openFullSettings() {
     Navigator.push(
@@ -181,8 +208,8 @@ class _CurrencyDisplayPageState extends State<CurrencyDisplayPage> {
                     border: Border.all(color: FinanceColors.compassTeal),
                     borderRadius: BorderRadius.circular(6),
                   ),
-                  child:
-                      const Text('RM 1,000.00', style: TextStyle(fontSize: 18)),
+                  child: Text(_previewMoney(1000, 'MYR'),
+                      style: const TextStyle(fontSize: 18)),
                 ),
               ),
               const Padding(
@@ -196,9 +223,9 @@ class _CurrencyDisplayPageState extends State<CurrencyDisplayPage> {
                     border: Border.all(color: FinanceColors.compassBorder),
                     borderRadius: BorderRadius.circular(6),
                   ),
-                  child: const Text(
-                    'RMB 1,538.46',
-                    style: TextStyle(
+                  child: Text(
+                    _previewMoney(1538.46, 'CNY'),
+                    style: const TextStyle(
                         color: FinanceColors.compassTeal, fontSize: 18),
                   ),
                 ),
@@ -278,10 +305,31 @@ class _CurrencyDisplayPageState extends State<CurrencyDisplayPage> {
           CompassPrimaryButton(
             label: '应用并保存',
             color: FinanceColors.compassTeal,
-            onPressed: _openFullSettings,
+            onPressed: _saveDisplayPreferences,
           ),
         ],
       );
+
+  Future<void> _saveDisplayPreferences() async {
+    await widget.repository.database.setMetaValue(
+      'currency_symbol_style',
+      symbol == 0 ? 'symbol' : 'code',
+    );
+    await widget.repository.database.setMetaValue(
+      'number_separator_style',
+      separator == 1 ? 'space_comma' : 'comma_dot',
+    );
+    setCompassMoneyStyle(
+      useCurrencyCode: symbol == 1,
+      useEuropeanSeparators: separator == 1,
+    );
+    ref.invalidate(financeRepositoryProvider);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('金额显示方式已保存。')),
+      );
+    }
+  }
 }
 
 class FinanceRulesCenterPage extends StatelessWidget {
@@ -491,7 +539,7 @@ class _BackupRestorePageState extends ConsumerState<BackupRestorePage> {
             label: '立即备份',
             icon: Icons.cloud_upload_outlined,
             outlined: true,
-            onPressed: _busy ? _noop : () => _createBackup(),
+            onPressed: _busy ? null : () => _createBackup(),
           ),
           const SizedBox(height: 26),
           const CompassSectionLabel('自动保护'),
@@ -500,19 +548,16 @@ class _BackupRestorePageState extends ConsumerState<BackupRestorePage> {
             title: '导入前自动恢复点',
             subtitle: '每次替换资料前，应用会先保留当前数据库',
             value: '已开启',
-            onTap: _noop,
           ),
           const CompassSettingsRow(
             icon: Icons.folder_outlined,
             title: '保存位置',
             value: '由系统文件选择器决定',
-            onTap: _noop,
           ),
           const CompassSettingsRow(
             icon: Icons.history_rounded,
             title: '备份格式',
             value: 'Finance Compass JSON',
-            onTap: _noop,
           ),
           const SizedBox(height: 24),
           const CompassSectionLabel('恢复与迁移'),
@@ -520,13 +565,13 @@ class _BackupRestorePageState extends ConsumerState<BackupRestorePage> {
             icon: Icons.file_open_outlined,
             title: '从备份恢复',
             subtitle: '选择 JSON，预览后替换当前资料',
-            onTap: _busy ? _noop : _restoreBackup,
+            onTap: _busy ? null : _restoreBackup,
           ),
           CompassSettingsRow(
             icon: Icons.phone_android_outlined,
             title: '迁移到新设备',
             subtitle: '导出完整 JSON，再在新设备导入',
-            onTap: _busy ? _noop : _createBackup,
+            onTap: _busy ? null : _createBackup,
           ),
           const SizedBox(height: 18),
           Text('ⓘ  备份不会上传到云端；Google 同步功能仍在计划中',
@@ -654,13 +699,13 @@ class _ImportExportPageState extends ConsumerState<ImportExportPage> {
             title: '导出完整数据',
             subtitle: 'JSON · 账户、交易、预算、类别、模板与周期规则',
             value: '导出',
-            onTap: _busy ? _noop : _exportFull,
+            onTap: _busy ? null : _exportFull,
           ),
           CompassSettingsRow(
             icon: Icons.download_for_offline_outlined,
             title: '导入数据文件',
             subtitle: '选择 Finance Compass JSON',
-            onTap: _busy ? _noop : _import,
+            onTap: _busy ? null : _import,
           ),
           const Padding(
             padding: EdgeInsets.only(left: 48, top: 2),
@@ -676,14 +721,14 @@ class _ImportExportPageState extends ConsumerState<ImportExportPage> {
             title: 'AI 分析摘要',
             subtitle: '去除不必要资料的分析用 JSON',
             value: '导出',
-            onTap: _busy ? _noop : _exportAiSummary,
+            onTap: _busy ? null : _exportAiSummary,
           ),
           CompassSettingsRow(
             icon: Icons.table_chart_outlined,
             title: '未来规划表',
             subtitle: '未来 24 个月 · CSV',
             value: '导出',
-            onTap: _busy ? _noop : _exportFuturePlan,
+            onTap: _busy ? null : _exportFuturePlan,
           ),
           const SizedBox(height: 30),
           const CompassSectionLabel('最近导出'),
@@ -691,7 +736,6 @@ class _ImportExportPageState extends ConsumerState<ImportExportPage> {
             icon: Icons.description_outlined,
             title: _lastExport ?? '本次会话尚未导出',
             subtitle: _lastExport == null ? '导出后会在这里显示文件名' : '已通过系统文件选择器保存',
-            onTap: _noop,
           ),
           const SizedBox(height: 22),
           Text('ⓘ  备份与恢复请前往上一项设置；导出文件不会自动加入备份',
@@ -701,7 +745,7 @@ class _ImportExportPageState extends ConsumerState<ImportExportPage> {
             label: '导出完整数据',
             icon: Icons.file_upload_outlined,
             outlined: true,
-            onPressed: _busy ? _noop : () => _exportFull(),
+            onPressed: _busy ? null : () => _exportFull(),
           ),
         ],
       );
@@ -804,12 +848,7 @@ class _AppearancePageState extends State<AppearancePage> {
           mainAxisAlignment: MainAxisAlignment.spaceAround,
           children: [
             _ModeChoice(
-                label: '跟随系统',
-                icon: Icons.phone_android,
-                selected: mode == 0,
-                onTap: () => ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('跟随系统模式尚未实现。')),
-                    )),
+                label: '跟随系统（计划中）', icon: Icons.phone_android, selected: false),
             _ModeChoice(
                 label: '浅色',
                 icon: Icons.light_mode_outlined,
@@ -1143,9 +1182,6 @@ class _MiniAccountRow extends StatelessWidget {
             Text(label),
             const Spacer(),
             Text(value),
-            const SizedBox(width: 3),
-            Icon(Icons.chevron_right_rounded,
-                size: 15, color: palette.textMuted),
           ],
         ),
       );
@@ -1213,15 +1249,15 @@ class _MiniNavigation extends StatelessWidget {
       );
 }
 
-class NotificationsPage extends StatefulWidget {
+class NotificationsPage extends ConsumerStatefulWidget {
   const NotificationsPage({super.key, required this.repository});
   final FinanceRepository repository;
 
   @override
-  State<NotificationsPage> createState() => _NotificationsPageState();
+  ConsumerState<NotificationsPage> createState() => _NotificationsPageState();
 }
 
-class _NotificationsPageState extends State<NotificationsPage> {
+class _NotificationsPageState extends ConsumerState<NotificationsPage> {
   bool enabled = true;
   final switches = <bool>[true, true, true, true, true, false, true];
 
@@ -1257,6 +1293,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
       'notification_preferences_json',
       jsonEncode(switches),
     );
+    ref.invalidate(financeRepositoryProvider);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('提醒偏好已保存。')),
@@ -1273,8 +1310,8 @@ class _NotificationsPageState extends State<NotificationsPage> {
             contentPadding: EdgeInsets.zero,
             secondary: const Icon(Icons.notifications_active_outlined,
                 size: 56, color: FinanceColors.compassTeal),
-            title: const Text('通知已开启'),
-            subtitle: const Text('只提醒会影响现金流的事项'),
+            title: const Text('应用内提醒已开启'),
+            subtitle: const Text('控制总览“需要关注”；系统推送尚未开放'),
             value: enabled,
             onChanged: (value) => setState(() => enabled = value),
           ),
@@ -1283,57 +1320,54 @@ class _NotificationsPageState extends State<NotificationsPage> {
           _NotificationToggle(
               icon: Icons.credit_card_rounded,
               title: '还款提醒',
-              subtitle: '还款日前 3 天 · 上午 9:00',
+              subtitle: '在总览“需要关注”显示待还账单',
               value: switches[0],
               onChanged: (v) => setState(() => switches[0] = v)),
           _NotificationToggle(
               icon: Icons.calendar_month_outlined,
               title: '账单结算提醒',
-              subtitle: '结算日当天 · 下午 6:00',
+              subtitle: '结算后在总览显示账单状态',
               value: switches[1],
               onChanged: (v) => setState(() => switches[1] = v)),
           _NotificationToggle(
               icon: Icons.percent_rounded,
               title: '额度使用提醒',
-              subtitle: '使用达到 80%',
-              value: switches[2],
-              onChanged: (v) => setState(() => switches[2] = v)),
+              subtitle: '系统推送排程计划中',
+              value: false,
+              onChanged: null),
           const SizedBox(height: 16),
           const CompassSectionLabel('计划与预算'),
           _NotificationToggle(
               icon: Icons.repeat_rounded,
               title: '周期交易提醒',
-              subtitle: '发生前 1 天',
-              value: switches[3],
-              onChanged: (v) => setState(() => switches[3] = v)),
+              subtitle: '系统推送排程计划中',
+              value: false,
+              onChanged: null),
           _NotificationToggle(
               icon: Icons.pie_chart_outline_rounded,
               title: '预算临界提醒',
-              subtitle: '达到 80% 与 100%',
+              subtitle: '在总览“需要关注”显示预算状态',
               value: switches[4],
               onChanged: (v) => setState(() => switches[4] = v)),
           _NotificationToggle(
               icon: Icons.description_outlined,
               title: '每周现金流摘要',
-              subtitle: '每周一上午 8:00',
-              value: switches[5],
-              onChanged: (v) => setState(() => switches[5] = v)),
+              subtitle: '系统推送排程计划中',
+              value: false,
+              onChanged: null),
           const SizedBox(height: 16),
           const CompassSectionLabel('安静时间'),
           CompassSettingsRow(
               icon: Icons.dark_mode_outlined,
               title: '免打扰时段',
               subtitle: '系统通知排程完成后开放',
-              value: '计划中',
-              onTap: () => ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('免打扰排程尚未实现。')),
-                  )),
+              value: '计划中'),
           _NotificationToggle(
               icon: Icons.notification_important_outlined,
               title: '紧急还款提醒',
-              subtitle: '仍然通知',
-              value: switches[6],
-              onChanged: (v) => setState(() => switches[6] = v)),
+              subtitle: '系统推送排程计划中',
+              value: false,
+              onChanged: null),
           const SizedBox(height: 14),
           const CompassCard(
             child: Row(
@@ -1341,7 +1375,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
                 Icon(Icons.info_outline_rounded,
                     color: FinanceColors.compassTeal),
                 SizedBox(width: 12),
-                Expanded(child: Text('当前版本会保存提醒偏好；Android 系统通知排程尚未实现。')),
+                Expanded(child: Text('这些设置会立即控制应用内“需要关注”；Android 系统通知排程尚未实现。')),
               ],
             ),
           ),
@@ -1444,18 +1478,13 @@ class _AiGatewayPageState extends State<AiGatewayPage> {
           const CompassSettingsRow(
               icon: Icons.calendar_month_outlined,
               title: '历史资料',
-              value: '最近 6 个月',
-              onTap: _noop),
+              value: '最近 6 个月'),
           const CompassSettingsRow(
               icon: Icons.calendar_month_outlined,
               title: '未来计划',
-              value: '未来 6 个月',
-              onTap: _noop),
+              value: '未来 6 个月'),
           const CompassSettingsRow(
-              icon: Icons.description_outlined,
-              title: '包含预计交易与预算',
-              value: '是',
-              onTap: _noop),
+              icon: Icons.description_outlined, title: '包含预计交易与预算', value: '是'),
           const SizedBox(height: 18),
           const CompassSectionLabel('发送前检查'),
           CompassSettingsRow(
@@ -1478,7 +1507,7 @@ class _AiGatewayPageState extends State<AiGatewayPage> {
               label: '选择外部 AI App',
               icon: Icons.ios_share_rounded,
               color: FinanceColors.compassTeal,
-              onPressed: _busy ? _noop : () => _share()),
+              onPressed: _busy ? null : () => _share()),
         ],
       );
 }
@@ -1508,7 +1537,25 @@ class _SettingsDetailShell extends StatelessWidget {
                     Text(title, style: Theme.of(context).textTheme.titleLarge),
                     const Spacer(),
                     if (help)
-                      const Icon(Icons.help_outline_rounded)
+                      IconButton(
+                        tooltip: '本页说明',
+                        onPressed: () => showDialog<void>(
+                          context: context,
+                          builder: (dialogContext) => AlertDialog(
+                            title: Text('$title说明'),
+                            content: const Text(
+                              '可操作项目会显示箭头、按钮或开关；标记“计划中”的项目当前不会响应点击。',
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(dialogContext),
+                                child: const Text('知道了'),
+                              ),
+                            ],
+                          ),
+                        ),
+                        icon: const Icon(Icons.help_outline_rounded),
+                      )
                     else
                       const SizedBox(width: 24),
                   ],
@@ -1625,34 +1672,38 @@ class _ModeChoice extends StatelessWidget {
     required this.label,
     required this.icon,
     required this.selected,
-    required this.onTap,
+    this.onTap,
   });
   final String label;
   final IconData icon;
   final bool selected;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
   @override
-  Widget build(BuildContext context) => InkWell(
-        onTap: onTap,
-        child: Column(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                border: Border.all(
-                  color: selected
-                      ? FinanceColors.compassTeal
-                      : FinanceColors.compassBorder,
-                ),
-                borderRadius: BorderRadius.circular(8),
+  Widget build(BuildContext context) {
+    final content = Opacity(
+      opacity: onTap == null ? .5 : 1,
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              border: Border.all(
+                color: selected
+                    ? FinanceColors.compassTeal
+                    : FinanceColors.compassBorder,
               ),
-              child: Icon(icon),
+              borderRadius: BorderRadius.circular(8),
             ),
-            const SizedBox(height: 6),
-            Text(label),
-          ],
-        ),
-      );
+            child: Icon(icon),
+          ),
+          const SizedBox(height: 6),
+          Text(label),
+        ],
+      ),
+    );
+    if (onTap == null) return content;
+    return InkWell(onTap: onTap, child: content);
+  }
 }
 
 class _NotificationToggle extends StatelessWidget {
@@ -1667,7 +1718,7 @@ class _NotificationToggle extends StatelessWidget {
   final String title;
   final String subtitle;
   final bool value;
-  final ValueChanged<bool> onChanged;
+  final ValueChanged<bool>? onChanged;
   @override
   Widget build(BuildContext context) => SwitchListTile(
         contentPadding: EdgeInsets.zero,
@@ -1676,20 +1727,6 @@ class _NotificationToggle extends StatelessWidget {
         subtitle: Text(subtitle),
         value: value,
         onChanged: onChanged,
-      );
-}
-
-class _GatewayAddressRow extends StatelessWidget {
-  const _GatewayAddressRow({required this.value});
-  final String value;
-  @override
-  Widget build(BuildContext context) => CompassSettingsRow(
-        icon: Icons.language_rounded,
-        title: '网关地址',
-        subtitle: '仅在开始分析时连接',
-        value: value,
-        trailing: const Icon(Icons.edit_outlined),
-        onTap: _noop,
       );
 }
 
@@ -1805,6 +1842,3 @@ Future<bool> _pickPreviewAndImport(
   await ref.read(exportMutationsProvider.notifier).importJson(path);
   return true;
 }
-
-void _noop() {}
-void _ignoreInt(int _) {}

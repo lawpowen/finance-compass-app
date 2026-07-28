@@ -7,16 +7,36 @@ import '../../core/theme/finance_theme.dart';
 
 const compassPagePadding = EdgeInsets.fromLTRB(20, 16, 20, 28);
 const compassHairline = Divider(height: 1, thickness: .7);
+bool _compassUseCurrencyCode = true;
+bool _compassUseEuropeanSeparators = false;
+
+void setCompassMoneyStyle({
+  required bool useCurrencyCode,
+  required bool useEuropeanSeparators,
+}) {
+  _compassUseCurrencyCode = useCurrencyCode;
+  _compassUseEuropeanSeparators = useEuropeanSeparators;
+}
 
 String compassMoney(double value, {String currency = 'MYR', int decimals = 2}) {
   final negative = value < 0;
   final parts = value.abs().toStringAsFixed(decimals).split('.');
   final grouped = parts.first.replaceAllMapped(
     RegExp(r'\B(?=(\d{3})+(?!\d))'),
-    (_) => ',',
+    (_) => _compassUseEuropeanSeparators ? ' ' : ',',
   );
-  final fraction = decimals == 0 ? '' : '.${parts.last}';
-  return '${negative ? '- ' : ''}$currency $grouped$fraction';
+  final decimalMark = _compassUseEuropeanSeparators ? ',' : '.';
+  final fraction = decimals == 0 ? '' : '$decimalMark${parts.last}';
+  final prefix = _compassUseCurrencyCode
+      ? currency
+      : switch (currency.toUpperCase()) {
+          'MYR' => 'RM',
+          'USD' => 'US\$',
+          'CNY' => 'RMB',
+          'TWD' => 'NT\$',
+          _ => currency,
+        };
+  return '${negative ? '- ' : ''}$prefix $grouped$fraction';
 }
 
 class CompassBackground extends StatelessWidget {
@@ -271,7 +291,7 @@ class CompassSettingsRow extends StatelessWidget {
     super.key,
     required this.icon,
     required this.title,
-    required this.onTap,
+    this.onTap,
     this.subtitle,
     this.value,
     this.color,
@@ -284,7 +304,7 @@ class CompassSettingsRow extends StatelessWidget {
   final String? subtitle;
   final String? value;
   final Color? color;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
   final Widget? trailing;
   final double iconSize;
 
@@ -292,46 +312,46 @@ class CompassSettingsRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final muted = Theme.of(context).textTheme.bodySmall?.color;
     final resolvedColor = color ?? financePaletteOf(context).seed;
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 13),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 38,
-              child: Icon(icon, color: resolvedColor, size: iconSize),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title, style: Theme.of(context).textTheme.titleMedium),
-                  if (subtitle != null) ...[
-                    const SizedBox(height: 4),
-                    Text(subtitle!,
-                        style: Theme.of(context).textTheme.bodySmall),
-                  ],
+    final content = Padding(
+      padding: const EdgeInsets.symmetric(vertical: 13),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 38,
+            child: Icon(icon, color: resolvedColor, size: iconSize),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: Theme.of(context).textTheme.titleMedium),
+                if (subtitle != null) ...[
+                  const SizedBox(height: 4),
+                  Text(subtitle!, style: Theme.of(context).textTheme.bodySmall),
                 ],
+              ],
+            ),
+          ),
+          if (value != null)
+            Flexible(
+              child: Text(
+                value!,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.right,
+                style: TextStyle(color: muted, fontSize: 13),
               ),
             ),
-            if (value != null)
-              Flexible(
-                child: Text(
-                  value!,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.right,
-                  style: TextStyle(color: muted, fontSize: 13),
-                ),
-              ),
-            if (trailing != null) trailing!,
+          if (trailing != null) trailing!,
+          if (onTap != null) ...[
             const SizedBox(width: 5),
             Icon(Icons.chevron_right_rounded, color: muted, size: 24),
           ],
-        ),
+        ],
       ),
     );
+    if (onTap == null) return content;
+    return InkWell(onTap: onTap, child: content);
   }
 }
 

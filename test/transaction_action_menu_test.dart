@@ -108,7 +108,15 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('菜单测试交易'), findsNothing);
     refreshed = await container.read(financeRepositoryProvider.future);
-    expect(refreshed.transactions, isEmpty);
+    expect(
+      refreshed.transactions.where((item) => item.id == 'menu-transaction'),
+      isEmpty,
+    );
+    expect(
+      refreshed.transactions
+          .where((item) => item.status == TransactionStatus.planned),
+      hasLength(3),
+    );
   });
 }
 

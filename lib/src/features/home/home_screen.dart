@@ -9,6 +9,7 @@ import '../accounts/accounts_v2_screen.dart';
 import '../budgets/budgets_v2_screen.dart';
 import '../dashboard/dashboard_v2_screen.dart';
 import '../reports/reports_v2_screen.dart';
+import '../shared/compass_ui.dart';
 import '../settings/settings_v2_screen.dart';
 import '../transactions/transactions_v2_screen.dart';
 
@@ -44,6 +45,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       ),
       data: (repository) {
         setActiveBaseCurrency(repository.baseCurrency);
+        setCompassMoneyStyle(
+          useCurrencyCode:
+              repository.metaValues['currency_symbol_style'] != 'symbol',
+          useEuropeanSeparators:
+              repository.metaValues['number_separator_style'] == 'space_comma',
+        );
         final palette = paletteForStyle(widget.settingsController.themeStyle);
         final screens = [
           DashboardV2Screen(repository: repository),

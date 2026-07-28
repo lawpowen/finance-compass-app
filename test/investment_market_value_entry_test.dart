@@ -46,6 +46,52 @@ void main() {
     );
     expect(accountDropdown.onChanged, isNull);
   });
+
+  testWidgets('historical investment detail hides write actions',
+      (tester) async {
+    final repository = FinanceRepository.preview();
+    final account = repository.investmentAccounts().first;
+    final now = DateTime.now();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          financeRepositoryProvider.overrideWith(
+            () => _TestRepositoryNotifier(repository),
+          ),
+        ],
+        child: MaterialApp(
+          home: AccountDetailScreen(
+            account: account,
+            repository: repository,
+            cutoffDate: DateTime(now.year, now.month, 0, 23, 59, 59),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('account-detail-historical-banner')),
+      findsOneWidget,
+    );
+    expect(find.text('录入当前市值'), findsNothing);
+    expect(find.text('更新当前市值'), findsNothing);
+
+    await tester.tap(find.byKey(const Key('account-detail-return-current')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('account-detail-historical-banner')),
+      findsNothing,
+    );
+    expect(
+      find.text(
+        repository.snapshotsForAccount(account.id).isEmpty
+            ? '录入当前市值'
+            : '更新当前市值',
+      ),
+      findsOneWidget,
+    );
+  });
 }
 
 class _TestRepositoryNotifier extends FinanceRepositoryNotifier {
