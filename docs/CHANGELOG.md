@@ -2,6 +2,15 @@
 
 ## 2026-08-04
 
+### 自托管 ZIP 与最小权限容器兼容修复
+
+- 行为：Windows 生成的 Ubuntu、Windows 与 macOS 自托管 ZIP 现在统一使用 ZIP 标准的 `/` 条目分隔符，可由 Linux `unzip`、Python `zipfile` 和 macOS 归档工具正确还原目录；容器可在 `no-new-privileges` 与 `cap_drop: ALL` 下正常启动。
+- 设计：打包器改用 .NET `ZipArchive` 显式生成可移植条目名，不再依赖 Windows `Compress-Archive` 的平台路径行为；Caddy 镜像在构建阶段移除监听低端口用的文件 capability，因为服务只监听 8080；`/data/caddy` 与 `/config/caddy` 使用临时内存盘，避免只读根文件系统产生运行日志错误。
+- 安全与运维：继续保留只读根文件系统、临时 `/tmp`、全部 capability 丢弃、loopback 绑定和禁止权限提升；未扩大容器权限，也不影响浏览器本地账本。
+- 文档：更新公开发布 QA、测试质量说明与本变更记录。
+- 验证：在 Tailscale homelab 的 Ubuntu/Docker 29.6.2 环境中以发布 ZIP 原包解压、构建并启动隔离 Compose 项目，检查首页、WASM MIME、安全响应头、容器 capability 和只读根文件系统；完整测试 112 项通过、2 项按设计跳过，发布包 SHA-256 随修复重新计算。
+- 限制：iOS Safari 与 Android Chrome 的 HTTPS 安装和系统存储回收仍需目标设备人工验收。
+
 ### GitHub 仓库转移链接同步
 
 - 行为：应用内“关于与支持”、Windows 安装程序和公开文档现在打开 `lawpowen/finance-compass-app` 的源码、Release 与 Issues 页面。
@@ -17,7 +26,7 @@
 - 设计：`AppDatabase` 按平台选择原生 SQLite 或 `WasmDatabase`，Web 需要同源 `sqlite3.wasm` 和编译后的 Drift Worker；自定义 Service Worker 缓存应用壳。新增 Docker/Caddy 静态服务、loopback 默认 Compose、HTTPS/Basic Auth 反向代理示例、三平台启动器和 runtime-only 打包流程。
 - 安全与运维：默认不暴露公网、不写服务端账本；公开访问必须由部署者添加 HTTPS 与访问控制。浏览器清除站点数据、切换 profile/origin 可能丢失本地账本，用户需主动导出 JSON；Web 导入不伪造服务器恢复点。
 - 文档：新增 `SELF_HOSTING.md`，同步 README、需求、架构、模块、接口、安全运维、测试、追踪与发布流程。
-- 验证：Web Release 与 Drift Worker 构建成功；Chrome 390×844 真浏览器会话确认界面渲染、Service Worker 激活/控制页面且无控制台或资源错误。111 项测试通过、2 项按设计跳过，静态分析无编译错误并保留 105 项既有提示。三份 runtime ZIP 各含 55 条目，Compose 配置、锁定 WASM、Worker sidecar 排除和 SHA-256 均已复核；Android/Windows v0.9.0 正式包同步构建并验证。
+- 验证：Web Release 与 Drift Worker 构建成功；Chrome 390×844 真浏览器会话确认界面渲染、Service Worker 激活/控制页面且无控制台或资源错误。112 项测试通过、2 项按设计跳过，静态分析无编译错误并保留 105 项既有提示。三份 runtime ZIP 各含 52 个文件条目，Compose 配置、锁定 WASM、Worker sidecar 排除和 SHA-256 均已复核；Android/Windows v0.9.0 正式包同步构建并验证。
 - 限制：当前不是云同步/多用户服务，没有服务器端账户、API、数据库、备份或冲突处理；Docker runtime ZIP 不是原生 `.deb`/`.msi`/`.dmg`。初版曾因误用不匹配的 sqlite3 WASM 出现 `xFileControl` 白屏，现已固定到 sqlite3 2.9.4 官方资产并完成修复后 Chrome 回归。本机 Docker Desktop 卡在 `starting`，因此容器未在本机实际启动；已完成 Compose 配置与回环 HTTP 资源验收。iOS Safari/Android Chrome 的 HTTPS 安装和系统存储回收仍需目标设备人工验收。
 
 ## 2026-08-04

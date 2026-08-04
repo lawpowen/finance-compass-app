@@ -1,5 +1,6 @@
 # Runtime-only image used by the independently distributable self-hosted ZIP.
 FROM caddy:2.10.2-alpine
+RUN setcap -r /usr/bin/caddy
 COPY Caddyfile /etc/caddy/Caddyfile
 COPY webroot /srv
 EXPOSE 8080
