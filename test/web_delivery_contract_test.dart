@@ -85,6 +85,28 @@ void main() {
     expect(packager, contains('FinanceCompass-SelfHost-Windows'));
     expect(packager, contains('FinanceCompass-SelfHost-macOS'));
     expect(packager, contains('FinanceCompass-SelfHost-Ubuntu'));
+    expect(packager, contains('New-PortableZip'));
+    expect(packager, contains("-replace '\\\\', '/'"));
+    expect(packager, isNot(contains('Compress-Archive')));
+
+    for (final dockerfile in [
+      'deploy/selfhost/Dockerfile',
+      'deploy/selfhost/Dockerfile.runtime',
+    ]) {
+      final contents = await File('${root.path}/$dockerfile').readAsString();
+      expect(contents, contains('RUN setcap -r /usr/bin/caddy'));
+    }
+
+    for (final composeFile in [
+      'deploy/selfhost/compose.yml',
+      'deploy/selfhost/compose.runtime.yml',
+    ]) {
+      final contents = await File('${root.path}/$composeFile').readAsString();
+      expect(contents, contains('/data/caddy'));
+      expect(contents, contains('/config/caddy'));
+      expect(contents, contains('cap_drop:'));
+      expect(contents, contains('no-new-privileges:true'));
+    }
   });
 
   test('import confirmation keeps native and browser recovery promises exact',

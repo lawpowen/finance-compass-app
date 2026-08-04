@@ -8,6 +8,54 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.IO.Compression
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+function New-PortableZip {
+  param(
+    [Parameter(Mandatory = $true)][string]$SourceDirectory,
+    [Parameter(Mandatory = $true)][string]$DestinationPath
+  )
+
+  $sourceRoot = (Resolve-Path -LiteralPath $SourceDirectory).Path
+  $destinationFullPath = [System.IO.Path]::GetFullPath($DestinationPath)
+  $fileStream = [System.IO.File]::Open(
+    $destinationFullPath,
+    [System.IO.FileMode]::CreateNew,
+    [System.IO.FileAccess]::Write,
+    [System.IO.FileShare]::None
+  )
+  try {
+    $zip = New-Object System.IO.Compression.ZipArchive(
+      $fileStream,
+      [System.IO.Compression.ZipArchiveMode]::Create,
+      $false
+    )
+    try {
+      Get-ChildItem -LiteralPath $sourceRoot -File -Recurse | ForEach-Object {
+        $relativePath = $_.FullName.Substring($sourceRoot.Length).TrimStart('\', '/')
+        $entryName = 'FinanceCompass-SelfHost/' + ($relativePath -replace '\\', '/')
+        $entry = $zip.CreateEntry(
+          $entryName,
+          [System.IO.Compression.CompressionLevel]::Optimal
+        )
+        $inputStream = $_.OpenRead()
+        $outputStream = $entry.Open()
+        try {
+          $inputStream.CopyTo($outputStream)
+        } finally {
+          $outputStream.Dispose()
+          $inputStream.Dispose()
+        }
+      }
+    } finally {
+      $zip.Dispose()
+    }
+  } finally {
+    $fileStream.Dispose()
+  }
+}
+
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 if (-not $SkipWebBuild) {
@@ -35,6 +83,6 @@ $archives = @(
 )
 foreach ($archive in $archives) {
   if (Test-Path -LiteralPath $archive) { Remove-Item -LiteralPath $archive -Force }
-  Compress-Archive -Path $bundle -DestinationPath $archive -CompressionLevel Optimal
+  New-PortableZip -SourceDirectory $bundle -DestinationPath $archive
 }
 Get-FileHash -LiteralPath $archives -Algorithm SHA256

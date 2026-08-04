@@ -25,6 +25,7 @@ RUN dart compile js -O4 -o web/drift_worker.js tool/drift_worker.dart \
 # Caddy only serves immutable client files. No finance API or server database
 # is included in this image.
 FROM caddy:2.10.2-alpine
+RUN setcap -r /usr/bin/caddy
 COPY deploy/selfhost/Caddyfile /etc/caddy/Caddyfile
 COPY --from=build /src/build/web /srv
 EXPOSE 8080

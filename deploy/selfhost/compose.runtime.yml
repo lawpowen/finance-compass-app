@@ -10,6 +10,8 @@ services:
     read_only: true
     tmpfs:
       - /tmp
+      - /data/caddy
+      - /config/caddy
     security_opt:
       - no-new-privileges:true
     cap_drop:
