@@ -1,6 +1,6 @@
 # Finance Compass 系统架构
 
-公开分发层由 Flutter Android Release、Flutter Windows Release、Inno Setup 安装器和便携 ZIP 组成。`pubspec.yaml` 负责版本与静态支持二维码资产，Android Gradle 配置从被 Git 忽略的本机 `key.properties`/JKS 读取稳定发布签名，Windows CMake 输出 `FinanceCompass.exe`，`packaging/windows/FinanceCompass.iss` 只包装同一次 Windows Release 目录。GitHub Release 只接收二进制与校验文件，不接收数据库、JSON 备份或签名密钥。
+公开分发层由 Flutter Android Release、Flutter Windows Release、Inno Setup 安装器、便携 ZIP 及可自托管的 Flutter Web/PWA 组成。`pubspec.yaml` 负责版本与静态支持二维码资产，Android Gradle 配置从被 Git 忽略的本机 `key.properties`/JKS 读取稳定发布签名，Windows CMake 输出 `FinanceCompass.exe`，`packaging/windows/FinanceCompass.iss` 只包装同一次 Windows Release 目录。`deploy/selfhost/` 用 Docker 多阶段构建 Flutter Web，再用 Caddy 仅提供静态文件；它没有 API、服务端数据库或同步。GitHub Release 只接收二进制与校验文件，不接收数据库、JSON 备份或签名密钥。
 
 ## 技术栈
 
@@ -8,6 +8,7 @@
 - Riverpod：数据库、Repository 和 mutation 状态传播
 - Drift + SQLite：本地持久化，当前 schema 版本为 9
 - `file_picker`、`share_plus`：导入、导出与外部 AI 分享
+- Drift WASM + OPFS/IndexedDB：Web 的浏览器本地 SQLite；`web/sqlite3.wasm` 和编译后的 `drift_worker.js` 必须同源提供
 
 ## 运行结构
 
@@ -19,6 +20,8 @@ flowchart TD
   DB --> SQL[(SQLite v9)]
   R --> E[JSON / CSV / AI 摘要]
 ```
+
+Web 变体将 `AppDatabase` 通过条件导入切换到 `database_connection_web.dart`；原生平台继续使用私有 SQLite 文件、迁移恢复点和 `NativeDatabase`。Web 执行器是 Drift `WasmDatabase`，数据只在当前浏览器 origin/profile 内保存。自托管 Caddy 不读取或持久化账本，HTTPS、认证和公网暴露由宿主反向代理负责，详见 [SELF_HOSTING.md](SELF_HOSTING.md)。
 
 `HomeScreen` 提供总览、账户、交易、预算、报表和设置六个主入口。页面通过 `financeRepositoryProvider` 读取不可变快照，通过 mutation providers 执行写入；写入后重新载入 Repository，避免页面持有过期数据。
 

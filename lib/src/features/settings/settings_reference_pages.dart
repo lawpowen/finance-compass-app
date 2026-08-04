@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
@@ -1785,14 +1786,21 @@ Future<bool> _pickPreviewAndImport(
 ) async {
   final picked = await FilePicker.platform.pickFiles(
     allowMultiple: false,
+    withData: true,
     type: FileType.custom,
     allowedExtensions: const ['json'],
   );
-  final path = picked?.files.single.path;
-  if (path == null || path.isEmpty || !context.mounted) return false;
-
-  final preview =
-      await ref.read(exportMutationsProvider.notifier).previewImport(path);
+  final file = picked?.files.single;
+  if (file == null || !context.mounted) return false;
+  final path = file.path;
+  final bytes = file.bytes;
+  if ((path == null || path.isEmpty) && (bytes == null || bytes.isEmpty)) {
+    return false;
+  }
+  final mutations = ref.read(exportMutationsProvider.notifier);
+  final preview = path != null && path.isNotEmpty
+      ? await mutations.previewImport(path)
+      : await mutations.previewImportBytes(bytes!);
   if (!context.mounted) return false;
   final total = preview.accounts +
       preview.categories +
@@ -1821,7 +1829,11 @@ Future<bool> _pickPreviewAndImport(
               Text('交易：${preview.transactions}'),
               Text('资产快照：${preview.assetSnapshots}'),
               const SizedBox(height: 12),
-              const Text('确认后会先建立恢复点，再用此文件替换当前资料。'),
+              Text(
+                kIsWeb
+                    ? '确认会替换当前资料。请先下载当前完整 JSON；Web 浏览器不会在服务器保留隐藏恢复点。'
+                    : '确认后会先建立恢复点，再用此文件替换当前资料。',
+              ),
             ],
           ),
           actions: [
@@ -1839,6 +1851,10 @@ Future<bool> _pickPreviewAndImport(
       false;
   if (!confirmed || !context.mounted) return false;
 
-  await ref.read(exportMutationsProvider.notifier).importJson(path);
+  if (path != null && path.isNotEmpty) {
+    await mutations.importJson(path);
+  } else {
+    await mutations.importJsonBytes(bytes!);
+  }
   return true;
 }

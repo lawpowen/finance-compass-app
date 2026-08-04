@@ -1,11 +1,6 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:drift/drift.dart';
-import 'package:drift/native.dart';
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
-import 'package:sqlite3/sqlite3.dart' as sqlite;
 
 import '../models/account.dart' as model;
 import '../models/asset_snapshot.dart' as model;
@@ -14,6 +9,7 @@ import '../models/category.dart' as model;
 import '../models/transaction.dart' as model;
 import '../models/transaction_preset.dart' as model;
 import 'enum_codec.dart';
+import 'database_connection.dart';
 import 'tables/accounts_table.dart';
 import 'tables/asset_snapshots_table.dart';
 import 'tables/app_meta_table.dart';
@@ -38,7 +34,7 @@ part 'app_database.g.dart';
   ],
 )
 class AppDatabase extends _$AppDatabase {
-  AppDatabase() : super(_openConnection());
+  AppDatabase() : super(openDatabaseConnection());
 
   AppDatabase.forTesting(super.executor);
 
@@ -1398,96 +1394,5 @@ class AppDatabase extends _$AppDatabase {
         ),
       );
     }
-  }
-}
-
-LazyDatabase _openConnection() {
-  return LazyDatabase(() async {
-    final directory = await getApplicationDocumentsDirectory();
-    final file = File(p.join(directory.path, 'finance_app.sqlite'));
-    await _createPreSchemaMigrationBackup(file, directory);
-    return NativeDatabase.createInBackground(file);
-  });
-}
-
-Future<void> _createPreSchemaMigrationBackup(
-  File databaseFile,
-  Directory documentsDirectory,
-) async {
-  if (!await databaseFile.exists()) return;
-
-  sqlite.Database? source;
-  try {
-    source = sqlite.sqlite3.open(
-      databaseFile.path,
-      mode: sqlite.OpenMode.readOnly,
-    );
-    final version = source.userVersion;
-    if (version <= 0 || version >= 9) return;
-
-    final timestamp = DateTime.now()
-        .toIso8601String()
-        .replaceAll(':', '-')
-        .replaceAll('.', '-');
-    final backupDirectory = Directory(
-      p.join(
-        documentsDirectory.path,
-        'finance_compass_backups',
-        'pre_v9_$timestamp',
-      ),
-    );
-    await backupDirectory.create(recursive: true);
-
-    const tableNames = [
-      'accounts',
-      'categories',
-      'budgets',
-      'transactions',
-      'asset_snapshots',
-      'app_meta',
-      'transaction_templates',
-      'recurring_transaction_rules',
-    ];
-    final tables = <String, List<Map<String, Object?>>>{};
-    for (final tableName in tableNames) {
-      final exists = source.select(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
-        [tableName],
-      );
-      if (exists.isEmpty) continue;
-      tables[tableName] = source
-          .select('SELECT * FROM $tableName')
-          .map((row) => Map<String, Object?>.from(row))
-          .toList();
-    }
-    final jsonBackup = File(p.join(backupDirectory.path, 'snapshot.json'));
-    await jsonBackup.writeAsString(
-      const JsonEncoder.withIndent(' ').convert({
-        'backup_type': 'pre_schema_migration',
-        'source_schema_version': version,
-        'target_schema_version': 9,
-        'exported_at': DateTime.now().toIso8601String(),
-        'tables': tables,
-      }),
-      flush: true,
-    );
-    source.dispose();
-    source = null;
-
-    await databaseFile.copy(p.join(backupDirectory.path, 'finance_app.sqlite'));
-    for (final suffix in const ['-wal', '-shm']) {
-      final sidecar = File('${databaseFile.path}$suffix');
-      if (await sidecar.exists()) {
-        await sidecar.copy(
-          p.join(backupDirectory.path, 'finance_app.sqlite$suffix'),
-        );
-      }
-    }
-  } catch (_) {
-    // Never upgrade an existing database without a verified restore
-    // point. Surfacing the error keeps the original file untouched.
-    rethrow;
-  } finally {
-    source?.dispose();
   }
 }

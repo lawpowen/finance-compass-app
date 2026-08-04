@@ -1,5 +1,13 @@
 # 模块设计
 
+## Web 自托管与浏览器数据库
+
+`core/database/database_connection.dart` 是数据库执行器边界。`database_connection_native.dart` 保留 Android/桌面私有 SQLite 文件与 schema 升级恢复点；`database_connection_web.dart` 通过 `WasmDatabase.open` 打开 `finance_compass.sqlite`，并要求同源的 `sqlite3.wasm` 与 `drift_worker.js`。该选择使 Web UI、Repository 和业务规则复用同一 Drift schema，但 Web 数据只能留在访问者当前浏览器的 OPFS/IndexedDB，不能由静态 Caddy 容器读取。
+
+`core/platform/local_file_io.dart` 对文件路径操作使用条件导入。原生目标可建立导入前 JSON 恢复点；浏览器目标不伪造隐藏服务器文件。浏览器导入依赖 `FilePicker` bytes，并在覆盖前由 UI 预览；用户必须主动下载当前 JSON 作为恢复点。
+
+`deploy/selfhost/` 只包含构建/静态托管边界：Docker 多阶段构建会编译 Flutter Web、Drift Worker，再由 Caddy 送出文件；发行 ZIP 使用已构建的 `webroot` 与 runtime-only Dockerfile，因此解压后无需原始 Flutter 源码。访问控制和 TLS 是外层反向代理责任。
+
 ## `core/database`
 
 负责 Drift 表、schema 升级、完整性检查、余额原子更新和 v9 迁移前备份。升级失败必须保留旧文件并向启动层返回错误。

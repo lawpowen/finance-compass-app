@@ -60,12 +60,22 @@ class ExportMutations extends Notifier<void> {
     return (await _repo).previewImportJson(path);
   }
 
+  /// Browser file pickers expose bytes instead of a local filesystem path.
+  Future<ImportPreview> previewImportBytes(Uint8List bytes) async {
+    return (await _repo).previewImportBytes(bytes);
+  }
+
   /// Imports a JSON snapshot, replacing all existing data.
   ///
   /// After import the [financeRepositoryProvider] is refreshed so the
   /// entire UI rebuilds with the new data.
   Future<void> importJson(String path) async {
     final updated = await (await _repo).importJsonSnapshot(path);
+    _repoNotifier.setRepository(updated);
+  }
+
+  Future<void> importJsonBytes(Uint8List bytes) async {
+    final updated = await (await _repo).importJsonSnapshotBytes(bytes);
     _repoNotifier.setRepository(updated);
   }
 

@@ -1,6 +1,6 @@
 # Finance Compass 文档索引
 
-本文档集与 `Finance Compass 0.8.0` 代码同时维护。代码行为为事实来源；计划能力必须明确标注为“计划中”。
+本文档集与 `Finance Compass 0.9.0+42` 代码同时维护。代码行为为事实来源；计划能力必须明确标注为“计划中”。
 
 - [系统需求](SYSTEM_REQUIREMENTS.md)
 - [系统架构](ARCHITECTURE.md)
@@ -11,6 +11,8 @@
 - [接口与导入导出](INTERFACES.md)
 - [安全与运维](SECURITY_AND_OPERATIONS.md)
 - [公开发布、测试版与数据恢复作业](RELEASE_WORKFLOW.md)
+- [自托管 Web / PWA](SELF_HOSTING.md)
+- [v0.9.0 公开发布 QA（2026-08-04）](public-release-qa-v0.9.0-2026-08-04.md)
 - [v0.8.0 公开发布 QA（2026-08-04）](public-release-qa-v0.8.0-2026-08-04.md)
 - [测试与质量](TESTING_AND_QUALITY.md)
 - [代码—文档追踪](TRACEABILITY.md)
