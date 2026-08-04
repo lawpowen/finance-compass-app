@@ -11,11 +11,13 @@ Finance Compass 的公开 GitHub Release 固定提供：
 | `FinanceCompass-Windows-x64-Portable-vX.Y.Z.zip` | 包含完整 Flutter Windows 运行目录的便携包 |
 | `SHA256SUMS.txt` | 三个二进制产物的 SHA-256 |
 
+自托管 Web 发布还应提供三个同内容、按目标系统命名的 Docker runtime ZIP：`FinanceCompass-SelfHost-Ubuntu-vX.Y.Z.zip`、`FinanceCompass-SelfHost-Windows-vX.Y.Z.zip` 与 `FinanceCompass-SelfHost-macOS-vX.Y.Z.zip`。它们不是 `.deb`/`.msi`/`.dmg`，而是包含已构建 `webroot`、Caddy runtime Dockerfile、Compose 和对应启动脚本的可复现 Docker 服务包。不能把未实际构建的 OS 原生安装器写为已发布。
+
 不能单独分发 `FinanceCompass.exe`，因为它依赖相邻 DLL、`data/` 和插件文件。Windows EXE 与安装器目前没有 Authenticode 商业代码签名，README 和 Release Notes 必须保留 SmartScreen/未知发布者提示。
 
 ## 版本与身份
 
-`pubspec.yaml` 是版本来源，格式为 `X.Y.Z+N`。公开 Git 标签使用 `vX.Y.Z`，Android `versionCode` 使用 `N`。当前首个公开版本为 `0.8.0+41` / `v0.8.0`。
+`pubspec.yaml` 是版本来源，格式为 `X.Y.Z+N`。公开 Git 标签使用 `vX.Y.Z`，Android `versionCode` 使用 `N`。当前版本为 `0.9.0+42` / `v0.9.0`；首个公开原生版本为 `0.8.0+41` / `v0.8.0`。
 
 - Android 正式应用 ID：`com.financecompass.app`
 - Android Debug 应用 ID：`com.financecompass.app.debug`
@@ -42,6 +44,10 @@ flutter test
 flutter build apk --release
 flutter build windows --release
 ```
+
+Web 自托管构建必须额外执行 `tool/build_web.ps1` 或 `tool/build_web.sh`；它负责编译 Drift Worker，Flutter 3.44 不自动生成 Service Worker，因此 `web/service-worker.js` 必须明确随构建输出。再执行 `tool/package_selfhost.ps1 -Version X.Y.Z` 生成三份 runtime ZIP 并写入 SHA-256。详见 [SELF_HOSTING.md](SELF_HOSTING.md)。
+
+Web 发布前还必须验证 `tool/sqlite3_wasm.lock`：当前 `pubspec.lock` 的 `sqlite3 2.9.4`、`web/sqlite3.wasm` 的大小与 SHA-256 必须匹配该锁定文件。禁止用未经审阅的 `latest` WASM 替换；绑定与 WASM imports 版本不一致会使浏览器在启动 Drift 时失败。
 
 缺少发布密钥时，Android Release 构建必须明确失败，不能退回 Debug 签名。Windows Release 输出目录为 `build/windows/x64/runner/Release/`。
 

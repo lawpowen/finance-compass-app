@@ -247,13 +247,23 @@ class FinanceCompassAboutPage extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 6),
-              const Text('版本 0.8.0+41 · 本地优先的个人财务罗盘'),
+              const Text('版本 0.9.0+42 · 本地优先的个人财务罗盘'),
               const SizedBox(height: 12),
               const Card(
                 child: ListTile(
                   leading: Icon(Icons.shield_outlined),
                   title: Text('你的财务资料保存在本机'),
                   subtitle: Text('只有你主动导出时，账本资料才会离开设备。'),
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Card(
+                child: ListTile(
+                  leading: Icon(Icons.language_outlined),
+                  title: Text('Web 自托管模式'),
+                  subtitle: Text(
+                    '服务器只提供应用文件；账本保存在当前浏览器。不同设备或浏览器不会自动同步，清除网站数据会删除本机账本，请定期导出 JSON。',
+                  ),
                 ),
               ),
               const SizedBox(height: 8),

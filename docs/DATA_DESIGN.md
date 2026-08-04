@@ -1,5 +1,11 @@
 # 数据设计与迁移
 
+## 平台存储边界
+
+`AppDatabase` 的 schema 与 JSON 格式在原生和 Web 保持一致，但物理保留位置不同：Android/Windows/macOS/Linux 使用应用私有 SQLite 文件；Web 使用 Drift WASM SQLite 的浏览器 OPFS/IndexedDB。Web 数据键为 `finance_compass.sqlite`，作用域是当前 origin 与浏览器 profile，而非 Docker 主机。自托管容器没有可备份的服务端账本卷；每个浏览器使用完整 JSON 导出进行可携备份和恢复。
+
+Web 不承诺 OPFS/IndexedDB 在清除网站数据、无痕模式结束、浏览器存储配额清理、切换域名/端口或设备丢失后仍存在。任何涉及升级、迁移或导入覆盖的操作前应下载 JSON；导入验证和 Drift 事务仍沿用本文件定义的数据一致性规则。
+
 ## v9 实体
 
 - `accounts`：保留 v7 的信用卡字段；v8 新增可空的 `loan_principal`、`loan_annual_interest_rate`、`loan_term_months`、`loan_start_date`、`loan_payment_day`、`loan_repayment_method`、`loan_quoted_monthly_payment`；v9 新增可空 `loan_tracking_start_date`，把中途建账日期与真实合同开始日分开。

@@ -1,9 +1,5 @@
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
-
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 
 import '../database/app_database.dart'
     hide Account, AssetSnapshot, Budget, Category;
@@ -17,6 +13,7 @@ import '../models/loan_amortization.dart';
 import '../models/monthly_summary.dart';
 import '../models/transaction.dart';
 import '../models/transaction_preset.dart' as preset;
+import '../platform/local_file_io.dart' as local_files;
 import '../utils/currency_formatter.dart';
 import '../utils/id_generator.dart';
 import '../utils/month_key.dart';
@@ -1968,11 +1965,11 @@ class FinanceRepository {
   }
 
   Future<String> exportJsonSnapshot([String? targetPath]) async {
-    final file = File(targetPath ?? await _defaultExportPath());
     final payload = await buildJsonSnapshotPayload();
-    await file
-        .writeAsString(const JsonEncoder.withIndent('  ').convert(payload));
-    return file.path;
+    return local_files.writeUtf8Text(
+      targetPath ?? await local_files.defaultExportPath(),
+      const JsonEncoder.withIndent('  ').convert(payload),
+    );
   }
 
   Map<String, dynamic> buildAiSummaryPayload(
@@ -2161,14 +2158,19 @@ class FinanceRepository {
   Future<String> exportAiSummaryJson(String targetPath,
       {required List<String> monthKeys}) async {
     final payload = buildAiSummaryPayload(monthKeys: monthKeys);
-    final file = File(targetPath);
-    await file
-        .writeAsString(const JsonEncoder.withIndent('  ').convert(payload));
-    return file.path;
+    return local_files.writeUtf8Text(
+      targetPath,
+      const JsonEncoder.withIndent('  ').convert(payload),
+    );
   }
 
   Future<FinanceRepository> importJsonSnapshot(String path) async {
-    final payload = await _readImportPayload(path);
+    return importJsonSnapshotBytes(await local_files.readFileBytes(path));
+  }
+
+  /// Browser imports use picker bytes, avoiding a fake filesystem path.
+  Future<FinanceRepository> importJsonSnapshotBytes(Uint8List bytes) async {
+    final payload = _decodeImportPayload(bytes);
     final metaPayload = payload['meta'] as Map<String, dynamic>? ?? const {};
 
     final accountItems = (payload['accounts'] as List<dynamic>? ?? const [])
@@ -2334,12 +2336,8 @@ class FinanceRepository {
           'Import file does not contain any finance data.');
     }
 
-    final backupDirectory = await getApplicationDocumentsDirectory();
-    final restorePoint = p.join(
-      backupDirectory.path,
-      'finance_compass_before_import_${DateTime.now().millisecondsSinceEpoch}.json',
-    );
-    await exportJsonSnapshot(restorePoint);
+    final restorePoint = await local_files.importRestorePointPath();
+    if (restorePoint != null) await exportJsonSnapshot(restorePoint);
 
     await database.replaceAllWithSeedData(
       accountItems: accountItems,
@@ -2357,7 +2355,11 @@ class FinanceRepository {
   }
 
   Future<ImportPreview> previewImportJson(String path) async {
-    final payload = await _readImportPayload(path);
+    return previewImportBytes(await local_files.readFileBytes(path));
+  }
+
+  Future<ImportPreview> previewImportBytes(Uint8List bytes) async {
+    final payload = _decodeImportPayload(bytes);
     return ImportPreview(
       accounts: (payload['accounts'] as List<dynamic>? ?? const []).length,
       categories: (payload['categories'] as List<dynamic>? ?? const []).length,
@@ -2370,15 +2372,14 @@ class FinanceRepository {
     );
   }
 
-  Future<Map<String, dynamic>> _readImportPayload(String path) async {
-    final file = File(path);
-    if (!await file.exists() || await file.length() == 0) {
+  Map<String, dynamic> _decodeImportPayload(Uint8List bytes) {
+    if (bytes.isEmpty) {
       throw const FormatException('所选 JSON 是空文件（0 KB），没有导入任何数据。');
     }
 
     Object? decoded;
     try {
-      decoded = jsonDecode(await file.readAsString());
+      decoded = jsonDecode(utf8.decode(bytes));
     } on FormatException catch (error) {
       throw FormatException('JSON 内容不完整或已损坏：${error.message}');
     }
@@ -2629,15 +2630,6 @@ class FinanceRepository {
       final date = DateTime(now.year, now.month - (count - index - 1));
       return _monthKey(date);
     });
-  }
-
-  Future<String> _defaultExportPath() async {
-    final directory = await getApplicationDocumentsDirectory();
-    final timestamp = DateTime.now()
-        .toIso8601String()
-        .replaceAll(':', '-')
-        .replaceAll('.', '-');
-    return p.join(directory.path, 'finance_compass_export_$timestamp.json');
   }
 
   Future<FinanceRepository> _refreshWithGoalSync() async {

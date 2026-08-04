@@ -2,6 +2,17 @@
 
 ## 2026-08-04
 
+### Finance Compass v0.9.0 自托管 Web / PWA
+
+- 行为：新增可自托管 Flutter Web/PWA；iOS Safari 可添加到主屏幕，Android Chrome 可安装/添加为 PWA，桌面浏览器可访问。服务器只提供静态应用文件，账本保存在各浏览器自己的 Drift WASM SQLite 存储，不会自动跨设备同步。
+- 设计：`AppDatabase` 按平台选择原生 SQLite 或 `WasmDatabase`，Web 需要同源 `sqlite3.wasm` 和编译后的 Drift Worker；自定义 Service Worker 缓存应用壳。新增 Docker/Caddy 静态服务、loopback 默认 Compose、HTTPS/Basic Auth 反向代理示例、三平台启动器和 runtime-only 打包流程。
+- 安全与运维：默认不暴露公网、不写服务端账本；公开访问必须由部署者添加 HTTPS 与访问控制。浏览器清除站点数据、切换 profile/origin 可能丢失本地账本，用户需主动导出 JSON；Web 导入不伪造服务器恢复点。
+- 文档：新增 `SELF_HOSTING.md`，同步 README、需求、架构、模块、接口、安全运维、测试、追踪与发布流程。
+- 验证：Web Release 与 Drift Worker 构建成功；Chrome 390×844 真浏览器会话确认界面渲染、Service Worker 激活/控制页面且无控制台或资源错误。111 项测试通过、2 项按设计跳过，静态分析无编译错误并保留 105 项既有提示。三份 runtime ZIP 各含 55 条目，Compose 配置、锁定 WASM、Worker sidecar 排除和 SHA-256 均已复核；Android/Windows v0.9.0 正式包同步构建并验证。
+- 限制：当前不是云同步/多用户服务，没有服务器端账户、API、数据库、备份或冲突处理；Docker runtime ZIP 不是原生 `.deb`/`.msi`/`.dmg`。初版曾因误用不匹配的 sqlite3 WASM 出现 `xFileControl` 白屏，现已固定到 sqlite3 2.9.4 官方资产并完成修复后 Chrome 回归。本机 Docker Desktop 卡在 `starting`，因此容器未在本机实际启动；已完成 Compose 配置与回环 HTTP 资源验收。iOS Safari/Android Chrome 的 HTTPS 安装和系统存储回收仍需目标设备人工验收。
+
+## 2026-08-04
+
 ### Finance Compass v0.8.0 公开发布与自愿支持
 
 - 行为：设置页新增“关于与支持”，可查看 `0.8.0+41`、打开公开源码/最新下载/问题反馈，并显示 Touch 'n Go 自愿支持收款码与收款人 `LAW PO WEN`；README 新增 Windows 安装程序、完整便携包和 Android APK 的直接下载入口。

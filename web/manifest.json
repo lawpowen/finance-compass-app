@@ -1,12 +1,13 @@
 {
-    "name": "finance_app",
-    "short_name": "finance_app",
-    "start_url": ".",
+    "name": "Finance Compass",
+    "short_name": "Finance Compass",
+    "id": "/",
+    "start_url": "./",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
-    "orientation": "portrait-primary",
+    "background_color": "#123B3A",
+    "theme_color": "#123B3A",
+    "description": "Local-first personal finance, self-hosted as a private web app.",
+    "orientation": "any",
     "prefer_related_applications": false,
     "icons": [
         {

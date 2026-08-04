@@ -8,6 +8,9 @@
 - 完整 JSON 可能包含敏感财务资料，用户应自行保护导出文件。
 - 导入与导出只在用户主动选择文件或保存位置后执行；应用不申请后台云上传，也不自动发送完整备份给外部 AI。
 - “请开发者喝杯咖啡”只展示仓库内静态 Touch 'n Go QR 图片，不接入支付 SDK、不读取付款结果、不改变功能权限。发布前必须核对收款人 `LAW PO WEN` 与资产哈希；二维码异常替换按安全事件处理。
+- 自托管 Web 是静态分发而非云服务：Caddy/Docker 不保存账本，也没有服务器账户、同步 API 或服务端恢复点。Drift WASM SQLite 只写入访问站点的浏览器 OPFS/IndexedDB；同一用户在两台设备、两个浏览器、不同域名或端口会得到不同账本。清理浏览器站点数据可能使该账本不可恢复。
+- 自托管 Compose 默认绑定 `127.0.0.1:8080`。公网或家庭网访问必须经管理员控制的 HTTPS 反向代理和访问控制；示例 Caddy Basic Auth 使用 bcrypt 环境变量。不得直接暴露 8080、使用 HTTP 记账，或把 Basic Auth 明文/哈希、JSON、SQLite、私钥或反向代理环境文件提交到仓库。
+- Web 数据库运行时属于供应链敏感资产。`web/sqlite3.wasm` 必须匹配锁定的 `sqlite3 2.9.4` Dart package；`tool/sqlite3_wasm.lock` 固定官方 release URL、`730989` bytes 和 SHA-256 `922A76B182B6AF69B030C8E2FDD3283ECC8E827248B20E4B1F3F3DB170B52117`，构建与 Dockerfile 会拒绝不匹配内容。不得用“latest”下载替换它。
 
 ## 升级与故障恢复
 
@@ -17,11 +20,12 @@
 - Android 导出使用系统文档选择器直接写入并关闭输出流；应用只在字节非空且原生写入没有抛错时报告成功。取消保存不产生成功提示，旧的 0 KB 文件不会被当作可恢复备份。
 - 启动后执行 SQLite 完整性与外键检查。
 - 恢复原始数据库时，应用必须停止，并同时处理 SQLite、WAL 和 SHM 文件。
+- Web 版本更新前必须在每个使用的浏览器下载完整 JSON。Service Worker 只缓存静态壳文件，入口和 Worker 采用 no-cache 响应以避免升级长期卡在旧壳；清缓存、切换域名或浏览器 profile 前先下载 JSON。Web 导入没有隐藏的服务器恢复点，必须由用户明确保留导出文件。
 - 手工账单对账前必须停止当前应用并使用 SQLite 在线备份接口生成一致性副本；修复应写入明确交易、重算物化余额并执行 `integrity_check` 与 `foreign_key_check`，不得只覆盖账户余额掩盖缺失流水。
 
 ## Google Play 与身份计划
 
-Android 包版本为 `0.8.0+41`。正式版应用 ID 为 `com.financecompass.app`，使用本机独立发布密钥；Gradle 在缺少 `android/key.properties` 时拒绝 Release 构建，不允许静默退回 Debug 签名。密钥和密码文件被 Git 忽略，必须离线备份。内部测试 Debug 版继续使用 `com.financecompass.app.debug` 和独立数据目录，避免覆盖正式版。Google 登录、Google Play 隐私政策和数据安全表仍属于上架前工作；公开 GitHub 侧载不代表已经上架 Google Play。
+Android 包版本为 `0.9.0+42`。正式版应用 ID 为 `com.financecompass.app`，使用本机独立发布密钥；Gradle 在缺少 `android/key.properties` 时拒绝 Release 构建，不允许静默退回 Debug 签名。密钥和密码文件被 Git 忽略，必须离线备份。内部测试 Debug 版继续使用 `com.financecompass.app.debug` 和独立数据目录，避免覆盖正式版。Google 登录、Google Play 隐私政策和数据安全表仍属于上架前工作；公开 GitHub 侧载不代表已经上架 Google Play。
 
 周期规则保存后只在本地生成未来预计交易，不改变账户实际余额。贷款的全期预计交易必须由用户在提示框或详情页明确触发，并在选择同币种还款账户及确认期数和金额后批量写入完整月供；记录实际还款时替换对应期次的预计月供。打开贷款详情会自动把本应用旧版生成的 `planned` 本金/利息组合合并为一笔月供，不改写实际历史记录，也不改写中途建账以前的月份。该流程不新增网络、后台任务或系统权限。
 

@@ -1,0 +1,5 @@
+# This runtime must match pubspec.lock's sqlite3 package version.
+SQLITE3_VERSION=2.9.4
+SOURCE_URL=https://github.com/simolus3/sqlite3.dart/releases/download/sqlite3-2.9.4/sqlite3.wasm
+SHA256=922A76B182B6AF69B030C8E2FDD3283ECC8E827248B20E4B1F3F3DB170B52117
+SIZE_BYTES=730989

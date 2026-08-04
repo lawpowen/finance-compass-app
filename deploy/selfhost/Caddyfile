@@ -1,0 +1,20 @@
+:8080 {
+  root * /srv
+  encode zstd gzip
+
+  header {
+    -Server
+    X-Content-Type-Options "nosniff"
+    X-Frame-Options "DENY"
+    Referrer-Policy "no-referrer"
+    Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+    Content-Security-Policy "default-src 'self'; base-uri 'self'; connect-src 'self'; img-src 'self' data:; manifest-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:"
+  }
+
+  @wasm path /sqlite3.wasm
+  header @wasm Content-Type application/wasm
+  @entry path / /index.html /service-worker.js /flutter_service_worker.js /pwa_bootstrap.js
+  header @entry Cache-Control "no-cache, no-store, must-revalidate"
+  try_files {path} /index.html
+  file_server
+}

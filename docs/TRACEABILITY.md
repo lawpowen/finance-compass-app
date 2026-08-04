@@ -21,5 +21,7 @@
 | `pubspec.yaml`、Android 配置 | `ARCHITECTURE.md`、`SECURITY_AND_OPERATIONS.md`、`CHANGELOG.md` |
 | `assets/support/**`、`features/settings/settings_v2_screen.dart` 的关于与支持页 | `SYSTEM_REQUIREMENTS.md`、`MODULE_DESIGN.md`、`INTERFACES.md`、`SECURITY_AND_OPERATIONS.md`、`UI_REFERENCE.md`、`TESTING_AND_QUALITY.md`、`CHANGELOG.md`、根目录 `README.md` |
 | `packaging/**`、Windows/Android 发布配置 | `ARCHITECTURE.md`、`RELEASE_WORKFLOW.md`、`SECURITY_AND_OPERATIONS.md`、`TESTING_AND_QUALITY.md`、`CHANGELOG.md`、根目录 `README.md` |
+| `web/**`、`core/database/database_connection*`、`core/platform/local_file_io*` | `SELF_HOSTING.md`、`ARCHITECTURE.md`、`MODULE_DESIGN.md`、`INTERFACES.md`、`SECURITY_AND_OPERATIONS.md`、`TESTING_AND_QUALITY.md`、`CHANGELOG.md` |
+| `deploy/selfhost/**`、`tool/build_web.*`、`tool/package_selfhost.ps1` | `SELF_HOSTING.md`、`ARCHITECTURE.md`、`SECURITY_AND_OPERATIONS.md`、`RELEASE_WORKFLOW.md`、`TESTING_AND_QUALITY.md`、`CHANGELOG.md`、根目录 `README.md` |
 
 任何重要变更还必须更新 `CHANGELOG.md`。未来计划不得写成当前能力。

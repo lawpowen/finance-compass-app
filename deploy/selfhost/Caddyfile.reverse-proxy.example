@@ -1,0 +1,10 @@
+# This file runs on the host's HTTPS reverse proxy, not inside the container.
+# Generate a strong hash with: caddy hash-password --algorithm bcrypt --plaintext '...'
+# Export FINANCE_COMPASS_PASSWORD_HASH and FINANCE_COMPASS_USER before starting Caddy.
+finance.example.com {
+  encode zstd gzip
+  basic_auth {
+    {$FINANCE_COMPASS_USER} {$FINANCE_COMPASS_PASSWORD_HASH}
+  }
+  reverse_proxy 127.0.0.1:8080
+}

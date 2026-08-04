@@ -1,9 +1,5 @@
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
-
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 
 import '../data/finance_repository.dart';
 import '../database/app_database.dart'
@@ -13,6 +9,7 @@ import '../models/asset_snapshot.dart';
 import '../models/budget.dart';
 import '../models/category.dart';
 import '../models/transaction.dart';
+import '../platform/local_file_io.dart' as local_files;
 import '../utils/month_key.dart';
 import 'account_service.dart';
 import 'budget_service.dart';
@@ -161,11 +158,11 @@ class ExportService {
 
   /// 导出 JSON 快照文件，返回文件路径。
   Future<String> exportJsonSnapshot([String? targetPath]) async {
-    final file = File(targetPath ?? await _defaultExportPath());
     final payload = await buildJsonSnapshotPayload();
-    await file
-        .writeAsString(const JsonEncoder.withIndent('  ').convert(payload));
-    return file.path;
+    return local_files.writeUtf8Text(
+      targetPath ?? await _defaultExportPath(),
+      const JsonEncoder.withIndent('  ').convert(payload),
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -174,8 +171,7 @@ class ExportService {
 
   /// 导入 JSON 快照，替换所有数据。
   Future<void> importJsonSnapshot(String path) async {
-    final file = File(path);
-    final raw = await file.readAsString();
+    final raw = utf8.decode(await local_files.readFileBytes(path));
     final payload = jsonDecode(raw) as Map<String, dynamic>;
     final metaPayload = payload['meta'] as Map<String, dynamic>? ?? const {};
 
@@ -309,8 +305,7 @@ class ExportService {
 
   /// 预览 JSON 导入文件的内容摘要。
   Future<ImportPreview> previewImportJson(String path) async {
-    final file = File(path);
-    final raw = await file.readAsString();
+    final raw = utf8.decode(await local_files.readFileBytes(path));
     final payload = jsonDecode(raw) as Map<String, dynamic>;
     return ImportPreview(
       accounts: (payload['accounts'] as List<dynamic>? ?? const []).length,
@@ -437,10 +432,10 @@ class ExportService {
   Future<String> exportAiSummaryJson(String targetPath,
       {required List<String> monthKeys}) async {
     final payload = buildAiSummaryPayload(monthKeys: monthKeys);
-    final file = File(targetPath);
-    await file
-        .writeAsString(const JsonEncoder.withIndent('  ').convert(payload));
-    return file.path;
+    return local_files.writeUtf8Text(
+      targetPath,
+      const JsonEncoder.withIndent('  ').convert(payload),
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -549,14 +544,7 @@ class ExportService {
   // 私有辅助
   // ---------------------------------------------------------------------------
 
-  Future<String> _defaultExportPath() async {
-    final directory = await getApplicationDocumentsDirectory();
-    final timestamp = DateTime.now()
-        .toIso8601String()
-        .replaceAll(':', '-')
-        .replaceAll('.', '-');
-    return p.join(directory.path, 'finance_compass_export_$timestamp.json');
-  }
+  Future<String> _defaultExportPath() => local_files.defaultExportPath();
 
   String _categoryName(String categoryId) {
     for (final category in _categories) {

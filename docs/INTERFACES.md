@@ -1,5 +1,11 @@
 # 接口与导入导出
 
+## 自托管 Web 接口边界
+
+Web 自托管版没有 JSON/REST/GraphQL 服务端接口。Caddy 仅提供静态 `index.html`、Flutter 资源、`manifest.json`、`service-worker.js`、`pwa_bootstrap.js`、`sqlite3.wasm` 和 `drift_worker.js`；所有账本 CRUD 仍在浏览器内通过 Drift 执行。反向代理只可把 `https://finance.example.com/` 转发到 `127.0.0.1:8080`，并应在这一层实施 TLS/认证。`sqlite3.wasm` 必须以 `application/wasm` 响应。
+
+浏览器文件选择器可能没有本机路径，`ExportMutations.previewImportBytes` 与 `importJsonBytes` 接收 `Uint8List`，供 Web 按字节预览和导入 JSON；原生 `previewImport`/`importJson` 保留路径接口。两者使用相同的 JSON 格式验证和 Drift 事务替换规则。
+
 ## JSON v3
 
 顶层字段：`format_version=3`、`transaction_date_semantics=occurrence_date`、`app_version`、`schema_version`、`exported_at`、`meta`、`accounts`、`categories`、`budgets`、`transactions`、`asset_snapshots`、`transaction_templates`、`recurring_transaction_rules`。

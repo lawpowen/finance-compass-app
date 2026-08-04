@@ -1,5 +1,20 @@
 # 测试与质量
 
+自托管 Web/PWA 发布门禁必须完成 `tool/build_web.ps1` 或 `tool/build_web.sh`，并检查 `build/web` 内存在 `sqlite3.wasm`、`drift_worker.js`、`service-worker.js`、`pwa_bootstrap.js`、manifest 和 index。静态容器应验证 `sqlite3.wasm` 为 `application/wasm`，入口/Worker 禁止长期缓存，Compose 默认只绑定 loopback，且 runtime ZIP 内的 Dockerfile、Compose、`webroot`、Windows PowerShell、Ubuntu/macOS shell 启动器路径相互匹配。
+
+Web 回归至少覆盖：浏览器 FilePicker bytes 导入预览/替换路径、JSON 导出下载、在 HTTPS Safari 添加到主屏幕和 Android Chrome PWA 安装（实机）、首次完整加载后离线重开、不同 profile 之间不自动同步、清除站点数据后仅能依赖 JSON 恢复。Safari/Android 的安装入口为平台行为，自动化构建不能替代真机验收。
+
+## 2026-08-04 v0.9.0 自托管 Web / PWA 验证
+
+- 全量测试：111 项通过，2 项因外部 AI 网关/人工视觉采集条件未满足而按设计跳过。
+- 静态分析：无编译错误；保留 105 项既有 info/warning。
+- Web Release：Flutter、Drift Worker、完全本地 CanvasKit、`sqlite3.wasm` 和自定义 Service Worker 构建成功；输出不含 `gstatic.com`、Worker 源码、source map 或 `.deps`。
+- Chrome 390×844 独立会话：界面实际渲染，Service Worker 激活并控制页面，无控制台错误或资源失败。最初误用不匹配的 sqlite3 WASM 曾复现 `xFileControl` LinkError 白屏；换为锁定的 sqlite3 2.9.4 官方资产后回归通过。
+- HTTP：`/`、manifest、Service Worker、主程序、WASM 和 Drift Worker 均返回 200；WASM 为 `application/wasm`。
+- 三平台自托管包：Ubuntu、Windows、macOS ZIP 均为 15,075,006 bytes、55 条目；Compose 配置通过，WASM 大小/哈希和 Worker sidecar 排除通过。
+- 原生包：Android `0.9.0` / versionCode `42` 的 v2 签名、包名、三 ABI 通过；Windows `0.9.0+42` 安装版和 22 条目便携包通过。
+- 环境限制：本机 Docker Desktop 卡在 `starting`，未完成实际容器启动；Compose 与回环 HTTP 已验证。iOS Safari/Android Chrome 的 HTTPS 安装、离线重开和系统存储回收仍需目标设备人工验收。完整证据见 [v0.9.0 公开发布 QA](public-release-qa-v0.9.0-2026-08-04.md)。
+
 公开发布门禁除全量 Widget/领域测试和静态分析外，还必须验证 Android 发布签名与包身份、Windows EXE 元数据与启动、安装器/便携包完整性、支持二维码资产存在、三项二进制 SHA-256，以及 GitHub Release 文件名和大小。关于与支持页需在 390×844 视口验证版本、下载入口、自愿支持文案、无支付 SDK 声明和二维码语义标签。
 
 ## 自动化层级
