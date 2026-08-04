@@ -1,5 +1,16 @@
 # 变更记录
 
+## 2026-08-04
+
+### Finance Compass v0.8.0 公开发布与自愿支持
+
+- 行为：设置页新增“关于与支持”，可查看 `0.8.0+41`、打开公开源码/最新下载/问题反馈，并显示 Touch 'n Go 自愿支持收款码与收款人 `LAW PO WEN`；README 新增 Windows 安装程序、完整便携包和 Android APK 的直接下载入口。
+- 设计：Windows 正式程序统一命名为 `FinanceCompass.exe`，新增 Inno Setup 安装脚本；Android 正式构建必须从本地 `key.properties` 读取独立发布签名，缺少签名配置时直接失败，不再回退到 debug 签名。支持链接使用系统外部浏览器，收款码为随应用打包的静态资源。
+- 安全与运维：仓库保持公开；发布包含安装程序、便携 ZIP、APK 与 `SHA256SUMS.txt`。签名密钥及口令文件被 Git 忽略并要求离线加密备份；支持功能不集成支付 SDK、不读取支付状态、不解锁功能。无数据库迁移、权限扩大或用户财务数据上传。
+- 文档：更新 README、需求、架构、模块、接口、UI、交互、安全运维、测试质量、追踪矩阵、发布流程和设计 QA；新增 [v0.8.0 公开发布 QA](public-release-qa-v0.8.0-2026-08-04.md)。
+- 验证：`flutter test` 为 108 项通过、2 项按设计跳过；静态分析无编译错误，保留 105 项既有 lint。Android APK 的包名、版本、ABI、v2 签名和内置收款码均已核对；Windows Release、Inno Setup 和 19 条目便携 ZIP 构建成功，三项二进制的 SHA-256 复核一致。
+- 限制：Windows 安装程序尚无 Authenticode 商业代码签名，SmartScreen 可能提示未知发布者；Android 后续升级必须继续使用本次生成的同一发布密钥。公开发布不包含用户数据库、备份 JSON 或本机签名秘密。
+
 ## 2026-07-27
 
 ### 新建快速模板退出动画崩溃修复

@@ -1,5 +1,7 @@
 # 测试与质量
 
+公开发布门禁除全量 Widget/领域测试和静态分析外，还必须验证 Android 发布签名与包身份、Windows EXE 元数据与启动、安装器/便携包完整性、支持二维码资产存在、三项二进制 SHA-256，以及 GitHub Release 文件名和大小。关于与支持页需在 390×844 视口验证版本、下载入口、自愿支持文案、无支付 SDK 声明和二维码语义标签。
+
 ## 自动化层级
 
 - 领域单元测试：币种、现金流、模板、周期规则、信用卡账单和三种贷款摊销算法。
@@ -115,6 +117,14 @@ flutter build windows --debug
 2026-07-22 资金需求卡片整合回归：未来月份顶部只保留“实际消费”“实际现金”“信用/贷款”三种口径；选择“实际现金”后验证“需准备现金”副标题、“已知流出/尚未安排”解释、到期信用/贷款紧凑说明和独立资金大卡不存在。390×844 Widget 样本的需准备总额为 MYR 1,556，Windows 1266×713 Debug 实机显示 MYR 7,206 且列表上移、无横向溢出。全量测试 106 项通过、2 项按设计跳过；静态分析无编译错误，保留 105 项既有 info/warning。build 39 ARM64 Debug APK 为 versionCode `2039`、`0.8.0-debug`、`arm64-v8a`，大小 84,943,304 bytes，Drive 回读一致。
 
 2026-07-27 快速模板创建生命周期回归：390×844 Widget 完整执行“打开快速模板管理页→点击加号→填写 MYR 12.50 交易→保存→确认模板名称→返回列表”，并验证 Repository 中新增一条模板。修复前测试先捕获已销毁 `TextEditingController`，随后复现用户截图中的 `_dependents.isEmpty`；改用表单初始值和局部字符串后不再产生框架异常。全量测试 107 项通过、2 项按设计跳过；静态分析无编译错误，保留 105 项既有 info/warning。build 40 ARM64 Debug APK 为 versionCode `2040`、`0.8.0-debug`、`arm64-v8a`，大小 84,944,204 bytes，Drive 回读一致。
+
+## 2026-08-04 v0.8.0 公开发布验证
+
+- 全量测试：108 项通过，2 项因外部 AI 网关未配置而按设计跳过。
+- 静态分析：无编译错误；保留 105 项既有 info/warning。
+- Android：核对 `com.financecompass.app`、`0.8.0`、versionCode `41`、三种 ABI、APK Signature Scheme v2、单一签名证书和内置支持收款码。
+- Windows：Release 构建成功；主程序元数据为 `Finance Compass 0.8.0+41`；安装程序由 Inno Setup 6.7.3 编译成功；便携 ZIP 包含主程序、运行库、插件、`data/` 和支持收款码。
+- 发布文件：安装程序、便携 ZIP、Android APK 的 SHA-256 已生成并从 `SHA256SUMS.txt` 逐项回算通过。详细证据见 [v0.8.0 公开发布 QA](public-release-qa-v0.8.0-2026-08-04.md)。
 
 ## UI 质量
 

@@ -1,6 +1,6 @@
 # Finance Compass
 
-当前版本：`0.8.0+40`。工程文档索引见 [docs/README.md](docs/README.md)。
+当前版本：`0.8.0+41`。工程文档索引见 [docs/README.md](docs/README.md)。
 
 完整中文需求与设计文档请看：[finance-app-design.md](finance-app-design.md)。
 
@@ -13,6 +13,26 @@
 - exportable data for external AI analysis
 
 This project is already beyond a simple MVP skeleton. It includes local persistence with `SQLite + Drift`, account and transaction management, reporting, asset snapshots, multi-currency exchange-rate settings, and import/export flows.
+
+## Download / 普通用户下载
+
+无需安装 Flutter 或其他开发工具，请按设备选择：
+
+### Windows 10/11 x64
+
+**[下载 Windows 安装版（推荐）](https://github.com/lawpowen-cte/finance-compass-app/releases/download/v0.8.0/FinanceCompass-Windows-x64-Setup-v0.8.0.exe)**
+
+安装包目前没有商业 Authenticode 代码签名，Windows 可能显示“未知发布者”或 SmartScreen 提示。请确认文件来自本仓库，并可使用发布页提供的 SHA-256 校验值核对。
+
+不想安装时，可使用 **[Windows 便携版 ZIP](https://github.com/lawpowen-cte/finance-compass-app/releases/download/v0.8.0/FinanceCompass-Windows-x64-Portable-v0.8.0.zip)**。必须完整解压后运行 `FinanceCompass.exe`，不能只复制单个 EXE。
+
+### Android
+
+**[下载 Android APK](https://github.com/lawpowen-cte/finance-compass-app/releases/download/v0.8.0/FinanceCompass-Android-v0.8.0.apk)**
+
+APK 使用 Finance Compass 独立发布密钥签名。首次侧载时，Android 可能要求允许浏览器或文件管理器“安装未知应用”。
+
+还可以进入 **[全部版本和校验文件](https://github.com/lawpowen-cte/finance-compass-app/releases/latest)**。GitHub 自动显示的 `Source code` 压缩包不是普通用户安装包。
 
 ## Current Highlights
 
@@ -458,26 +478,34 @@ Main structure under `lib/src`:
 - `features/shared`
   - reusable UI building blocks
 
+## Buy the developer a coffee / 请开发者喝杯咖啡
+
+Finance Compass 免费提供。如果它对你有帮助，欢迎自愿支持继续开发。支持不会解锁额外功能，也不形成服务权益；付款前请确认收款人是 **LAW PO WEN**。
+
+<img src="assets/support/touch-n-go-support-qr.jpg" alt="Touch 'n Go QR code for voluntarily supporting Finance Compass development" width="360">
+
+应用只显示这张静态二维码，不接入支付 SDK、不读取付款结果，也不会自动上传财务资料。
+
 ## Development
 
-Run from the project folder:
+Run from the project folder with the configured Flutter SDK:
 
 ```powershell
-C:\Users\dell\.puro\envs\stable\flutter\bin\flutter.bat pub get
-C:\Users\dell\.puro\envs\stable\flutter\bin\flutter.bat analyze
-C:\Users\dell\.puro\envs\stable\flutter\bin\flutter.bat test
+flutter pub get
+flutter analyze --no-fatal-infos --no-fatal-warnings
+flutter test
 ```
 
 Build Android APK:
 
 ```powershell
-C:\Users\dell\.puro\envs\stable\flutter\bin\flutter.bat build apk
+flutter build apk --release
 ```
 
 Build the side-by-side installable debug APK for a physical ARM64 device:
 
 ```powershell
-C:\Users\dell\.puro\envs\stable\flutter\bin\flutter.bat build apk --debug --split-per-abi
+flutter build apk --debug --split-per-abi
 ```
 
 The debug variant is labeled `Finance Compass Debug` and uses the independent
@@ -485,17 +513,18 @@ application ID `com.financecompass.app.debug`. It can be installed beside the
 release application (`com.financecompass.app`) and has a separate Android data
 directory.
 
-Build Android release APK and copy it to an app-named file:
+Android release builds require local `android/key.properties` and a release keystore. See [public release workflow](docs/RELEASE_WORKFLOW.md); signing secrets are never committed.
+
+Build Android release APK:
 
 ```powershell
-cd C:\Users\dell\ai_labs\finance_app
-puro flutter build apk --release
-Copy-Item -LiteralPath build\app\outputs\flutter-apk\app-release.apk -Destination build\app\outputs\flutter-apk\Finance_Compass_release.apk -Force
+flutter build apk --release
 ```
 
 Build Windows release:
 
 ```powershell
-Get-Process finance_app -ErrorAction SilentlyContinue | Stop-Process -Force
-C:\Users\dell\.puro\envs\stable\flutter\bin\flutter.bat build windows
+flutter build windows --release
 ```
+
+Distribute the complete Windows Release directory through the installer or portable ZIP. `FinanceCompass.exe` depends on adjacent DLL and `data/` files and must not be distributed alone.

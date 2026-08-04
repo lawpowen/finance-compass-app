@@ -32,6 +32,8 @@
 - Reports：趋势、分类、净资产、预算洞察和未来现金流。报表收支统一调用 `actualCashFlowSummaryForMonth(s)`：现金收入/支出直接计入，信用消费等到现金还款时计入，现金间转账净额为零，现金还贷款按完整 `amount` 计入流出。`futureCashFlowProjection` 以现金资产为起点并使用同一现金增减函数，不能把贷款目标入账与现金付款相抵后只留下利息。
 - Settings：本地账户、币种、规则、备份、外观、通知和外部 AI 分析。完整导出先构建并校验非空字节，再交给系统文档选择器写入；完整导入在替换数据库前校验格式、ID 与引用，失败保留原数据并显示错误，成功后返回主路由避免旧详情页继续持有过期 repository。外观页以 `PageView` 提供 12 款主题的拖动预览，预览状态与持久化设置分离，用户确认后才调用设置控制器应用。外部 AI 分享使用 `finance_compass_three_lenses_v3` 提示词，兼容分析摘要 JSON 与完整备份 JSON；以 `generated_at`/`exported_at` 为截止点，要求分别分析消费发生、现金收付和信用负债，未来 `actual`/`settled` 只能作为“未来已确定”，`planned` 只能作为预计。信用卡还款只进入现金口径，投资/退休转账只属于资产重配置，周期规则与已生成交易必须去重。导入/导出、备份、分类、模板与周期规则是当前可用能力；Google 登录、系统通知调度及交易附件明确标为计划中，不得显示虚假成功状态。
 
+Settings public support：右上帮助入口打开 `FinanceCompassAboutPage`，展示版本、本地数据边界、公开源码/下载/问题链接及静态 Touch 'n Go 支持二维码；链接通过系统外部应用打开，失败显示提示。二维码支持完全自愿，不参与功能授权或付款状态。
+
 页面与 29 张确认截图的逐项映射、视觉契约和 390 像素检查规则见 [UI 参考基线](UI_REFERENCE.md)。主导航页面读取真实 `FinanceRepository` 数据；参考图中的示例金额不得覆盖用户账本。快速模板、周期计划、报表详情和设置详情使用独立页面，但共享 `CompassBackground`、`CompassSettingsRow`、`CompassSegmentedControl` 和金额格式化规则。`QuickTemplateManagerPage` 使用单一可重排列表覆盖全部模板，允许其他模板拖入前五；`TransactionMutations.reorderTransactionTemplates` 将完整 ID 顺序交给 Repository 校验并一次性重写连续 `sortOrder`，避免逐项保存形成重复排序值。新增模板的命名对话框使用 `TextFormField.initialValue` 和局部字符串保存输入，不在 `showDialog` 返回时提前销毁仍参与退出动画的 `TextEditingController`；旧交易页的模板和周期命名入口遵循同一生命周期规则。
 
 页面失败时显示 provider 错误；表单验证失败不得写入数据库。删除账户/类别时，如存在交易、快照、预算、模板或周期规则引用，必须拒绝删除。

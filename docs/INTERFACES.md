@@ -27,6 +27,10 @@ Android/桌面端通过系统文件选择器读取 `.json`，并由同一文件�
 
 Google 登录接口尚未实现。未来接口必须将远程身份绑定到 `local_profile_id`，首次登录只能选择上传、下载或手动确认，不得静默覆盖本地数据库。
 
+## 公开项目与下载链接
+
+`FinanceCompassAboutPage` 通过 `url_launcher` 把源码、最新 Release 和 Issues URL 交给操作系统打开：`https://github.com/lawpowen-cte/finance-compass-app`、`/releases/latest` 和 `/issues`。这些入口不附加账本内容、不调用付款接口；打开失败只显示本地 SnackBar。Touch 'n Go 支持二维码是随应用打包的静态资产，不是 API，也不返回付款状态。
+
 ## 内部查询契约
 
 `FinanceRepository.cashFlowNetBetween(startInclusive, endInclusive)` 按完整日历窗口返回现金账户的实际净变动，包含已记录的未来实际交易和预计交易；信用卡消费在现金还款前不计入，现金转入贷款或信用账户按转出全额计入。不包含投资/退休等非现金分组的直接收支。结束日期包含当天 23:59:59.999。该接口只读取交易快照，不写数据库。

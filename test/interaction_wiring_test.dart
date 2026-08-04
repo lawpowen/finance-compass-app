@@ -16,6 +16,7 @@ import 'package:finance_app/src/features/reports/reports_v2_screen.dart';
 import 'package:finance_app/src/features/budgets/budgets_v2_screen.dart';
 import 'package:finance_app/src/features/categories/category_manage_screen.dart';
 import 'package:finance_app/src/features/settings/settings_reference_pages.dart';
+import 'package:finance_app/src/features/settings/settings_v2_screen.dart';
 import 'package:finance_app/src/features/transactions/transaction_automation_pages.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -373,6 +374,43 @@ void main() {
       find.byIcon(Icons.chevron_right_rounded).evaluate().length,
       beforeRows,
     );
+  });
+
+  testWidgets(
+      'settings about page exposes public downloads and optional support',
+      (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final repository = FinanceRepository.preview();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFinanceTheme(AppThemeStyle.abyss),
+        home: Scaffold(
+          body: SettingsV2Screen(
+            repository: repository,
+            settingsController: AppSettingsController(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('关于与支持'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('关于 Finance Compass'), findsOneWidget);
+    expect(find.text('下载最新版本'), findsOneWidget);
+    expect(find.text('请开发者喝杯咖啡'), findsOneWidget);
+    expect(find.textContaining('支持完全自愿'), findsOneWidget);
+    expect(find.textContaining('不接入支付 SDK'), findsOneWidget);
+    expect(
+      find.bySemanticsLabel('Touch n Go 开发支持收款二维码，收款人 LAW PO WEN'),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
   });
 }
 

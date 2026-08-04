@@ -37,6 +37,7 @@ void main() {
         type: CategoryType.expense,
       ),
     );
+    final now = DateTime.now();
     final transaction = FinanceTransaction(
       id: 'txn_lunch',
       type: TransactionType.expense,
@@ -44,7 +45,7 @@ void main() {
       categoryId: 'food',
       amount: 18,
       currency: 'MYR',
-      transactionDate: DateTime(2026, 7, 17),
+      transactionDate: DateTime(now.year, now.month, now.day),
       merchant: 'Lunch',
     );
     repository = await repository.addTransaction(transaction);

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/data/finance_repository.dart';
 import '../../core/settings/app_settings_controller.dart';
@@ -6,6 +7,15 @@ import '../../core/theme/finance_colors.dart';
 import '../shared/compass_ui.dart';
 import 'settings_screen.dart';
 import 'settings_reference_pages.dart';
+
+const _financeCompassRepositoryUrl =
+    'https://github.com/lawpowen-cte/finance-compass-app';
+const _financeCompassReleasesUrl =
+    'https://github.com/lawpowen-cte/finance-compass-app/releases/latest';
+const _financeCompassIssuesUrl =
+    'https://github.com/lawpowen-cte/finance-compass-app/issues';
+const _financeCompassSupportQrAsset =
+    'assets/support/touch-n-go-support-qr.jpg';
 
 class SettingsV2Screen extends StatelessWidget {
   const SettingsV2Screen({
@@ -26,11 +36,12 @@ class SettingsV2Screen extends StatelessWidget {
           title: '设置',
           actions: [
             IconButton(
-              onPressed: () => showAboutDialog(
-                context: context,
-                applicationName: 'Finance Compass',
-                applicationVersion: '0.8.0',
-                children: const [Text('本地优先的个人财务罗盘。')],
+              tooltip: '关于与支持',
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute<void>(
+                  builder: (_) => const FinanceCompassAboutPage(),
+                ),
               ),
               icon: const Icon(Icons.help_outline_rounded),
             ),
@@ -193,6 +204,111 @@ class SettingsV2Screen extends StatelessWidget {
       context,
       MaterialPageRoute(
         builder: (_) => page,
+      ),
+    );
+  }
+}
+
+class FinanceCompassAboutPage extends StatelessWidget {
+  const FinanceCompassAboutPage({super.key});
+
+  Future<void> _openUrl(BuildContext context, String url) async {
+    var opened = false;
+    try {
+      opened = await launchUrl(
+        Uri.parse(url),
+        mode: LaunchMode.externalApplication,
+      );
+    } catch (_) {
+      opened = false;
+    }
+    if (!opened && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('无法打开链接，请稍后重试。')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    return Scaffold(
+      appBar: AppBar(title: const Text('关于 Finance Compass')),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: compassPagePadding,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Finance Compass',
+                style: textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 6),
+              const Text('版本 0.8.0+41 · 本地优先的个人财务罗盘'),
+              const SizedBox(height: 12),
+              const Card(
+                child: ListTile(
+                  leading: Icon(Icons.shield_outlined),
+                  title: Text('你的财务资料保存在本机'),
+                  subtitle: Text('只有你主动导出时，账本资料才会离开设备。'),
+                ),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: () => _openUrl(
+                  context,
+                  _financeCompassRepositoryUrl,
+                ),
+                icon: const Icon(Icons.code_rounded),
+                label: const Text('在 GitHub 查看源代码'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => _openUrl(
+                  context,
+                  _financeCompassReleasesUrl,
+                ),
+                icon: const Icon(Icons.download_outlined),
+                label: const Text('下载最新版本'),
+              ),
+              TextButton.icon(
+                onPressed: () => _openUrl(context, _financeCompassIssuesUrl),
+                icon: const Icon(Icons.bug_report_outlined),
+                label: const Text('报告问题'),
+              ),
+              const Divider(height: 32),
+              Text(
+                '请开发者喝杯咖啡',
+                style: textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                '如果 Finance Compass 对你有帮助，欢迎自愿支持继续开发。支持完全自愿，不会解锁额外功能，也不形成服务权益；付款前请确认收款人是 LAW PO WEN。',
+              ),
+              const SizedBox(height: 16),
+              Semantics(
+                label: 'Touch n Go 开发支持收款二维码，收款人 LAW PO WEN',
+                image: true,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(18),
+                  child: Image.asset(
+                    _financeCompassSupportQrAsset,
+                    fit: BoxFit.contain,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                '二维码只是静态图片；应用不接入支付 SDK，不读取付款结果，也不会因为支持与否改变任何功能。',
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

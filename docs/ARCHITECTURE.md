@@ -1,5 +1,7 @@
 # Finance Compass 系统架构
 
+公开分发层由 Flutter Android Release、Flutter Windows Release、Inno Setup 安装器和便携 ZIP 组成。`pubspec.yaml` 负责版本与静态支持二维码资产，Android Gradle 配置从被 Git 忽略的本机 `key.properties`/JKS 读取稳定发布签名，Windows CMake 输出 `FinanceCompass.exe`，`packaging/windows/FinanceCompass.iss` 只包装同一次 Windows Release 目录。GitHub Release 只接收二进制与校验文件，不接收数据库、JSON 备份或签名密钥。
+
 ## 技术栈
 
 - Flutter 3 / Dart 3，Material 3

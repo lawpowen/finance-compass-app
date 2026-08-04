@@ -41,7 +41,7 @@ void main() {
         accountId: 'cash',
         amount: 18,
         currency: 'MYR',
-        transactionDate: DateTime(now.year, now.month, 15),
+        transactionDate: DateTime(now.year, now.month, now.day),
         merchant: '菜单测试交易',
       ),
     );
