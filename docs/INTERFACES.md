@@ -35,7 +35,7 @@ Google 登录接口尚未实现。未来接口必须将远程身份绑定到 `lo
 
 ## 公开项目与下载链接
 
-`FinanceCompassAboutPage` 通过 `url_launcher` 把源码、最新 Release 和 Issues URL 交给操作系统打开：`https://github.com/lawpowen-cte/finance-compass-app`、`/releases/latest` 和 `/issues`。这些入口不附加账本内容、不调用付款接口；打开失败只显示本地 SnackBar。Touch 'n Go 支持二维码是随应用打包的静态资产，不是 API，也不返回付款状态。
+`FinanceCompassAboutPage` 通过 `url_launcher` 把源码、最新 Release 和 Issues URL 交给操作系统打开：`https://github.com/lawpowen/finance-compass-app`、`/releases/latest` 和 `/issues`。这些入口不附加账本内容、不调用付款接口；打开失败只显示本地 SnackBar。Touch 'n Go 支持二维码是随应用打包的静态资产，不是 API，也不返回付款状态。
 
 ## 内部查询契约
 

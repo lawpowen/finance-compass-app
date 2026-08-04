@@ -9,11 +9,11 @@ import 'settings_screen.dart';
 import 'settings_reference_pages.dart';
 
 const _financeCompassRepositoryUrl =
-    'https://github.com/lawpowen-cte/finance-compass-app';
+    'https://github.com/lawpowen/finance-compass-app';
 const _financeCompassReleasesUrl =
-    'https://github.com/lawpowen-cte/finance-compass-app/releases/latest';
+    'https://github.com/lawpowen/finance-compass-app/releases/latest';
 const _financeCompassIssuesUrl =
-    'https://github.com/lawpowen-cte/finance-compass-app/issues';
+    'https://github.com/lawpowen/finance-compass-app/issues';
 const _financeCompassSupportQrAsset =
     'assets/support/touch-n-go-support-qr.jpg';
 

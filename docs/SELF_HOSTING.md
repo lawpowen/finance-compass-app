@@ -6,9 +6,9 @@ Finance Compass `0.9.0+42` 可构建为自托管的 Flutter Web 应用。自托�
 
 公开发布包：
 
-- [Ubuntu v0.9.0](https://github.com/lawpowen-cte/finance-compass-app/releases/download/v0.9.0/FinanceCompass-SelfHost-Ubuntu-v0.9.0.zip)
-- [Windows v0.9.0](https://github.com/lawpowen-cte/finance-compass-app/releases/download/v0.9.0/FinanceCompass-SelfHost-Windows-v0.9.0.zip)
-- [macOS v0.9.0](https://github.com/lawpowen-cte/finance-compass-app/releases/download/v0.9.0/FinanceCompass-SelfHost-macOS-v0.9.0.zip)
+- [Ubuntu v0.9.0](https://github.com/lawpowen/finance-compass-app/releases/download/v0.9.0/FinanceCompass-SelfHost-Ubuntu-v0.9.0.zip)
+- [Windows v0.9.0](https://github.com/lawpowen/finance-compass-app/releases/download/v0.9.0/FinanceCompass-SelfHost-Windows-v0.9.0.zip)
+- [macOS v0.9.0](https://github.com/lawpowen/finance-compass-app/releases/download/v0.9.0/FinanceCompass-SelfHost-macOS-v0.9.0.zip)
 
 账本由 Drift WASM SQLite 保存在访问该网址的浏览器 profile 内。现代浏览器优先使用 OPFS，较旧/Safari 能力受限时可回退 IndexedDB。每一个“设备 + 浏览器 + 网站 origin”是一个独立账本：换设备、换浏览器或改变域名/端口都不会带来数据；清除该网站数据、无痕模式回收或浏览器存储被系统清理时可能丢失。使用前及每次重要录入后都应从“导入与导出”下载完整 JSON。
 

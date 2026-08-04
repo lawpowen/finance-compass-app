@@ -22,7 +22,7 @@ Finance Compass 的公开 GitHub Release 固定提供：
 - Android 正式应用 ID：`com.financecompass.app`
 - Android Debug 应用 ID：`com.financecompass.app.debug`
 - Windows 可执行文件：`FinanceCompass.exe`
-- GitHub：`lawpowen-cte/finance-compass-app`
+- GitHub：`lawpowen/finance-compass-app`
 
 ## 发布前提
 

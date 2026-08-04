@@ -2,6 +2,15 @@
 
 ## 2026-08-04
 
+### GitHub 仓库转移链接同步
+
+- 行为：应用内“关于与支持”、Windows 安装程序和公开文档现在打开 `lawpowen/finance-compass-app` 的源码、Release 与 Issues 页面。
+- 设计：不改变 PWA、账本数据、API 或发布文件；仅将已转移仓库的公开入口由旧拥有者路径更新为当前路径。
+- 安全与运维：旧 GitHub 路径可能会重定向，但安装、更新和支持入口不再依赖重定向；无需新增权限或配置。
+- 文档：更新 README、`SELF_HOSTING.md`、`INTERFACES.md`、`RELEASE_WORKFLOW.md` 与本变更记录。
+- 验证：确认 `lawpowen/finance-compass-app` 对当前 GitHub 身份授予 `ADMIN`，并运行 PWA 交付契约测试和 Web Release 构建。
+- 限制：iOS Safari 与 Android Chrome 的 HTTPS 安装仍需在目标设备上人工验收。
+
 ### Finance Compass v0.9.0 自托管 Web / PWA
 
 - 行为：新增可自托管 Flutter Web/PWA；iOS Safari 可添加到主屏幕，Android Chrome 可安装/添加为 PWA，桌面浏览器可访问。服务器只提供静态应用文件，账本保存在各浏览器自己的 Drift WASM SQLite 存储，不会自动跨设备同步。
