@@ -1,8 +1,7 @@
 import 'dart:convert';
 
 import '../data/finance_repository.dart';
-import '../database/app_database.dart'
-    hide Account, Category;
+import '../database/app_database.dart' hide Account, Category;
 
 import '../models/transaction.dart';
 import '../utils/id_generator.dart';
@@ -216,12 +215,11 @@ class TransactionService {
       final currentMonthKey = serviceMonthKey(cursor);
       if (!generatedKeys.contains(currentMonthKey) &&
           (rule.endDate == null || !cursor.isAfter(rule.endDate!))) {
-        final isFuture = cursor.isAfter(DateTime(now.year, now.month, now.day));
         transactions.add(
           rule.toTransaction(
             id: '${buildId('txn')}_${generatedCount++}',
             date: cursor,
-            status: isFuture ? TransactionStatus.planned : rule.status,
+            status: rule.status,
           ),
         );
         generatedKeys.add(currentMonthKey);

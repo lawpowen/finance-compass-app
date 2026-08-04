@@ -1,5 +1,4 @@
-import '../database/app_database.dart'
-    hide Category;
+import '../database/app_database.dart' hide Category;
 import '../models/category.dart';
 
 /// 分类 CRUD 与查询服务。

@@ -1,7 +1,7 @@
 name: finance_app
 description: Personal finance tracker MVP for cross-platform use.
 publish_to: "none"
-version: 0.7.0
+version: 0.8.0+41
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
@@ -9,16 +9,16 @@ environment:
 dependencies:
   drift: ^2.28.1
   file_picker: ^10.3.2
-  file_saver: ^0.3.1
   flutter:
     sdk: flutter
-  open_filex: ^4.7.0
   path: ^1.9.1
   path_provider: ^2.1.5
   sqlite3_flutter_libs: ^0.5.39
+  sqlite3: ^2.9.4
   flutter_riverpod: ^2.6.1
   http: ^1.2.0
   share_plus: ^12.0.2
+  url_launcher: ^6.3.2
 
 dev_dependencies:
   build_runner: ^2.7.1
@@ -29,3 +29,5 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/support/touch-n-go-support-qr.jpg

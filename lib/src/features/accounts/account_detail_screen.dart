@@ -17,10 +17,12 @@ class AccountDetailScreen extends ConsumerStatefulWidget {
     super.key,
     required this.account,
     required this.repository,
+    this.cutoffDate,
   });
 
   final Account account;
   final FinanceRepository repository;
+  final DateTime? cutoffDate;
 
   @override
   ConsumerState<AccountDetailScreen> createState() =>
@@ -29,6 +31,13 @@ class AccountDetailScreen extends ConsumerStatefulWidget {
 
 class _AccountDetailScreenState extends ConsumerState<AccountDetailScreen> {
   bool _isSaving = false;
+  DateTime? _historicalCutoff;
+
+  @override
+  void initState() {
+    super.initState();
+    _historicalCutoff = widget.cutoffDate;
+  }
 
   FinanceRepository get _repository {
     final async = ref.watch(financeRepositoryProvider);
@@ -38,8 +47,11 @@ class _AccountDetailScreenState extends ConsumerState<AccountDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final repository = _repository;
-    final cutoffDate = repository.currentMonthCutoffDate();
-    final snapshots = repository.snapshotsForAccount(widget.account.id);
+    final supportsMarketValue =
+        widget.account.reportGroup == ReportGroup.investment ||
+            widget.account.reportGroup == ReportGroup.retirement;
+    final cutoffDate = _historicalCutoff ?? repository.currentMonthCutoffDate();
+    final isHistorical = _historicalCutoff != null;
     final visibleSnapshots =
         repository.snapshotsForAccountUpTo(widget.account.id, cutoffDate);
     final latestSnapshot =
@@ -84,95 +96,125 @@ class _AccountDetailScreenState extends ConsumerState<AccountDetailScreen> {
                 subtitle:
                     '${_groupLabel(widget.account.reportGroup)} · ${widget.account.currency}',
               ),
+              if (isHistorical) ...[
+                const SizedBox(height: 12),
+                _HistoricalCutoffBanner(
+                  cutoffDate: cutoffDate,
+                  onReturnCurrent: () =>
+                      setState(() => _historicalCutoff = null),
+                ),
+              ],
               const SizedBox(height: 16),
               SectionCard(
-                title: '当前资产',
-                child: latestSnapshot == null
-                    ? const Text('还没有资产快照。')
-                    : Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                title: isHistorical ? '历史资产' : '当前资产',
+                subtitle: isHistorical
+                    ? '以下数据只计算到所选月份末，历史状态不可修改。'
+                    : '投入与取出由交易记录计算；市值由你定期更新。',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (supportsMarketValue && !isHistorical) ...[
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          onPressed: _isSaving ? null : _addSnapshot,
+                          icon: const Icon(Icons.show_chart_rounded),
+                          label: Text(
+                              latestSnapshot == null ? '录入当前市值' : '更新当前市值'),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                    ],
+                    if (latestSnapshot == null)
+                      Text(supportsMarketValue
+                          ? '还没有市值记录，录入后会显示资产走势与未实现盈亏。'
+                          : '还没有资产记录。')
+                    else ...[
+                      Wrap(
+                        spacing: 14,
+                        runSpacing: 10,
                         children: [
-                          Wrap(
-                            spacing: 14,
-                            runSpacing: 10,
-                            children: [
-                              _MetricPill(
-                                label: '总市值',
-                                value: formatMoney(
-                                  displayedMarketValue,
-                                  currency: widget.account.currency,
-                                ),
-                              ),
-                              _MetricPill(
-                                label: '累计投入',
-                                value: formatMoney(
-                                  latestFlow.contribution,
-                                  currency: widget.account.currency,
-                                ),
-                              ),
-                              _MetricPill(
-                                label: '累计取出',
-                                value: formatMoney(
-                                  latestFlow.withdrawal,
-                                  currency: widget.account.currency,
-                                ),
-                              ),
-                              _MetricPill(
-                                label: '累计成本',
-                                value: formatMoney(
-                                  displayedCostBasis,
-                                  currency: widget.account.currency,
-                                ),
-                              ),
-                              _MetricPill(
-                                label: '现金余额',
-                                value: formatMoney(
-                                  displayedCashBalance,
-                                  currency: widget.account.currency,
-                                ),
-                              ),
-                              _MetricPill(
-                                label: '未实现盈亏',
-                                value:
-                                    '${formatMoney(displayedMarketValue - displayedRemainingCostBasis, currency: widget.account.currency)} '
-                                    '(${(displayedRemainingCostBasis == 0 ? 0.0 : ((displayedMarketValue - displayedRemainingCostBasis) / displayedRemainingCostBasis) * 100).toStringAsFixed(1)}%)',
-                                accent:
-                                    displayedMarketValue -
-                                                displayedRemainingCostBasis >=
-                                            0
-                                        ? const Color(0xFF15803D)
-                                        : const Color(0xFFB91C1C),
-                              ),
-                            ],
-                          ),
-                          if (visibleSnapshots.length > 1) ...[
-                            const SizedBox(height: 16),
-                            MultiLineChart(
-                              series: _buildFlowSeries(
-                                  visibleSnapshots, repository),
-                              amountBuilder: (value) => formatMoney(
-                                value,
-                                currency: widget.account.currency,
-                              ),
+                          _MetricPill(
+                            label: '总市值',
+                            value: formatMoney(
+                              displayedMarketValue,
+                              currency: widget.account.currency,
                             ),
-                          ],
+                          ),
+                          _MetricPill(
+                            label: '累计投入',
+                            value: formatMoney(
+                              latestFlow.contribution,
+                              currency: widget.account.currency,
+                            ),
+                          ),
+                          _MetricPill(
+                            label: '累计取出',
+                            value: formatMoney(
+                              latestFlow.withdrawal,
+                              currency: widget.account.currency,
+                            ),
+                          ),
+                          _MetricPill(
+                            label: '累计成本',
+                            value: formatMoney(
+                              displayedCostBasis,
+                              currency: widget.account.currency,
+                            ),
+                          ),
+                          _MetricPill(
+                            label: '现金余额',
+                            value: formatMoney(
+                              displayedCashBalance,
+                              currency: widget.account.currency,
+                            ),
+                          ),
+                          _MetricPill(
+                            label: '未实现盈亏',
+                            value:
+                                '${formatMoney(displayedMarketValue - displayedRemainingCostBasis, currency: widget.account.currency)} '
+                                '(${(displayedRemainingCostBasis == 0 ? 0.0 : ((displayedMarketValue - displayedRemainingCostBasis) / displayedRemainingCostBasis) * 100).toStringAsFixed(1)}%)',
+                            accent: displayedMarketValue -
+                                        displayedRemainingCostBasis >=
+                                    0
+                                ? const Color(0xFF15803D)
+                                : const Color(0xFFB91C1C),
+                          ),
                         ],
                       ),
+                      if (visibleSnapshots.length > 1) ...[
+                        const SizedBox(height: 16),
+                        MultiLineChart(
+                          series:
+                              _buildFlowSeries(visibleSnapshots, repository),
+                          amountBuilder: (value) => formatMoney(
+                            value,
+                            currency: widget.account.currency,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ],
+                ),
               ),
               const SizedBox(height: 16),
               SectionCard(
                 title: '快照记录',
-                subtitle: '修改和删除会立即更新余额与图表。',
-                child: snapshots.isEmpty
+                subtitle: isHistorical ? '仅显示统计截止日及以前的快照。' : '修改和删除会立即更新余额与图表。',
+                child: visibleSnapshots.isEmpty
                     ? const Text('还没有资产快照。')
                     : Column(
-                        children: snapshots.reversed
+                        children: visibleSnapshots.reversed
                             .map((snapshot) => _SnapshotRow(
                                   snapshot: snapshot,
                                   repository: repository,
                                   currency: widget.account.currency,
-                                  onEdit: () => _editSnapshot(snapshot),
-                                  onDelete: () => _deleteSnapshot(snapshot),
+                                  onEdit: isHistorical
+                                      ? null
+                                      : () => _editSnapshot(snapshot),
+                                  onDelete: isHistorical
+                                      ? null
+                                      : () => _deleteSnapshot(snapshot),
                                 ))
                             .toList(),
                       ),
@@ -189,6 +231,33 @@ class _AccountDetailScreenState extends ConsumerState<AccountDetailScreen> {
           ),
       ],
     );
+  }
+
+  Future<void> _addSnapshot() async {
+    final result = await showDialog<AssetSnapshot>(
+      context: context,
+      builder: (_) => AssetSnapshotFormDialog(
+        repository: _repository,
+        initialAccountId: widget.account.id,
+      ),
+    );
+    if (!mounted || result == null) return;
+
+    setState(() => _isSaving = true);
+    try {
+      await ref.read(assetMutationsProvider.notifier).addSnapshot(result);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('当前市值已更新')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('更新失败：$error')),
+      );
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
   }
 
   Future<void> _editSnapshot(AssetSnapshot snapshot) async {
@@ -251,7 +320,9 @@ class _AccountDetailScreenState extends ConsumerState<AccountDetailScreen> {
 
     setState(() => _isSaving = true);
     try {
-      await ref.read(assetMutationsProvider.notifier).deleteSnapshot(snapshot.id);
+      await ref
+          .read(assetMutationsProvider.notifier)
+          .deleteSnapshot(snapshot.id);
       if (!mounted) {
         return;
       }
@@ -344,6 +415,45 @@ class _AccountDetailScreenState extends ConsumerState<AccountDetailScreen> {
   }
 }
 
+class _HistoricalCutoffBanner extends StatelessWidget {
+  const _HistoricalCutoffBanner({
+    required this.cutoffDate,
+    required this.onReturnCurrent,
+  });
+
+  final DateTime cutoffDate;
+  final VoidCallback onReturnCurrent;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        key: const Key('account-detail-historical-banner'),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: Theme.of(context)
+              .colorScheme
+              .tertiaryContainer
+              .withValues(alpha: .45),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.history_rounded, size: 20),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                '历史统计 · 截至 ${cutoffDate.year}年${cutoffDate.month}月末',
+              ),
+            ),
+            TextButton(
+              key: const Key('account-detail-return-current'),
+              onPressed: onReturnCurrent,
+              child: const Text('切换到当前'),
+            ),
+          ],
+        ),
+      );
+}
+
 class _SnapshotRow extends StatelessWidget {
   const _SnapshotRow({
     required this.snapshot,
@@ -356,8 +466,8 @@ class _SnapshotRow extends StatelessWidget {
   final AssetSnapshot snapshot;
   final FinanceRepository repository;
   final String currency;
-  final VoidCallback onEdit;
-  final VoidCallback onDelete;
+  final VoidCallback? onEdit;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -391,16 +501,18 @@ class _SnapshotRow extends StatelessWidget {
                   style: Theme.of(context).textTheme.titleSmall,
                 ),
               ),
-              IconButton(
-                onPressed: onEdit,
-                icon: const Icon(Icons.edit_outlined),
-                tooltip: '编辑',
-              ),
-              IconButton(
-                onPressed: onDelete,
-                icon: const Icon(Icons.delete_outline),
-                tooltip: '删除',
-              ),
+              if (onEdit != null)
+                IconButton(
+                  onPressed: onEdit,
+                  icon: const Icon(Icons.edit_outlined),
+                  tooltip: '编辑',
+                ),
+              if (onDelete != null)
+                IconButton(
+                  onPressed: onDelete,
+                  icon: const Icon(Icons.delete_outline),
+                  tooltip: '删除',
+                ),
             ],
           ),
           const SizedBox(height: 8),
@@ -412,8 +524,7 @@ class _SnapshotRow extends StatelessWidget {
                   '总市值 ${formatMoney(displayedMarketValue, currency: currency)}'),
               Text(
                   '累计投入 ${formatMoney(flow.contribution, currency: currency)}'),
-              Text(
-                  '累计取出 ${formatMoney(flow.withdrawal, currency: currency)}'),
+              Text('累计取出 ${formatMoney(flow.withdrawal, currency: currency)}'),
               Text(
                   '累计成本 ${formatMoney(repository.snapshotCostBasis(snapshot), currency: currency)}'),
               Text(

@@ -9,6 +9,7 @@ import '../../core/providers/mutations/transaction_mutations.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../core/utils/month_key.dart';
 import '../../core/utils/month_range.dart';
+import '../../core/utils/transaction_cash_flow.dart';
 import '../categories/category_manage_screen.dart';
 import '../shared/empty_state.dart';
 import '../shared/finance_action_menu_button.dart';
@@ -17,8 +18,9 @@ import '../shared/finance_metric_card.dart';
 import '../shared/finance_status_chip.dart';
 import '../shared/screen_header.dart';
 import '../shared/section_card.dart';
-import 'transaction_form_dialog.dart';
+import '../shared/compass_ui.dart';
 import '../../core/theme/finance_colors.dart';
+import 'transaction_form_dialog.dart';
 
 enum TransactionCalculationMode { actual, includePlanned }
 
@@ -135,8 +137,6 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
   @override
   Widget build(BuildContext context) {
     final repository = widget.repository;
-    final templates = repository.transactionTemplates;
-    final recurringRules = repository.recurringTransactionRules;
     final allCategories = [...repository.sortedCategories()]
       ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     final visibleCategories = _visibleCategories(allCategories);
@@ -214,642 +214,621 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
     final summaryIncome = totalsByType[TransactionType.income] ?? 0;
     final summaryExpense = totalsByType[TransactionType.expense] ?? 0;
     final netCashFlow = summaryIncome - summaryExpense;
+    final transferNetEffect = transferNetEffectTotal(
+      summaryTransactions,
+      accountId: effectiveAccountId,
+      outgoingAmountInBase: repository.transactionAmountInBase,
+      incomingAmountInBase: repository.transferIncomingAmountInBase,
+    );
+    final netCashFlowWithTransfers = netCashFlow + transferNetEffect;
     final activeFilters = _activeFilters(
       repository: repository,
       accountId: effectiveAccountId,
       categoryId: effectiveCategoryId,
     );
 
-    return RefreshIndicator(
-      onRefresh: () async {
-        setState(() {});
-      },
-      child: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          if (!_isSelectionMode)
-            ScreenHeader(
-              title: '交易',
-              actions: [
-                IconButton.filledTonal(
-                  onPressed: () => _showCategoryManage(context),
-                  icon: const Icon(Icons.category_outlined),
-                  tooltip: '类别管理',
-                ),
-                const SizedBox(width: 8),
-                IconButton.filled(
-                  onPressed: () => _showAddTransaction(context),
-                  icon: const Icon(Icons.add),
-                  tooltip: '新增交易',
-                ),
-              ],
-            ),
-          const SizedBox(height: 12),
-          SectionCard(
-            title: '快捷录入',
-            subtitle: '点按直接使用，右侧菜单维护模板和周期规则',
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('快速模板', style: Theme.of(context).textTheme.titleSmall),
-                const SizedBox(height: 4),
-                if (templates.isNotEmpty)
-                  Wrap(
-                    spacing: 4,
-                    runSpacing: 4,
-                    children: templates.map((template) {
-                      return _TemplateChip(
-                        template: template,
-                        onTap: () => _showAddTransaction(
-                          context,
-                          draftTransaction: _draftFromTemplate(template),
-                        ),
-                        onLongPress: () =>
-                            _showTemplateActions(context, template),
-                        onAction: (action) async {
-                          if (action == 'edit') {
-                            await _showAddTransaction(
-                              context,
-                              draftTransaction: _draftFromTemplate(template),
-                            );
-                          } else if (action == 'delete') {
-                            await _deleteTransactionTemplate(
-                              context,
-                              template.id,
-                            );
-                          }
-                        },
-                      );
-                    }).toList(),
-                  )
-                else
-                  const Text('暂无模板',
-                      style: TextStyle(fontSize: 12, color: Colors.grey)),
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 6),
-                  child: Divider(height: 1),
-                ),
-                Text('周期交易', style: Theme.of(context).textTheme.titleSmall),
-                const SizedBox(height: 4),
-                if (recurringRules.isNotEmpty)
-                  Wrap(
-                    spacing: 4,
-                    runSpacing: 4,
-                    children: recurringRules.map((rule) {
-                      return _RecurringRuleChip(
-                        rule: rule,
-                        onTap: () =>
-                            _generateRecurringTransactions(context, rule),
-                        onLongPress: () =>
-                            _showRecurringRuleActions(context, rule),
-                        onAction: (action) async {
-                          if (action == 'generate') {
-                            await _generateRecurringTransactions(context, rule);
-                          } else if (action == 'delete') {
-                            await _deleteRecurringTransactionRule(
-                              context,
-                              rule.id,
-                            );
-                          }
-                        },
-                      );
-                    }).toList(),
-                  )
-                else
-                  const Text('暂无周期规则',
-                      style: TextStyle(fontSize: 12, color: Colors.grey)),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          SectionCard(
-            title: '筛选',
-            subtitle: '搜索会匹配说明、商户、账户、类别和交易类型',
-            child: FinanceFilterBar(
-              searchController: searchController,
-              searchQuery: searchQuery,
-              searchLabel: '搜索交易',
-              onSearchChanged: (value) => setState(() => searchQuery = value),
-              onClearSearch: () {
-                searchController.clear();
-                setState(() => searchQuery = '');
-              },
-              activeFilters: activeFilters
-                  .map(
-                    (filter) => FinanceFilterChipData(
-                      label: filter.label,
-                      onClear: filter.onClear,
-                    ),
-                  )
-                  .toList(),
-              onReset: _clearFilters,
-              expanded: showFilters,
-              onToggleExpanded: () =>
-                  setState(() => showFilters = !showFilters),
-              expandedChild: Column(
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: DropdownButtonFormField<String?>(
-                          isExpanded: true,
-                          value: selectedMonthFrom,
-                          decoration: const InputDecoration(
-                            labelText: '起始月份',
-                            border: OutlineInputBorder(),
-                            isDense: true,
-                          ),
-                          items: [
-                            const DropdownMenuItem<String?>(
-                              value: null,
-                              child: Text('全部'),
-                            ),
-                            ...monthKeys.map(
-                              (monthKey) => DropdownMenuItem<String?>(
-                                value: monthKey,
-                                child: Text(
-                                  monthLabel(monthKey),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            ),
-                          ],
-                          onChanged: (value) => setState(() {
-                            selectedMonthFrom = value;
-                            if (selectedMonthFrom != null &&
-                                selectedMonthTo != null &&
-                                selectedMonthFrom!.compareTo(selectedMonthTo!) >
-                                    0) {
-                              selectedMonthTo = selectedMonthFrom;
-                            }
-                          }),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: DropdownButtonFormField<String?>(
-                          isExpanded: true,
-                          value: selectedMonthTo,
-                          decoration: const InputDecoration(
-                            labelText: '结束月份',
-                            border: OutlineInputBorder(),
-                            isDense: true,
-                          ),
-                          items: [
-                            const DropdownMenuItem<String?>(
-                              value: null,
-                              child: Text('全部'),
-                            ),
-                            ...monthKeys.map(
-                              (monthKey) => DropdownMenuItem<String?>(
-                                value: monthKey,
-                                child: Text(
-                                  monthLabel(monthKey),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            ),
-                          ],
-                          onChanged: (value) => setState(() {
-                            selectedMonthTo = value;
-                            if (selectedMonthFrom != null &&
-                                selectedMonthTo != null &&
-                                selectedMonthFrom!.compareTo(selectedMonthTo!) >
-                                    0) {
-                              selectedMonthFrom = selectedMonthTo;
-                            }
-                          }),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: DropdownButtonFormField<String?>(
-                          isExpanded: true,
-                          value: effectiveAccountId,
-                          decoration: const InputDecoration(
-                            labelText: '账户',
-                            border: OutlineInputBorder(),
-                            isDense: true,
-                          ),
-                          items: [
-                            const DropdownMenuItem<String?>(
-                              value: null,
-                              child: Text('全部'),
-                            ),
-                            ...accounts.map(
-                              (account) => DropdownMenuItem<String?>(
-                                value: account.id,
-                                child: Text(
-                                  account.name,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            ),
-                          ],
-                          onChanged: (value) =>
-                              setState(() => selectedAccountId = value),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: DropdownButtonFormField<TransactionType?>(
-                          isExpanded: true,
-                          value: selectedTransactionType,
-                          decoration: const InputDecoration(
-                            labelText: '类型',
-                            border: OutlineInputBorder(),
-                            isDense: true,
-                          ),
-                          items: [
-                            const DropdownMenuItem<TransactionType?>(
-                              value: null,
-                              child: Text('全部'),
-                            ),
-                            ...TransactionType.values.map(
-                              (type) => DropdownMenuItem<TransactionType?>(
-                                value: type,
-                                child: Text(
-                                  _typeLabel(type),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            ),
-                          ],
-                          onChanged: (value) => setState(() {
-                            selectedTransactionType = value;
-                            if (selectedCategoryId != null &&
-                                !_visibleCategories(allCategories).any(
-                                    (item) => item.id == selectedCategoryId)) {
-                              selectedCategoryId = null;
-                            }
-                          }),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: DropdownButtonFormField<String?>(
-                          isExpanded: true,
-                          value: effectiveCategoryId,
-                          decoration: const InputDecoration(
-                            labelText: '类别',
-                            border: OutlineInputBorder(),
-                            isDense: true,
-                          ),
-                          items: [
-                            const DropdownMenuItem<String?>(
-                              value: null,
-                              child: Text('全部'),
-                            ),
-                            ...visibleCategories.map(
-                              (category) => DropdownMenuItem<String?>(
-                                value: category.id,
-                                child: Text(
-                                  '${category.name} · ${_categoryTypeLabel(category.type)}',
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            ),
-                          ],
-                          onChanged: (value) =>
-                              setState(() => selectedCategoryId = value),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<TransactionStatus?>(
-                    isExpanded: true,
-                    value: selectedTransactionStatus,
-                    decoration: const InputDecoration(
-                      labelText: '状态',
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                    items: [
-                      const DropdownMenuItem<TransactionStatus?>(
-                        value: null,
-                        child: Text('全部'),
-                      ),
-                      ...const [
-                        TransactionStatus.planned,
-                        TransactionStatus.actual,
-                      ].map(
-                        (status) => DropdownMenuItem<TransactionStatus?>(
-                          value: status,
-                          child: Text(_statusLabel(status)),
-                        ),
-                      ),
-                    ],
-                    onChanged: (value) =>
-                        setState(() => selectedTransactionStatus = value),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          SectionCard(
-            title: '结果汇总',
-            subtitle:
-                '列表共 ${filteredTransactions.length} 笔 · 当前计算 ${summaryTransactions.length} 笔',
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: SegmentedButton<TransactionCalculationMode>(
-                    showSelectedIcon: false,
-                    segments: const [
-                      ButtonSegment(
-                        value: TransactionCalculationMode.actual,
-                        label: Text('已发生'),
-                      ),
-                      ButtonSegment(
-                        value: TransactionCalculationMode.includePlanned,
-                        label: Text('含预计'),
-                      ),
-                    ],
-                    selected: {calculationMode},
-                    onSelectionChanged: (selection) {
-                      setState(() => calculationMode = selection.first);
-                    },
-                  ),
-                ),
-                const SizedBox(height: 12),
-                FinanceMetricGrid(
-                  minItemWidth: 132,
-                  maxColumns: 3,
-                  children: [
-                    FinanceMetricCard(
-                      label: '收入',
-                      value: formatMoney(summaryIncome),
-                      color: FinanceColors.income,
-                    ),
-                    FinanceMetricCard(
-                      label: '支出',
-                      value: formatMoney(summaryExpense),
-                      color: FinanceColors.expense,
-                    ),
-                    FinanceMetricCard(
-                      label: '净现金流',
-                      value: formatMoney(netCashFlow),
-                      color: netCashFlow >= 0
-                          ? FinanceColors.income
-                          : FinanceColors.expense,
+    return Stack(
+      children: [
+        RefreshIndicator(
+          onRefresh: () async {
+            setState(() {});
+          },
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 128),
+            children: [
+              if (!_isSelectionMode)
+                ScreenHeader(
+                  title: '交易',
+                  actions: [
+                    IconButton.filledTonal(
+                      onPressed: () => _showCategoryManage(context),
+                      icon: const Icon(Icons.category_outlined),
+                      tooltip: '类别管理',
                     ),
                   ],
                 ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          if (_isSelectionMode)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.primaryContainer,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                children: [
-                  IconButton(
-                    onPressed: _exitSelectionMode,
-                    icon: const Icon(Icons.close),
-                    tooltip: '取消',
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      '已选择 ${_selectedTransactionIds.length} 笔',
-                      style: Theme.of(context).textTheme.titleSmall,
-                    ),
-                  ),
-                  TextButton(
-                    onPressed: () => _selectAll(
-                      filteredTransactions.map((t) => t.id).toList(),
-                    ),
-                    child: Text(
-                      _selectedTransactionIds.length ==
-                              filteredTransactions.length
-                          ? '取消全选'
-                          : '全选',
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  FilledButton.icon(
-                    onPressed: _selectedTransactionIds.isNotEmpty
-                        ? () => _batchDeleteTransactions(context)
-                        : null,
-                    icon: const Icon(Icons.delete_outline),
-                    label: const Text('删除'),
-                  ),
-                ],
-              ),
-            ),
-          if (_isSelectionMode) const SizedBox(height: 8),
-          SectionCard(
-            title: '交易列表',
-            subtitle: '共 ${filteredTransactions.length} 笔',
-            child: filteredTransactions.isEmpty
-                ? const EmptyState(
-                    title: '暂无交易',
-                    subtitle: '点击右上角按钮添加第一笔交易',
-                    icon: Icons.receipt_long_outlined,
-                  )
-                : Column(
-                    children: filteredTransactions.map((transaction) {
-                      final categoryName = transaction.categoryId == null
-                          ? null
-                          : _categoryNameOrFallback(
-                              repository, transaction.categoryId!);
-                      final hint =
-                          _displayConversionHint(repository, transaction);
-                      final isSelected =
-                          _selectedTransactionIds.contains(transaction.id);
-                      return GestureDetector(
-                        onLongPress: () => _enterSelectionMode(transaction.id),
-                        onTap: _isSelectionMode
-                            ? () => _toggleSelection(transaction.id)
-                            : null,
-                        child: Container(
-                          margin: const EdgeInsets.only(bottom: 4),
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 6),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(10),
-                            color: isSelected
-                                ? Theme.of(context).colorScheme.primaryContainer
-                                : Theme.of(context).colorScheme.surface,
-                            border: Border.all(
-                              color: isSelected
-                                  ? Theme.of(context).colorScheme.primary
-                                  : Theme.of(context)
-                                      .colorScheme
-                                      .outlineVariant
-                                      .withValues(alpha: 0.4),
-                              width: isSelected ? 1.5 : 0.6,
-                            ),
-                          ),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              if (_isSelectionMode)
-                                Padding(
-                                  padding: const EdgeInsets.only(right: 8),
-                                  child: Icon(
-                                    isSelected
-                                        ? Icons.check_circle
-                                        : Icons.circle_outlined,
-                                    size: 20,
-                                    color: isSelected
-                                        ? Theme.of(context).colorScheme.primary
-                                        : Theme.of(context).colorScheme.outline,
+              const SizedBox(height: 12),
+              SectionCard(
+                title: '筛选',
+                subtitle: '搜索会匹配说明、商户、账户、类别和交易类型',
+                child: FinanceFilterBar(
+                  searchController: searchController,
+                  searchQuery: searchQuery,
+                  searchLabel: '搜索交易',
+                  onSearchChanged: (value) =>
+                      setState(() => searchQuery = value),
+                  onClearSearch: () {
+                    searchController.clear();
+                    setState(() => searchQuery = '');
+                  },
+                  activeFilters: activeFilters
+                      .map(
+                        (filter) => FinanceFilterChipData(
+                          label: filter.label,
+                          onClear: filter.onClear,
+                        ),
+                      )
+                      .toList(),
+                  onReset: _clearFilters,
+                  expanded: showFilters,
+                  onToggleExpanded: () =>
+                      setState(() => showFilters = !showFilters),
+                  expandedChild: Column(
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: DropdownButtonFormField<String?>(
+                              isExpanded: true,
+                              value: selectedMonthFrom,
+                              decoration: const InputDecoration(
+                                labelText: '起始月份',
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                              ),
+                              items: [
+                                const DropdownMenuItem<String?>(
+                                  value: null,
+                                  child: Text('全部'),
+                                ),
+                                ...monthKeys.map(
+                                  (monthKey) => DropdownMenuItem<String?>(
+                                    value: monthKey,
+                                    child: Text(
+                                      monthLabel(monthKey),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
                                   ),
                                 ),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Text(
-                                          _displayAmount(transaction),
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.w700,
-                                            fontSize: 14,
-                                            color:
-                                                _amountColor(transaction.type),
-                                          ),
-                                        ),
-                                        const SizedBox(width: 5),
-                                        Text(
-                                          _typeLabel(transaction.type),
-                                          style: TextStyle(
-                                            fontSize: 10,
-                                            fontWeight: FontWeight.w500,
-                                            color:
-                                                _amountColor(transaction.type),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    if (hint.isNotEmpty)
-                                      Padding(
-                                        padding: const EdgeInsets.only(top: 1),
-                                        child: Text(hint,
-                                            style: Theme.of(context)
-                                                .textTheme
-                                                .labelSmall
-                                                ?.copyWith(fontSize: 10)),
-                                      ),
-                                    if (_isMeaningfulDescription(transaction))
-                                      Padding(
-                                        padding: const EdgeInsets.only(top: 1),
-                                        child: Text(
-                                          transaction.description!,
-                                          style: TextStyle(
-                                              fontSize: 10,
-                                              color: Theme.of(context)
-                                                  .textTheme
-                                                  .bodySmall
-                                                  ?.color),
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ),
-                                    const SizedBox(height: 3),
-                                    Wrap(
-                                      spacing: 4,
-                                      runSpacing: 3,
-                                      children: [
-                                        FinanceStatusChip(
-                                          label: _accountFlowLabel(
-                                              repository, transaction),
-                                        ),
-                                        if (categoryName != null)
-                                          FinanceStatusChip(
-                                              label: categoryName),
-                                        if (transaction.status ==
-                                            TransactionStatus.planned)
-                                          const FinanceStatusChip(
-                                            label: '预计',
-                                            color: Color(0xFFB45309),
-                                          ),
-                                      ],
-                                    ),
-                                  ],
-                                ),
+                              ],
+                              onChanged: (value) => setState(() {
+                                selectedMonthFrom = value;
+                                if (selectedMonthFrom != null &&
+                                    selectedMonthTo != null &&
+                                    selectedMonthFrom!
+                                            .compareTo(selectedMonthTo!) >
+                                        0) {
+                                  selectedMonthTo = selectedMonthFrom;
+                                }
+                              }),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: DropdownButtonFormField<String?>(
+                              isExpanded: true,
+                              value: selectedMonthTo,
+                              decoration: const InputDecoration(
+                                labelText: '结束月份',
+                                border: OutlineInputBorder(),
+                                isDense: true,
                               ),
-                              if (!_isSelectionMode) ...[
-                                const SizedBox(width: 8),
-                                Column(
-                                  crossAxisAlignment: CrossAxisAlignment.end,
-                                  children: [
-                                    Text(
-                                      '${transaction.transactionDate.day.toString().padLeft(2, '0')}-${transaction.transactionDate.month.toString().padLeft(2, '0')}',
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        color: Theme.of(context)
-                                            .textTheme
-                                            .bodySmall
-                                            ?.color,
-                                      ),
+                              items: [
+                                const DropdownMenuItem<String?>(
+                                  value: null,
+                                  child: Text('全部'),
+                                ),
+                                ...monthKeys.map(
+                                  (monthKey) => DropdownMenuItem<String?>(
+                                    value: monthKey,
+                                    child: Text(
+                                      monthLabel(monthKey),
+                                      overflow: TextOverflow.ellipsis,
                                     ),
-                                    FinanceActionMenuButton<String>(
-                                      iconSize: 16,
-                                      tooltip: '交易操作',
-                                      items: const [
-                                        FinanceActionMenuItem(
-                                          value: 'edit',
-                                          label: '编辑',
-                                          icon: Icons.edit_outlined,
-                                        ),
-                                        FinanceActionMenuItem(
-                                          value: 'reuse',
-                                          label: '复用新增',
-                                          icon: Icons.copy_outlined,
-                                        ),
-                                        FinanceActionMenuItem(
-                                          value: 'template',
-                                          label: '保存模板',
-                                          icon: Icons.bolt_outlined,
-                                        ),
-                                        FinanceActionMenuItem(
-                                          value: 'recurring',
-                                          label: '保存周期',
-                                          icon: Icons.repeat,
-                                        ),
-                                        FinanceActionMenuItem(
-                                          value: 'delete',
-                                          label: '删除',
-                                          icon: Icons.delete_outline,
-                                          destructive: true,
-                                          dividerBefore: true,
-                                        ),
-                                      ],
-                                      onSelected: (value) =>
-                                          _handleTransactionAction(
-                                        context,
-                                        value,
-                                        transaction,
-                                      ),
-                                    ),
-                                  ],
+                                  ),
                                 ),
                               ],
-                            ],
+                              onChanged: (value) => setState(() {
+                                selectedMonthTo = value;
+                                if (selectedMonthFrom != null &&
+                                    selectedMonthTo != null &&
+                                    selectedMonthFrom!
+                                            .compareTo(selectedMonthTo!) >
+                                        0) {
+                                  selectedMonthFrom = selectedMonthTo;
+                                }
+                              }),
+                            ),
                           ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: DropdownButtonFormField<String?>(
+                              isExpanded: true,
+                              value: effectiveAccountId,
+                              decoration: const InputDecoration(
+                                labelText: '账户',
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                              ),
+                              items: [
+                                const DropdownMenuItem<String?>(
+                                  value: null,
+                                  child: Text('全部'),
+                                ),
+                                ...accounts.map(
+                                  (account) => DropdownMenuItem<String?>(
+                                    value: account.id,
+                                    child: Text(
+                                      account.name,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                              onChanged: (value) =>
+                                  setState(() => selectedAccountId = value),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: DropdownButtonFormField<TransactionType?>(
+                              isExpanded: true,
+                              value: selectedTransactionType,
+                              decoration: const InputDecoration(
+                                labelText: '类型',
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                              ),
+                              items: [
+                                const DropdownMenuItem<TransactionType?>(
+                                  value: null,
+                                  child: Text('全部'),
+                                ),
+                                ...TransactionType.values.map(
+                                  (type) => DropdownMenuItem<TransactionType?>(
+                                    value: type,
+                                    child: Text(
+                                      _typeLabel(type),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                              onChanged: (value) => setState(() {
+                                selectedTransactionType = value;
+                                if (selectedCategoryId != null &&
+                                    !_visibleCategories(allCategories).any(
+                                        (item) =>
+                                            item.id == selectedCategoryId)) {
+                                  selectedCategoryId = null;
+                                }
+                              }),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: DropdownButtonFormField<String?>(
+                              isExpanded: true,
+                              value: effectiveCategoryId,
+                              decoration: const InputDecoration(
+                                labelText: '类别',
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                              ),
+                              items: [
+                                const DropdownMenuItem<String?>(
+                                  value: null,
+                                  child: Text('全部'),
+                                ),
+                                ...visibleCategories.map(
+                                  (category) => DropdownMenuItem<String?>(
+                                    value: category.id,
+                                    child: Text(
+                                      '${category.name} · ${_categoryTypeLabel(category.type)}',
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                              onChanged: (value) =>
+                                  setState(() => selectedCategoryId = value),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<TransactionStatus?>(
+                        isExpanded: true,
+                        value: selectedTransactionStatus,
+                        decoration: const InputDecoration(
+                          labelText: '状态',
+                          border: OutlineInputBorder(),
+                          isDense: true,
                         ),
-                      );
-                    }).toList(),
+                        items: [
+                          const DropdownMenuItem<TransactionStatus?>(
+                            value: null,
+                            child: Text('全部'),
+                          ),
+                          ...const [
+                            TransactionStatus.planned,
+                            TransactionStatus.actual,
+                          ].map(
+                            (status) => DropdownMenuItem<TransactionStatus?>(
+                              value: status,
+                              child: Text(_statusLabel(status)),
+                            ),
+                          ),
+                        ],
+                        onChanged: (value) =>
+                            setState(() => selectedTransactionStatus = value),
+                      ),
+                    ],
                   ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              SectionCard(
+                title: '结果汇总',
+                subtitle:
+                    '列表共 ${filteredTransactions.length} 笔 · 当前计算 ${summaryTransactions.length} 笔',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: SegmentedButton<TransactionCalculationMode>(
+                        showSelectedIcon: false,
+                        segments: const [
+                          ButtonSegment(
+                            value: TransactionCalculationMode.actual,
+                            label: Text('已发生'),
+                          ),
+                          ButtonSegment(
+                            value: TransactionCalculationMode.includePlanned,
+                            label: Text('含预计'),
+                          ),
+                        ],
+                        selected: {calculationMode},
+                        onSelectionChanged: (selection) {
+                          setState(() => calculationMode = selection.first);
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    FinanceMetricGrid(
+                      minItemWidth: 132,
+                      maxColumns: 4,
+                      children: [
+                        FinanceMetricCard(
+                          label: '收入',
+                          value: formatMoney(summaryIncome),
+                          color: FinanceColors.income,
+                        ),
+                        FinanceMetricCard(
+                          label: '支出',
+                          value: formatMoney(summaryExpense),
+                          color: FinanceColors.expense,
+                        ),
+                        FinanceMetricCard(
+                          label: '净现金流',
+                          value: formatMoney(netCashFlow),
+                          color: netCashFlow >= 0
+                              ? FinanceColors.income
+                              : FinanceColors.expense,
+                        ),
+                        FinanceMetricCard(
+                          label: '净现金流（含转账）',
+                          value: formatMoney(netCashFlowWithTransfers),
+                          color: netCashFlowWithTransfers >= 0
+                              ? FinanceColors.income
+                              : FinanceColors.expense,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      effectiveAccountId == null
+                          ? '查看全部账户时，内部转账的净影响为 ${formatMoney(0)}'
+                          : '所选账户的转账净影响：${formatMoney(transferNetEffect)}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              if (_isSelectionMode)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.primaryContainer,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        onPressed: _exitSelectionMode,
+                        icon: const Icon(Icons.close),
+                        tooltip: '取消',
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '已选择 ${_selectedTransactionIds.length} 笔',
+                          style: Theme.of(context).textTheme.titleSmall,
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () => _selectAll(
+                          filteredTransactions.map((t) => t.id).toList(),
+                        ),
+                        child: Text(
+                          _selectedTransactionIds.length ==
+                                  filteredTransactions.length
+                              ? '取消全选'
+                              : '全选',
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      FilledButton.icon(
+                        onPressed: _selectedTransactionIds.isNotEmpty
+                            ? () => _batchDeleteTransactions(context)
+                            : null,
+                        icon: const Icon(Icons.delete_outline),
+                        label: const Text('删除'),
+                      ),
+                    ],
+                  ),
+                ),
+              if (_isSelectionMode) const SizedBox(height: 8),
+              SectionCard(
+                title: '交易列表',
+                subtitle: '共 ${filteredTransactions.length} 笔',
+                child: filteredTransactions.isEmpty
+                    ? const EmptyState(
+                        title: '暂无交易',
+                        subtitle: '点击右上角按钮添加第一笔交易',
+                        icon: Icons.receipt_long_outlined,
+                      )
+                    : Column(
+                        children: filteredTransactions.map((transaction) {
+                          final categoryName = transaction.categoryId == null
+                              ? null
+                              : _categoryNameOrFallback(
+                                  repository, transaction.categoryId!);
+                          final hint =
+                              _displayConversionHint(repository, transaction);
+                          final isSelected =
+                              _selectedTransactionIds.contains(transaction.id);
+                          return GestureDetector(
+                            onLongPress: () =>
+                                _enterSelectionMode(transaction.id),
+                            onTap: _isSelectionMode
+                                ? () => _toggleSelection(transaction.id)
+                                : null,
+                            child: Container(
+                              margin: const EdgeInsets.only(bottom: 4),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 6),
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(10),
+                                color: isSelected
+                                    ? Theme.of(context)
+                                        .colorScheme
+                                        .primaryContainer
+                                    : Theme.of(context).colorScheme.surface,
+                                border: Border.all(
+                                  color: isSelected
+                                      ? Theme.of(context).colorScheme.primary
+                                      : Theme.of(context)
+                                          .colorScheme
+                                          .outlineVariant
+                                          .withValues(alpha: 0.4),
+                                  width: isSelected ? 1.5 : 0.6,
+                                ),
+                              ),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  if (_isSelectionMode)
+                                    Padding(
+                                      padding: const EdgeInsets.only(right: 8),
+                                      child: Icon(
+                                        isSelected
+                                            ? Icons.check_circle
+                                            : Icons.circle_outlined,
+                                        size: 20,
+                                        color: isSelected
+                                            ? Theme.of(context)
+                                                .colorScheme
+                                                .primary
+                                            : Theme.of(context)
+                                                .colorScheme
+                                                .outline,
+                                      ),
+                                    ),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Text(
+                                              _displayAmount(transaction),
+                                              style: TextStyle(
+                                                fontWeight: FontWeight.w700,
+                                                fontSize: 14,
+                                                color: _amountColor(
+                                                    transaction.type),
+                                              ),
+                                            ),
+                                            const SizedBox(width: 5),
+                                            Text(
+                                              _typeLabel(transaction.type),
+                                              style: TextStyle(
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.w500,
+                                                color: _amountColor(
+                                                    transaction.type),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        if (hint.isNotEmpty)
+                                          Padding(
+                                            padding:
+                                                const EdgeInsets.only(top: 1),
+                                            child: Text(hint,
+                                                style: Theme.of(context)
+                                                    .textTheme
+                                                    .labelSmall
+                                                    ?.copyWith(fontSize: 10)),
+                                          ),
+                                        if (_isMeaningfulDescription(
+                                            transaction))
+                                          Padding(
+                                            padding:
+                                                const EdgeInsets.only(top: 1),
+                                            child: Text(
+                                              transaction.description!,
+                                              style: TextStyle(
+                                                  fontSize: 10,
+                                                  color: Theme.of(context)
+                                                      .textTheme
+                                                      .bodySmall
+                                                      ?.color),
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                        const SizedBox(height: 3),
+                                        Wrap(
+                                          spacing: 4,
+                                          runSpacing: 3,
+                                          children: [
+                                            FinanceStatusChip(
+                                              label: _accountFlowLabel(
+                                                  repository, transaction),
+                                            ),
+                                            if (categoryName != null)
+                                              FinanceStatusChip(
+                                                  label: categoryName),
+                                            if (transaction.status ==
+                                                TransactionStatus.planned)
+                                              const FinanceStatusChip(
+                                                label: '预计',
+                                                color: Color(0xFFB45309),
+                                              ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  if (!_isSelectionMode) ...[
+                                    const SizedBox(width: 8),
+                                    Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.end,
+                                      children: [
+                                        Text(
+                                          '${transaction.transactionDate.day.toString().padLeft(2, '0')}-${transaction.transactionDate.month.toString().padLeft(2, '0')}',
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            color: Theme.of(context)
+                                                .textTheme
+                                                .bodySmall
+                                                ?.color,
+                                          ),
+                                        ),
+                                        FinanceActionMenuButton<String>(
+                                          iconSize: 16,
+                                          tooltip: '交易操作',
+                                          items: const [
+                                            FinanceActionMenuItem(
+                                              value: 'edit',
+                                              label: '编辑',
+                                              icon: Icons.edit_outlined,
+                                            ),
+                                            FinanceActionMenuItem(
+                                              value: 'reuse',
+                                              label: '复用新增',
+                                              icon: Icons.copy_outlined,
+                                            ),
+                                            FinanceActionMenuItem(
+                                              value: 'template',
+                                              label: '保存模板',
+                                              icon: Icons.bolt_outlined,
+                                            ),
+                                            FinanceActionMenuItem(
+                                              value: 'recurring',
+                                              label: '保存周期',
+                                              icon: Icons.repeat,
+                                            ),
+                                            FinanceActionMenuItem(
+                                              value: 'delete',
+                                              label: '删除',
+                                              icon: Icons.delete_outline,
+                                              destructive: true,
+                                              dividerBefore: true,
+                                            ),
+                                          ],
+                                          onSelected: (value) =>
+                                              _handleTransactionAction(
+                                            context,
+                                            value,
+                                            transaction,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+              ),
+            ],
           ),
-        ],
-      ),
+        ),
+        Positioned(
+          right: 18,
+          bottom: 20,
+          child: Column(
+            children: [
+              CompassActionBubble(
+                heroTag: 'transactions_quick',
+                icon: Icons.bolt_rounded,
+                onPressed: () => _showQuickTemplatePicker(context),
+              ),
+              const SizedBox(height: 12),
+              CompassActionBubble(
+                heroTag: 'transactions_add',
+                icon: Icons.add_rounded,
+                color: FinanceColors.compassOrange,
+                onPressed: () => _showAddTransaction(context),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -1009,6 +988,8 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
         .deleteRecurringTransactionRule(ruleId);
   }
 
+  // Kept for the template-management screen that will reuse this action sheet.
+  // ignore: unused_element
   Future<void> _showTemplateActions(
       BuildContext context, TransactionTemplate template) async {
     final action = await showDialog<String>(
@@ -1038,6 +1019,8 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
     }
   }
 
+  // Kept for the recurring-rule management screen.
+  // ignore: unused_element
   Future<void> _showRecurringRuleActions(
       BuildContext context, RecurringTransactionRule rule) async {
     final action = await showDialog<String>(
@@ -1099,20 +1082,19 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
     BuildContext context,
     FinanceTransaction transaction,
   ) async {
-    final controller = TextEditingController(
-      text: transaction.description ??
-          transaction.merchant ??
-          _categoryNameOrFallback(
-            widget.repository,
-            transaction.categoryId ?? '',
-          ),
-    );
+    var pendingName = transaction.description ??
+        transaction.merchant ??
+        _categoryNameOrFallback(
+          widget.repository,
+          transaction.categoryId ?? '',
+        );
     final name = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('保存为模板'),
-        content: TextField(
-          controller: controller,
+        content: TextFormField(
+          initialValue: pendingName,
+          onChanged: (value) => pendingName = value,
           decoration: const InputDecoration(
             labelText: '模板名称',
             border: OutlineInputBorder(),
@@ -1125,13 +1107,12 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
             child: const Text('取消'),
           ),
           FilledButton(
-            onPressed: () => Navigator.of(context).pop(controller.text.trim()),
+            onPressed: () => Navigator.of(context).pop(pendingName.trim()),
             child: const Text('保存'),
           ),
         ],
       ),
     );
-    controller.dispose();
     if (!context.mounted || name == null || name.trim().isEmpty) {
       return;
     }
@@ -1153,14 +1134,12 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
     BuildContext context,
     FinanceTransaction transaction,
   ) async {
-    final nameController = TextEditingController(
-      text: transaction.description ??
-          transaction.merchant ??
-          _categoryNameOrFallback(
-            widget.repository,
-            transaction.categoryId ?? '',
-          ),
-    );
+    var pendingName = transaction.description ??
+        transaction.merchant ??
+        _categoryNameOrFallback(
+          widget.repository,
+          transaction.categoryId ?? '',
+        );
     var intervalMonths = 1;
     final result = await showDialog<_RecurringRuleDraft>(
       context: context,
@@ -1170,8 +1149,9 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              TextField(
-                controller: nameController,
+              TextFormField(
+                initialValue: pendingName,
+                onChanged: (value) => pendingName = value,
                 decoration: const InputDecoration(
                   labelText: '规则名称',
                   border: OutlineInputBorder(),
@@ -1207,7 +1187,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
             FilledButton(
               onPressed: () => Navigator.of(context).pop(
                 _RecurringRuleDraft(
-                  name: nameController.text.trim(),
+                  name: pendingName.trim(),
                   intervalMonths: intervalMonths,
                 ),
               ),
@@ -1217,7 +1197,6 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
         ),
       ),
     );
-    nameController.dispose();
     if (!context.mounted || result == null || result.name.isEmpty) {
       return;
     }
@@ -1232,7 +1211,9 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
       return;
     }
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('周期规则「${result.name}」已保存')),
+      SnackBar(
+        content: Text('周期规则「${result.name}」已保存，并生成未来 3 个完整月份的预计交易'),
+      ),
     );
   }
 
@@ -1386,6 +1367,47 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
     }
   }
 
+  Future<void> _showQuickTemplatePicker(BuildContext context) async {
+    final template = await showModalBottomSheet<TransactionTemplate>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('快速模板', style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 12),
+              if (widget.repository.transactionTemplates.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 24),
+                  child: Text('还没有模板，可从任意交易的操作菜单建立。'),
+                )
+              else
+                ...widget.repository.transactionTemplates.map(
+                  (item) => ListTile(
+                    leading: const CompassIconBadge(icon: Icons.bolt_rounded),
+                    title: Text(item.name),
+                    subtitle: Text(
+                        compassMoney(item.amount, currency: item.currency)),
+                    onTap: () => Navigator.pop(context, item),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (template != null && context.mounted) {
+      await _showAddTransaction(
+        context,
+        draftTransaction: _draftFromTemplate(template),
+      );
+    }
+  }
+
   Future<void> _showAddTransaction(
     BuildContext context, {
     FinanceTransaction? draftTransaction,
@@ -1420,6 +1442,17 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
       ),
     );
     if (result != null) {
+      if (result.deletedTransactionId case final transactionId?) {
+        await ref
+            .read(transactionMutationsProvider.notifier)
+            .deleteTransaction(transactionId);
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('交易已删除')),
+          );
+        }
+        return;
+      }
       await ref
           .read(transactionMutationsProvider.notifier)
           .updateTransaction(result.transactions.first);
@@ -1435,15 +1468,22 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
   }
 
   String _displayAmount(FinanceTransaction transaction) {
+    final signedAmount = switch (transaction.type) {
+      TransactionType.expense => -transaction.amount,
+      TransactionType.income ||
+      TransactionType.adjustment =>
+        transaction.amount,
+      TransactionType.transfer => transaction.amount,
+    };
     switch (transaction.type) {
       case TransactionType.expense:
-        return '-${formatMoney(transaction.amount, currency: transaction.currency)}';
+      case TransactionType.income:
+      case TransactionType.adjustment:
+        return '${signedAmount > 0 ? '+' : ''}'
+            '${formatMoney(signedAmount, currency: transaction.currency)}';
       case TransactionType.transfer:
         return '${formatMoney(transaction.amount, currency: transaction.currency)} → '
             '${formatMoney(transaction.transferInAmount, currency: transaction.transferInCurrency)}';
-      case TransactionType.income:
-      case TransactionType.adjustment:
-        return '+${formatMoney(transaction.amount, currency: transaction.currency)}';
     }
   }
 
@@ -1495,6 +1535,7 @@ class _ActiveFilterData {
   final VoidCallback onClear;
 }
 
+// ignore: unused_element
 class _RecurringRuleChip extends StatelessWidget {
   const _RecurringRuleChip({
     required this.rule,
@@ -1586,6 +1627,7 @@ class _RecurringRuleDraft {
   final int intervalMonths;
 }
 
+// ignore: unused_element
 class _TemplateChip extends StatelessWidget {
   const _TemplateChip({
     required this.template,

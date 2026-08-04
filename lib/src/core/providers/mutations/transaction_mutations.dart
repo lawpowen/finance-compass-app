@@ -39,9 +39,71 @@ class TransactionMutations extends Notifier<void> {
 
   /// Deletes a transaction and reverses its balance effects.
   Future<void> deleteTransaction(String transactionId) async {
-    final updated = await (await _repo).deleteExistingTransaction(transactionId);
+    final repository = await _repo;
+    final ids = _expandLoanInstallmentDeletionIds(
+      repository,
+      [transactionId],
+    );
+    final updated = await repository.deleteExistingTransactions(ids);
     _repoNotifier.setRepository(updated);
   }
+
+  /// Deletes multiple transactions atomically and reverses every balance effect.
+  Future<void> deleteTransactions(Iterable<String> transactionIds) async {
+    final repository = await _repo;
+    final ids = _expandLoanInstallmentDeletionIds(
+      repository,
+      transactionIds,
+    );
+    final updated = await repository.deleteExistingTransactions(ids);
+    _repoNotifier.setRepository(updated);
+  }
+
+  Set<String> _expandLoanInstallmentDeletionIds(
+    FinanceRepository repository,
+    Iterable<String> requestedIds,
+  ) {
+    final result = requestedIds.toSet();
+    final byId = {
+      for (final transaction in repository.transactions)
+        transaction.id: transaction,
+    };
+    final installmentPattern = RegExp(r'^贷款(月供|本金|利息) #(\d+)$');
+    for (final id in result.toList()) {
+      final selected = byId[id];
+      if (selected == null) continue;
+      final match = installmentPattern.firstMatch(selected.description ?? '');
+      if (match == null || match.group(1) == '月供') continue;
+      final number = match.group(2)!;
+      final candidates = repository.transactions.where((item) {
+        if (item.id == selected.id ||
+            item.accountId != selected.accountId ||
+            item.status != selected.status ||
+            !_sameDay(item.transactionDate, selected.transactionDate)) {
+          return false;
+        }
+        final candidate = installmentPattern.firstMatch(item.description ?? '');
+        return candidate != null &&
+            candidate.group(2) == number &&
+            candidate.group(1) != '月供';
+      }).toList();
+      final selectedPart = match.group(1)!;
+      final complementary = candidates.where((item) {
+        final part =
+            installmentPattern.firstMatch(item.description ?? '')!.group(1)!;
+        return part != selectedPart;
+      }).toList();
+      if (complementary.length == 1) {
+        result.add(complementary.single.id);
+      }
+    }
+    return result;
+  }
+
+  bool _sameDay(DateTime left, DateTime right) =>
+      left.year == right.year &&
+      left.month == right.month &&
+      left.day == right.day;
 
   /// Saves a transaction as a reusable template.
   Future<void> addTransactionTemplate({
@@ -58,6 +120,20 @@ class TransactionMutations extends Notifier<void> {
   /// Deletes a transaction template by id.
   Future<void> deleteTransactionTemplate(String templateId) async {
     final updated = await (await _repo).deleteTransactionTemplate(templateId);
+    _repoNotifier.setRepository(updated);
+  }
+
+  /// Replaces an existing template while preserving its identifier.
+  Future<void> saveTransactionTemplate(TransactionTemplate template) async {
+    final updated = await (await _repo).saveTransactionTemplate(template);
+    _repoNotifier.setRepository(updated);
+  }
+
+  /// Persists the complete quick-template order in one atomic replacement.
+  Future<void> reorderTransactionTemplates(
+      List<String> orderedTemplateIds) async {
+    final updated =
+        await (await _repo).reorderTransactionTemplates(orderedTemplateIds);
     _repoNotifier.setRepository(updated);
   }
 
@@ -78,6 +154,14 @@ class TransactionMutations extends Notifier<void> {
   /// Deletes a recurring transaction rule.
   Future<void> deleteRecurringTransactionRule(String ruleId) async {
     final updated = await (await _repo).deleteRecurringTransactionRule(ruleId);
+    _repoNotifier.setRepository(updated);
+  }
+
+  /// Replaces an existing recurring rule while preserving generated history.
+  Future<void> saveRecurringTransactionRule(
+    RecurringTransactionRule rule,
+  ) async {
+    final updated = await (await _repo).saveRecurringTransactionRule(rule);
     _repoNotifier.setRepository(updated);
   }
 

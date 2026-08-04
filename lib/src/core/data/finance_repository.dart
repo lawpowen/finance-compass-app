@@ -11,15 +11,19 @@ import '../models/account.dart';
 import '../models/asset_snapshot.dart';
 import '../models/budget.dart';
 import '../models/category.dart';
+import '../models/credit_card_billing.dart';
 import '../models/forecast_summary.dart';
+import '../models/loan_amortization.dart';
 import '../models/monthly_summary.dart';
 import '../models/transaction.dart';
+import '../models/transaction_preset.dart' as preset;
 import '../utils/currency_formatter.dart';
 import '../utils/id_generator.dart';
 import '../utils/month_key.dart';
 import 'sample_data.dart';
 
 class FinanceRepository {
+  static const uncategorizedCashOutflowKey = '__cash_outflow_uncategorized__';
   static const _exchangeRatesMetaKey = 'exchange_rates_to_base_json';
   static const _currencyPriorityMetaKey = 'currency_priority_json';
 
@@ -30,12 +34,16 @@ class FinanceRepository {
     required List<Budget> budgets,
     required List<FinanceTransaction> transactions,
     required List<AssetSnapshot> snapshots,
+    required List<TransactionTemplate> transactionTemplates,
+    required List<RecurringTransactionRule> recurringTransactionRules,
     required Map<String, String> metaValues,
   })  : _accounts = accounts,
         _categories = categories,
         _budgets = budgets,
         _transactions = transactions,
         _snapshots = snapshots,
+        _transactionTemplates = transactionTemplates,
+        _recurringTransactionRules = recurringTransactionRules,
         _metaValues = metaValues;
 
   final AppDatabase database;
@@ -45,6 +53,8 @@ class FinanceRepository {
   final List<Budget> _budgets;
   final List<FinanceTransaction> _transactions;
   final List<AssetSnapshot> _snapshots;
+  final List<TransactionTemplate> _transactionTemplates;
+  final List<RecurringTransactionRule> _recurringTransactionRules;
   final Map<String, String> _metaValues;
 
   static FinanceRepository preview() {
@@ -55,6 +65,8 @@ class FinanceRepository {
       budgets: SampleData.budgets(),
       transactions: SampleData.transactions(),
       snapshots: SampleData.snapshots(),
+      transactionTemplates: const [],
+      recurringTransactionRules: const [],
       metaValues: const {},
     );
     setActiveBaseCurrency(repository.baseCurrency);
@@ -67,7 +79,18 @@ class FinanceRepository {
     final budgets = await database.fetchBudgets();
     final transactions = await database.fetchTransactions();
     final snapshots = await database.fetchAssetSnapshots();
+    final storedTemplates = (await database.fetchTransactionTemplates())
+        .map((item) => TransactionTemplate.fromJson(item.toJson()))
+        .toList();
+    final storedRules = (await database.fetchRecurringTransactionRules())
+        .map((item) => RecurringTransactionRule.fromJson(item.toJson()))
+        .toList();
     final metaValues = await database.fetchAllMetaValues();
+    final transactionTemplates = storedTemplates.isNotEmpty
+        ? storedTemplates
+        : _legacyTemplatesFromMeta(metaValues);
+    final recurringTransactionRules =
+        storedRules.isNotEmpty ? storedRules : _legacyRulesFromMeta(metaValues);
 
     final repository = FinanceRepository._(
       database: database,
@@ -76,6 +99,8 @@ class FinanceRepository {
       budgets: budgets,
       transactions: transactions,
       snapshots: snapshots,
+      transactionTemplates: transactionTemplates,
+      recurringTransactionRules: recurringTransactionRules,
       metaValues: metaValues,
     );
     setActiveBaseCurrency(repository.baseCurrency);
@@ -83,6 +108,40 @@ class FinanceRepository {
   }
 
   Future<FinanceRepository> refresh() => FinanceRepository.load(database);
+
+  static List<TransactionTemplate> _legacyTemplatesFromMeta(
+    Map<String, String> metaValues,
+  ) {
+    try {
+      final decoded =
+          jsonDecode(metaValues['transaction_templates_json'] ?? '[]');
+      return (decoded as List<dynamic>)
+          .whereType<Map>()
+          .map((item) => TransactionTemplate.fromJson(
+                Map<String, dynamic>.from(item),
+              ))
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  static List<RecurringTransactionRule> _legacyRulesFromMeta(
+    Map<String, String> metaValues,
+  ) {
+    try {
+      final decoded =
+          jsonDecode(metaValues['recurring_transaction_rules_json'] ?? '[]');
+      return (decoded as List<dynamic>)
+          .whereType<Map>()
+          .map((item) => RecurringTransactionRule.fromJson(
+                Map<String, dynamic>.from(item),
+              ))
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
 
   List<Account> get accounts => List.unmodifiable(_accounts);
   List<Category> get categories => List.unmodifiable(_categories);
@@ -218,35 +277,11 @@ class FinanceRepository {
   }
 
   List<TransactionTemplate> get transactionTemplates {
-    final raw = _metaValues['transaction_templates_json'];
-    if (raw == null || raw.trim().isEmpty) {
-      return const [];
-    }
-    final decoded = jsonDecode(raw);
-    if (decoded is! List) {
-      return const [];
-    }
-    return decoded
-        .whereType<Map<String, dynamic>>()
-        .map(TransactionTemplate.fromJson)
-        .toList()
-      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    return List.unmodifiable(_transactionTemplates);
   }
 
   List<RecurringTransactionRule> get recurringTransactionRules {
-    final raw = _metaValues['recurring_transaction_rules_json'];
-    if (raw == null || raw.trim().isEmpty) {
-      return const [];
-    }
-    final decoded = jsonDecode(raw);
-    if (decoded is! List) {
-      return const [];
-    }
-    return decoded
-        .whereType<Map<String, dynamic>>()
-        .map(RecurringTransactionRule.fromJson)
-        .toList()
-      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    return List.unmodifiable(_recurringTransactionRules);
   }
 
   List<AssetGoal> get assetGoals {
@@ -279,7 +314,7 @@ class FinanceRepository {
     return [
       AssetGoal(
         id: 'goal_legacy',
-        name: '净资产目标',
+        name: '资产目标',
         targetAmount: legacyAmount,
         reachedAt: legacyReachedAtRaw == null
             ? null
@@ -289,26 +324,29 @@ class FinanceRepository {
   }
 
   double totalAssetsByGroup(ReportGroup group) {
-    return displayTotalAssetsByGroup(group,
-        cutoffDate: currentMonthCutoffDate());
+    return displayTotalAssetsByGroup(group);
   }
 
   double displayTotalAssetsByGroup(ReportGroup group, {DateTime? cutoffDate}) {
+    final useCommittedCreditBalance = cutoffDate == null;
     final targetDate = cutoffDate ?? currentMonthCutoffDate();
     return _accounts.where((account) => account.reportGroup == group).fold(
           0.0,
-          (sum, account) => sum + accountBalanceAtBase(account.id, targetDate),
+          (sum, account) =>
+              sum +
+              (useCommittedCreditBalance &&
+                      account.accountType == AccountType.creditCard
+                  ? convertToBase(account.currentBalance, account.currency)
+                  : accountBalanceAtBase(account.id, targetDate)),
         );
   }
 
   double totalAssets({bool includeCredit = true}) {
-    return displayTotalAssets(
-      includeCredit: includeCredit,
-      cutoffDate: currentMonthCutoffDate(),
-    );
+    return displayTotalAssets(includeCredit: includeCredit);
   }
 
   double displayTotalAssets({bool includeCredit = true, DateTime? cutoffDate}) {
+    final useCommittedCreditBalance = cutoffDate == null;
     final targetDate = cutoffDate ?? currentMonthCutoffDate();
     return _accounts
         .where((account) =>
@@ -316,18 +354,20 @@ class FinanceRepository {
         .fold(
             0.0,
             (sum, account) =>
-                sum + accountBalanceAtBase(account.id, targetDate));
+                sum +
+                (useCommittedCreditBalance &&
+                        account.accountType == AccountType.creditCard
+                    ? convertToBase(account.currentBalance, account.currency)
+                    : accountBalanceAtBase(account.id, targetDate)));
   }
 
   double totalTargetAssets() {
-    return displayTotalAssets(
-      includeCredit: true,
-      cutoffDate: currentMonthCutoffDate(),
-    );
+    return displayTotalAssets(includeCredit: false);
   }
 
   List<AssetGoalHistoryPoint> totalAssetHistory({
     DateTime? cutoffDate,
+    bool includeCredit = true,
   }) {
     final targetCutoff = cutoffDate ?? currentMonthCutoffDate();
     final monthKeys = <String>{
@@ -347,7 +387,8 @@ class FinanceRepository {
         AssetGoalHistoryPoint(
           date: now,
           label: '${now.year}-${now.month.toString().padLeft(2, '0')}',
-          totalAssets: totalTargetAssets(),
+          totalAssets:
+              totalAssetsAt(targetCutoff, includeCredit: includeCredit),
         ),
       ];
     }
@@ -361,7 +402,7 @@ class FinanceRepository {
       return AssetGoalHistoryPoint(
         date: date,
         label: monthKey,
-        totalAssets: totalAssetsAt(date),
+        totalAssets: totalAssetsAt(date, includeCredit: includeCredit),
       );
     }).toList();
   }
@@ -370,8 +411,14 @@ class FinanceRepository {
     DateTime? cutoffDate,
   }) {
     final targetCutoff = cutoffDate ?? currentMonthCutoffDate();
-    final history = totalAssetHistory(cutoffDate: targetCutoff);
-    final currentAssets = totalAssetsAt(targetCutoff);
+    final history = totalAssetHistory(
+      cutoffDate: targetCutoff,
+      includeCredit: false,
+    );
+    final currentAssets = totalAssetsAt(
+      targetCutoff,
+      includeCredit: false,
+    );
     final summaries = assetGoals.map((goal) {
       AssetGoalHistoryPoint? reachedPoint;
       for (final point in history) {
@@ -480,6 +527,63 @@ class FinanceRepository {
   double accountBalanceAtBase(String accountId, DateTime date) {
     final account = _accounts.firstWhere((item) => item.id == accountId);
     return convertToBase(_accountBalanceAt(account, date), account.currency);
+  }
+
+  /// Credit already committed by actual/settled records, regardless of date.
+  /// Planned records never affect [Account.currentBalance] and are excluded.
+  double creditCardCommittedOutstandingBalance(String accountId) {
+    final account = _accounts.firstWhere((item) => item.id == accountId);
+    if (account.accountType != AccountType.creditCard) {
+      throw ArgumentError.value(accountId, 'accountId', 'Not a credit card');
+    }
+    return (-account.currentBalance).clamp(0, double.infinity).toDouble();
+  }
+
+  /// Remaining balance at a statement close, including carried balance,
+  /// actual charges, refunds and repayments posted on or before that day.
+  double creditCardStatementBalance(
+    String accountId,
+    CreditCardBillingPeriod period,
+  ) {
+    final account = _accounts.firstWhere((item) => item.id == accountId);
+    if (account.accountType != AccountType.creditCard) {
+      throw ArgumentError.value(accountId, 'accountId', 'Not a credit card');
+    }
+    final statementCutoff = DateTime(
+      period.statementDate.year,
+      period.statementDate.month,
+      period.statementDate.day,
+      23,
+      59,
+      59,
+      999,
+    );
+    return (-accountBalanceAt(accountId, statementCutoff))
+        .clamp(0, double.infinity)
+        .toDouble();
+  }
+
+  /// Returns an authoritative statement amount imported during reconciliation.
+  ///
+  /// The key is the statement close date (`yyyy-MM-dd`). Missing or malformed
+  /// metadata deliberately falls back to the transaction-derived calculation.
+  double? creditCardStatementAmountOverride(
+    String accountId,
+    DateTime statementDate,
+  ) {
+    final raw = _metaValues[_creditCardStatementAmountsKey(accountId)];
+    if (raw == null || raw.trim().isEmpty) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) return null;
+      final amount = decoded[_statementDateKey(statementDate)];
+      if (amount is num && amount.isFinite && amount >= 0) {
+        return amount.toDouble();
+      }
+    } on FormatException {
+      return null;
+    }
+    return null;
   }
 
   double transactionDeltaForAccount(
@@ -742,6 +846,7 @@ class FinanceRepository {
     DateTime? fromDateExclusive,
     DateTime? upToDate,
   }) {
+    final targetDate = upToDate ?? currentMonthCutoffDate();
     double contribution = 0;
     double withdrawal = 0;
 
@@ -753,7 +858,7 @@ class FinanceRepository {
           !transaction.transactionDate.isAfter(fromDateExclusive)) {
         continue;
       }
-      if (upToDate != null && transaction.transactionDate.isAfter(upToDate)) {
+      if (transaction.transactionDate.isAfter(targetDate)) {
         continue;
       }
 
@@ -830,18 +935,25 @@ class FinanceRepository {
     });
   }
 
-  List<CashFlowProjectionPoint> futureCashFlowProjection({int months = 6}) {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
+  List<CashFlowProjectionPoint> futureCashFlowProjection({
+    int months = 6,
+    DateTime? asOf,
+  }) {
+    final now = asOf ?? DateTime.now();
+    final todayCutoff = DateTime(
+      now.year,
+      now.month,
+      now.day,
+      23,
+      59,
+      59,
+      999,
+    );
     final startMonth = DateTime(now.year, now.month);
     var runningCash = displayTotalAssetsByGroup(
-          ReportGroup.cash,
-          cutoffDate: currentMonthCutoffDate(),
-        ) +
-        displayTotalAssetsByGroup(
-          ReportGroup.credit,
-          cutoffDate: currentMonthCutoffDate(),
-        );
+      ReportGroup.cash,
+      cutoffDate: todayCutoff,
+    );
 
     return List.generate(months, (index) {
       final monthDate = DateTime(startMonth.year, startMonth.month + index);
@@ -853,26 +965,18 @@ class FinanceRepository {
       for (final transaction in _transactions.where(
         (item) => _monthKey(item.transactionDate) == monthKey,
       )) {
-        if (transaction.transactionDate.isBefore(today) &&
+        if (!transaction.transactionDate.isAfter(todayCutoff) &&
             transaction.status != TransactionStatus.planned) {
           continue;
         }
-        final delta = _cashFlowDelta(transaction);
+        final delta = _actualCashFlowDelta(transaction);
         if (delta == 0) {
           continue;
         }
-        switch (transaction.type) {
-          case TransactionType.income:
-            income += delta;
-            break;
-          case TransactionType.expense:
-            expense += delta.abs();
-            break;
-          case TransactionType.transfer:
-            transfers += delta;
-            break;
-          case TransactionType.adjustment:
-            break;
+        if (delta > 0) {
+          income += delta;
+        } else {
+          expense += -delta;
         }
       }
 
@@ -889,20 +993,357 @@ class FinanceRepository {
     });
   }
 
+  /// Net cash-account movement for transactions dated inside an exact
+  /// calendar window. Both planned and future-dated actual records are
+  /// included because this method is used by forward-looking UI projections.
+  double cashFlowNetBetween({
+    required DateTime startInclusive,
+    required DateTime endInclusive,
+  }) {
+    final start = DateTime(
+      startInclusive.year,
+      startInclusive.month,
+      startInclusive.day,
+    );
+    final end = DateTime(
+      endInclusive.year,
+      endInclusive.month,
+      endInclusive.day,
+      23,
+      59,
+      59,
+      999,
+    );
+    return _transactions.where((transaction) {
+      final date = transaction.transactionDate;
+      return !date.isBefore(start) && !date.isAfter(end);
+    }).fold<double>(
+      0,
+      (sum, transaction) => sum + _actualCashFlowDelta(transaction),
+    );
+  }
+
+  /// Actual movement of cash-group accounts for the requested months.
+  ///
+  /// Credit-card purchases are excluded until cash is used to repay the card.
+  /// Transfers between two cash accounts net to zero. Planned records are
+  /// excluded unless [includePlanned] is explicitly enabled. Optional filters
+  /// select the same transaction set shown by the transactions page before the
+  /// cash movement is calculated.
+  CashFlowSummary actualCashFlowSummaryForMonths(
+    Iterable<String> monthKeys, {
+    bool includePlanned = false,
+    String? accountId,
+    TransactionType? type,
+    String? categoryId,
+  }) {
+    final allowedMonths = monthKeys.toSet();
+    var inflow = 0.0;
+    var outflow = 0.0;
+    for (final transaction in _transactions) {
+      if (!allowedMonths.contains(_monthKey(transaction.transactionDate)) ||
+          (!includePlanned &&
+              transaction.status == TransactionStatus.planned) ||
+          (accountId != null &&
+              transaction.accountId != accountId &&
+              transaction.toAccountId != accountId) ||
+          (type != null && transaction.type != type) ||
+          (categoryId != null && transaction.categoryId != categoryId)) {
+        continue;
+      }
+      final delta = _actualCashFlowDelta(transaction);
+      if (delta >= 0) {
+        inflow += delta;
+      } else {
+        outflow += -delta;
+      }
+    }
+    return CashFlowSummary(inflow: inflow, outflow: outflow);
+  }
+
+  CashFlowSummary actualCashFlowSummaryForMonth(
+    String monthKey, {
+    bool includePlanned = false,
+    String? accountId,
+    TransactionType? type,
+    String? categoryId,
+  }) {
+    return actualCashFlowSummaryForMonths(
+      [monthKey],
+      includePlanned: includePlanned,
+      accountId: accountId,
+      type: type,
+      categoryId: categoryId,
+    );
+  }
+
+  /// Total cash that must be available for a calendar month.
+  ///
+  /// Known cash outflow already includes actual transfers and, when requested,
+  /// planned transfers. Credit-card and loan instalments that are due in the
+  /// month are added only when no matching payment is already represented in
+  /// that cash outflow, so repayments are never counted twice.
+  MonthlyFundingNeed monthlyFundingNeedForMonth(
+    String monthKey, {
+    bool includePlanned = true,
+  }) {
+    final parts = monthKey.split('-');
+    if (parts.length != 2) {
+      throw ArgumentError.value(monthKey, 'monthKey', 'Expected YYYY-MM');
+    }
+    final year = int.tryParse(parts[0]);
+    final month = int.tryParse(parts[1]);
+    if (year == null || month == null || month < 1 || month > 12) {
+      throw ArgumentError.value(monthKey, 'monthKey', 'Expected YYYY-MM');
+    }
+
+    final monthStart = DateTime(year, month);
+    final monthEnd = DateTime(year, month + 1, 0, 23, 59, 59, 999);
+    final cashFlow = actualCashFlowSummaryForMonth(
+      monthKey,
+      includePlanned: includePlanned,
+    );
+
+    final creditDueByAccount = <String, _CreditDueSnapshot>{};
+    final checkpoints = <DateTime>{monthStart};
+    for (final account in _accounts.where(
+      (item) =>
+          item.isActive &&
+          item.accountType == AccountType.creditCard &&
+          item.hasCompleteCreditCardProfile,
+    )) {
+      checkpoints.add(_clampedMonthDay(year, month, account.statementDay!));
+    }
+    final orderedCheckpoints = checkpoints.toList()..sort();
+    for (final checkpoint in orderedCheckpoints) {
+      for (final reminder in creditCardPaymentReminders(asOf: checkpoint)) {
+        if (reminder.dueDate.year != year || reminder.dueDate.month != month) {
+          continue;
+        }
+        creditDueByAccount[reminder.account.id] = _CreditDueSnapshot(
+          amount: convertToBase(
+            reminder.amountDue,
+            reminder.account.currency,
+          ),
+          asOf: checkpoint,
+        );
+      }
+    }
+
+    var creditDue = 0.0;
+    var creditCovered = 0.0;
+    for (final entry in creditDueByAccount.entries) {
+      final due = entry.value.amount;
+      creditDue += due;
+      final covered = _transactions.where((transaction) {
+        final date = transaction.transactionDate;
+        if (transaction.type != TransactionType.transfer ||
+            transaction.toAccountId != entry.key ||
+            date.isBefore(monthStart) ||
+            date.isAfter(monthEnd)) {
+          return false;
+        }
+        if (transaction.status == TransactionStatus.planned) {
+          return includePlanned;
+        }
+        return date.isAfter(entry.value.asOf);
+      }).fold<double>(
+        0,
+        (sum, transaction) => sum + transferIncomingAmountInBase(transaction),
+      );
+      creditCovered += covered.clamp(0.0, due).toDouble();
+    }
+
+    var loanDue = 0.0;
+    var loanCovered = 0.0;
+    for (final loan in _accounts.where(
+      (item) =>
+          item.isActive &&
+          item.accountType == AccountType.loan &&
+          item.hasCompleteLoanProfile,
+    )) {
+      LoanAmortizationSchedule schedule;
+      try {
+        schedule = calculateLoanAmortization(
+          principal: loan.loanPrincipal!,
+          annualInterestRatePercent: loan.loanAnnualInterestRate!,
+          termMonths: loan.loanTermMonths!,
+          startDate: loan.loanTrackingStartDate ?? loan.loanStartDate!,
+          paymentDay: loan.loanPaymentDay!,
+          method: loan.loanRepaymentMethod!,
+          quotedMonthlyPayment: loan.loanQuotedMonthlyPayment,
+          openingPrincipal: loan.initialBalance.abs(),
+        );
+      } on ArgumentError {
+        continue;
+      }
+
+      for (final installment in schedule.installments.where(
+        (item) => item.dueDate.year == year && item.dueDate.month == month,
+      )) {
+        final paidBeforeMonth = _transactions.any((transaction) =>
+            transaction.status != TransactionStatus.planned &&
+            transaction.transactionDate.isBefore(monthStart) &&
+            _isLoanInstallmentTransfer(
+                transaction, loan.id, installment.number));
+        if (paidBeforeMonth) continue;
+
+        final due = convertToBase(installment.payment, loan.currency);
+        loanDue += due;
+        final covered = _loanInstallmentCoverageInMonth(
+          loanId: loan.id,
+          installmentNumber: installment.number,
+          monthStart: monthStart,
+          monthEnd: monthEnd,
+          includePlanned: includePlanned,
+        );
+        loanCovered += covered.clamp(0.0, due).toDouble();
+      }
+    }
+
+    return MonthlyFundingNeed(
+      monthKey: monthKey,
+      cashInflow: cashFlow.inflow,
+      knownCashOutflow: cashFlow.outflow,
+      creditDue: creditDue,
+      loanDue: loanDue,
+      coveredDebtPayments: creditCovered + loanCovered,
+    );
+  }
+
+  double _loanInstallmentCoverageInMonth({
+    required String loanId,
+    required int installmentNumber,
+    required DateTime monthStart,
+    required DateTime monthEnd,
+    required bool includePlanned,
+  }) {
+    final matchingTransfers = _transactions.where((transaction) {
+      final date = transaction.transactionDate;
+      return !date.isBefore(monthStart) &&
+          !date.isAfter(monthEnd) &&
+          (includePlanned || transaction.status != TransactionStatus.planned) &&
+          transaction.type == TransactionType.transfer &&
+          transaction.toAccountId == loanId;
+    }).toList();
+    var covered = matchingTransfers.fold<double>(
+      0,
+      (sum, transaction) => sum + transactionAmountInBase(transaction),
+    );
+
+    // Legacy plans stored principal and interest as two records. The transfer
+    // identifies the loan; the companion interest expense shares source, date
+    // and instalment number and must also cover the due payment.
+    for (final transfer in matchingTransfers.where(
+      (item) => item.description == '贷款本金 #$installmentNumber',
+    )) {
+      covered += _transactions.where((transaction) {
+        final date = transaction.transactionDate;
+        return transaction.type == TransactionType.expense &&
+            transaction.accountId == transfer.accountId &&
+            transaction.description == '贷款利息 #$installmentNumber' &&
+            _sameDay(date, transfer.transactionDate) &&
+            !date.isBefore(monthStart) &&
+            !date.isAfter(monthEnd) &&
+            (includePlanned || transaction.status != TransactionStatus.planned);
+      }).fold<double>(
+        0,
+        (sum, transaction) => sum + transactionAmountInBase(transaction),
+      );
+    }
+    return covered;
+  }
+
+  bool _isLoanInstallmentTransfer(
+    FinanceTransaction transaction,
+    String loanId,
+    int installmentNumber,
+  ) {
+    if (transaction.type != TransactionType.transfer ||
+        transaction.toAccountId != loanId) {
+      return false;
+    }
+    final description = transaction.description ?? '';
+    return description == '贷款月供 #$installmentNumber' ||
+        description == '贷款本金 #$installmentNumber';
+  }
+
+  DateTime _clampedMonthDay(int year, int month, int day) {
+    final lastDay = DateTime(year, month + 1, 0).day;
+    return DateTime(year, month, day.clamp(1, lastDay));
+  }
+
+  bool _sameDay(DateTime left, DateTime right) =>
+      left.year == right.year &&
+      left.month == right.month &&
+      left.day == right.day;
+
+  Map<String, double> actualCashOutflowByCategoryForMonths(
+    Iterable<String> monthKeys,
+  ) {
+    final keys = monthKeys.toList();
+    final result = <String, double>{};
+    for (final category in _categories) {
+      final outflow = actualCashFlowSummaryForMonths(
+        keys,
+        categoryId: category.id,
+      ).outflow;
+      if (outflow > 0) {
+        result[category.id] = outflow;
+      }
+    }
+    final total = actualCashFlowSummaryForMonths(keys).outflow;
+    final categorized =
+        result.values.fold<double>(0, (sum, item) => sum + item);
+    final uncategorized = total - categorized;
+    if (uncategorized > .005) {
+      result[uncategorizedCashOutflowKey] = uncategorized;
+    }
+    return result;
+  }
+
+  Map<String, double> actualCashOutflowByAccountForMonth(String monthKey) {
+    final result = <String, double>{};
+    for (final account in _accounts.where(
+      (item) => item.reportGroup == ReportGroup.cash,
+    )) {
+      final outflow = actualCashFlowSummaryForMonth(
+        monthKey,
+        accountId: account.id,
+      ).outflow;
+      if (outflow > 0) {
+        result[account.id] = outflow;
+      }
+    }
+    return result;
+  }
+
   List<CreditCardPaymentReminder> creditCardPaymentReminders({
     DateTime? asOf,
   }) {
-    final now = asOf ?? DateTime.now();
-    final dueDate = DateTime(now.year, now.month + 1, 25);
+    final reference = asOf ?? DateTime.now();
+    final cutoff = DateTime(
+      reference.year,
+      reference.month,
+      reference.day,
+      23,
+      59,
+      59,
+      999,
+    );
     return _accounts
-        .where((account) => account.reportGroup == ReportGroup.credit)
+        .where((account) => account.accountType == AccountType.creditCard)
         .map((account) {
-          final balance =
-              accountBalanceAt(account.id, currentMonthCutoffDate());
+          final summary = calculateCreditCardBilling(
+            account: account,
+            transactions: _transactions,
+            now: reference,
+            balanceAtCutoff: accountBalanceAt(account.id, cutoff),
+          );
           return CreditCardPaymentReminder(
             account: account,
-            amountDue: balance < 0 ? balance.abs() : 0,
-            dueDate: dueDate,
+            amountDue: summary.billedBalance,
+            dueDate: summary.dueDate,
           );
         })
         .where((item) => item.amountDue > 0)
@@ -925,15 +1366,16 @@ class FinanceRepository {
 
   List<MonthlySummary> monthlySummaries({required int months}) {
     final monthKeys = _recentMonthKeys(months);
-    return monthKeys
-        .map(
-          (monthKey) => MonthlySummary(
-            monthKey: monthKey,
-            income: totalIncomeForMonth(monthKey),
-            expense: totalExpenseForMonth(monthKey),
-          ),
-        )
-        .toList();
+    return monthKeys.map(
+      (monthKey) {
+        final cashFlow = actualCashFlowSummaryForMonth(monthKey);
+        return MonthlySummary(
+          monthKey: monthKey,
+          income: cashFlow.inflow,
+          expense: cashFlow.outflow,
+        );
+      },
+    ).toList();
   }
 
   List<Budget> reusableBudgets() {
@@ -1255,6 +1697,55 @@ class FinanceRepository {
     return refresh();
   }
 
+  Future<FinanceRepository> saveTransactionTemplate(
+    TransactionTemplate template,
+  ) async {
+    await _saveTransactionTemplates([
+      ...transactionTemplates.where((item) => item.id != template.id),
+      template,
+    ]);
+    return refresh();
+  }
+
+  Future<FinanceRepository> reorderTransactionTemplates(
+    List<String> orderedTemplateIds,
+  ) async {
+    final templatesById = {
+      for (final template in transactionTemplates) template.id: template,
+    };
+    if (orderedTemplateIds.length != templatesById.length ||
+        orderedTemplateIds.toSet().length != templatesById.length ||
+        orderedTemplateIds.any((id) => !templatesById.containsKey(id))) {
+      throw ArgumentError.value(
+        orderedTemplateIds,
+        'orderedTemplateIds',
+        'Template order must contain every template exactly once.',
+      );
+    }
+
+    final reordered = orderedTemplateIds.indexed.map((entry) {
+      final template = templatesById[entry.$2]!;
+      return TransactionTemplate(
+        id: template.id,
+        name: template.name,
+        type: template.type,
+        accountId: template.accountId,
+        toAccountId: template.toAccountId,
+        categoryId: template.categoryId,
+        amount: template.amount,
+        currency: template.currency,
+        toAmount: template.toAmount,
+        toCurrency: template.toCurrency,
+        status: template.status,
+        description: template.description,
+        merchant: template.merchant,
+        sortOrder: entry.$1,
+      );
+    }).toList();
+    await _saveTransactionTemplates(reordered);
+    return refresh();
+  }
+
   Future<FinanceRepository> addRecurringTransactionRule({
     required String name,
     required FinanceTransaction transaction,
@@ -1270,7 +1761,11 @@ class FinanceRepository {
       ...recurringTransactionRules.where((item) => item.name != name),
       rule,
     ]);
-    return refresh();
+    final refreshed = await refresh();
+    return refreshed.generateRecurringTransactions(
+      rule.id,
+      monthsAhead: 3,
+    );
   }
 
   Future<FinanceRepository> deleteRecurringTransactionRule(
@@ -1278,6 +1773,16 @@ class FinanceRepository {
     await _saveRecurringTransactionRules(
       recurringTransactionRules.where((item) => item.id != ruleId).toList(),
     );
+    return refresh();
+  }
+
+  Future<FinanceRepository> saveRecurringTransactionRule(
+    RecurringTransactionRule rule,
+  ) async {
+    await _saveRecurringTransactionRules([
+      ...recurringTransactionRules.where((item) => item.id != rule.id),
+      rule,
+    ]);
     return refresh();
   }
 
@@ -1299,7 +1804,8 @@ class FinanceRepository {
     }
 
     final now = DateTime.now();
-    final endDate = DateTime(now.year, now.month + monthsAhead, now.day);
+    final today = DateTime(now.year, now.month, now.day);
+    final endDate = DateTime(now.year, now.month + monthsAhead + 1, 0);
     final generatedKeys = {...activeRule.generatedMonthKeys};
     final transactions = <FinanceTransaction>[];
     var generatedCount = 0;
@@ -1311,15 +1817,15 @@ class FinanceRepository {
 
     while (!cursor.isAfter(endDate)) {
       final currentMonthKey = _monthKey(cursor);
-      if (!generatedKeys.contains(currentMonthKey) &&
+      if (cursor.isAfter(today) &&
+          !generatedKeys.contains(currentMonthKey) &&
           (activeRule.endDate == null ||
               !cursor.isAfter(activeRule.endDate!))) {
-        final isFuture = cursor.isAfter(DateTime(now.year, now.month, now.day));
         transactions.add(
           activeRule.toTransaction(
             id: '${buildId('txn')}_${generatedCount++}',
             date: cursor,
-            status: isFuture ? TransactionStatus.planned : activeRule.status,
+            status: TransactionStatus.planned,
           ),
         );
         generatedKeys.add(currentMonthKey);
@@ -1347,9 +1853,17 @@ class FinanceRepository {
 
   Future<Map<String, dynamic>> buildJsonSnapshotPayload() async {
     final metaValues = await database.fetchAllMetaValues();
+    final exportableMeta = Map<String, String>.from(metaValues)
+      ..remove('data_migration_version')
+      ..remove('transaction_templates_json')
+      ..remove('recurring_transaction_rules_json');
     return {
+      'format_version': 3,
+      'transaction_date_semantics': 'occurrence_date',
+      'app_version': '0.8.0',
+      'schema_version': 9,
       'exported_at': DateTime.now().toIso8601String(),
-      'meta': metaValues,
+      'meta': exportableMeta,
       'accounts': _accounts
           .map(
             (item) => {
@@ -1363,6 +1877,18 @@ class FinanceRepository {
               'institution': item.institution,
               'note': item.note,
               'is_active': item.isActive,
+              'credit_limit': item.creditLimit,
+              'statement_day': item.statementDay,
+              'payment_due_day': item.paymentDueDay,
+              'loan_principal': item.loanPrincipal,
+              'loan_annual_interest_rate': item.loanAnnualInterestRate,
+              'loan_term_months': item.loanTermMonths,
+              'loan_start_date': item.loanStartDate?.toIso8601String(),
+              'loan_tracking_start_date':
+                  item.loanTrackingStartDate?.toIso8601String(),
+              'loan_payment_day': item.loanPaymentDay,
+              'loan_repayment_method': item.loanRepaymentMethod?.name,
+              'loan_quoted_monthly_payment': item.loanQuotedMonthlyPayment,
             },
           )
           .toList(),
@@ -1373,6 +1899,10 @@ class FinanceRepository {
               'name': item.name,
               'type': item.type.name,
               'parent_id': item.parentId,
+              'icon_key': item.iconKey,
+              'color_value': item.colorValue,
+              'sort_order': item.sortOrder,
+              'is_archived': item.isArchived,
             },
           )
           .toList(),
@@ -1423,6 +1953,10 @@ class FinanceRepository {
             },
           )
           .toList(),
+      'transaction_templates':
+          transactionTemplates.map((item) => item.toJson()).toList(),
+      'recurring_transaction_rules':
+          recurringTransactionRules.map((item) => item.toJson()).toList(),
     };
   }
 
@@ -1634,9 +2168,7 @@ class FinanceRepository {
   }
 
   Future<FinanceRepository> importJsonSnapshot(String path) async {
-    final file = File(path);
-    final raw = await file.readAsString();
-    final payload = jsonDecode(raw) as Map<String, dynamic>;
+    final payload = await _readImportPayload(path);
     final metaPayload = payload['meta'] as Map<String, dynamic>? ?? const {};
 
     final accountItems = (payload['accounts'] as List<dynamic>? ?? const [])
@@ -1654,9 +2186,35 @@ class FinanceRepository {
             institution: item['institution'] as String?,
             note: item['note'] as String?,
             isActive: item['is_active'] as bool? ?? true,
+            creditLimit: (item['credit_limit'] as num?)?.toDouble(),
+            statementDay: (item['statement_day'] as num?)?.toInt(),
+            paymentDueDay: (item['payment_due_day'] as num?)?.toInt(),
+            loanPrincipal: (item['loan_principal'] as num?)?.toDouble(),
+            loanAnnualInterestRate:
+                (item['loan_annual_interest_rate'] as num?)?.toDouble(),
+            loanTermMonths: (item['loan_term_months'] as num?)?.toInt(),
+            loanStartDate: item['loan_start_date'] == null
+                ? null
+                : DateTime.parse(item['loan_start_date'] as String),
+            loanTrackingStartDate: item['loan_tracking_start_date'] == null
+                ? null
+                : DateTime.parse(item['loan_tracking_start_date'] as String),
+            loanPaymentDay: (item['loan_payment_day'] as num?)?.toInt(),
+            loanRepaymentMethod: item['loan_repayment_method'] == null
+                ? null
+                : LoanRepaymentMethod.values
+                    .byName(item['loan_repayment_method'] as String),
+            loanQuotedMonthlyPayment:
+                (item['loan_quoted_monthly_payment'] as num?)?.toDouble(),
           ),
         )
         .toList();
+    final creditCardAccountIds = accountItems
+        .where((item) => item.accountType == AccountType.creditCard)
+        .map((item) => item.id)
+        .toSet();
+    final formatVersion = (payload['format_version'] as num?)?.toInt() ?? 1;
+    final usesLegacySettlementDates = formatVersion < 3;
     final categoryItems = (payload['categories'] as List<dynamic>? ?? const [])
         .map(
           (item) => Category(
@@ -1664,6 +2222,10 @@ class FinanceRepository {
             name: item['name'] as String,
             type: CategoryType.values.byName(item['type'] as String),
             parentId: item['parent_id'] as String?,
+            iconKey: item['icon_key'] as String?,
+            colorValue: (item['color_value'] as num?)?.toInt(),
+            sortOrder: (item['sort_order'] as num?)?.toInt() ?? 0,
+            isArchived: item['is_archived'] as bool? ?? false,
           ),
         )
         .toList();
@@ -1682,33 +2244,60 @@ class FinanceRepository {
         )
         .toList();
     final transactionItems =
-        (payload['transactions'] as List<dynamic>? ?? const [])
-            .map(
-              (item) => FinanceTransaction(
-                id: item['id'] as String,
-                type: TransactionType.values.byName(item['type'] as String),
-                accountId: item['account_id'] as String,
-                toAccountId: item['to_account_id'] as String?,
-                categoryId: item['category_id'] as String?,
-                amount: (item['amount'] as num).toDouble(),
-                currency: item['currency'] as String? ?? 'MYR',
-                toAmount: (item['to_amount'] as num?)?.toDouble(),
-                toCurrency: item['to_currency'] as String?,
-                recordDate: DateTime.parse(
-                  (item['record_date'] as String?) ??
-                      item['transaction_date'] as String,
-                ),
-                transactionDate:
-                    DateTime.parse(item['transaction_date'] as String),
-                status: item['status'] == null
-                    ? TransactionStatus.actual
-                    : TransactionStatus.values.byName(item['status'] as String),
-                recurringRuleId: item['recurring_rule_id'] as String?,
-                description: item['description'] as String?,
-                merchant: item['merchant'] as String?,
-              ),
-            )
-            .toList();
+        (payload['transactions'] as List<dynamic>? ?? const []).map((item) {
+      final recordDate = DateTime.parse(
+        (item['record_date'] as String?) ?? item['transaction_date'] as String,
+      );
+      final accountId = item['account_id'] as String;
+      final toAccountId = item['to_account_id'] as String?;
+      final involvesCreditCard = creditCardAccountIds.contains(accountId) ||
+          (toAccountId != null && creditCardAccountIds.contains(toAccountId));
+      return FinanceTransaction(
+        id: item['id'] as String,
+        type: TransactionType.values.byName(item['type'] as String),
+        accountId: accountId,
+        toAccountId: toAccountId,
+        categoryId: item['category_id'] as String?,
+        amount: (item['amount'] as num).toDouble(),
+        currency: item['currency'] as String? ?? 'MYR',
+        toAmount: (item['to_amount'] as num?)?.toDouble(),
+        toCurrency: item['to_currency'] as String?,
+        recordDate: recordDate,
+        transactionDate: usesLegacySettlementDates && involvesCreditCard
+            ? recordDate
+            : DateTime.parse(item['transaction_date'] as String),
+        status: item['status'] == null
+            ? TransactionStatus.actual
+            : TransactionStatus.values.byName(item['status'] as String),
+        recurringRuleId: item['recurring_rule_id'] as String?,
+        description: item['description'] as String?,
+        merchant: item['merchant'] as String?,
+      );
+    }).toList();
+    final legacyTemplatePayload = metaPayload['transaction_templates_json'];
+    final legacyRulePayload = metaPayload['recurring_transaction_rules_json'];
+    final templatePayload =
+        payload['transaction_templates'] as List<dynamic>? ??
+            (legacyTemplatePayload is String && legacyTemplatePayload.isNotEmpty
+                ? jsonDecode(legacyTemplatePayload) as List<dynamic>
+                : const []);
+    final recurringRulePayload =
+        payload['recurring_transaction_rules'] as List<dynamic>? ??
+            (legacyRulePayload is String && legacyRulePayload.isNotEmpty
+                ? jsonDecode(legacyRulePayload) as List<dynamic>
+                : const []);
+    final templateItems = templatePayload
+        .whereType<Map>()
+        .map((item) => preset.TransactionTemplate.fromJson(
+              Map<String, dynamic>.from(item),
+            ))
+        .toList();
+    final recurringRuleItems = recurringRulePayload
+        .whereType<Map>()
+        .map((item) => preset.RecurringTransactionRule.fromJson(
+              Map<String, dynamic>.from(item),
+            ))
+        .toList();
     final snapshotItems =
         (payload['asset_snapshots'] as List<dynamic>? ?? const [])
             .map(
@@ -1725,6 +2314,16 @@ class FinanceRepository {
             )
             .toList();
 
+    _validateImportReferences(
+      accounts: accountItems,
+      categories: categoryItems,
+      budgets: budgetItems,
+      transactions: transactionItems,
+      snapshots: snapshotItems,
+      templates: templateItems,
+      recurringRules: recurringRuleItems,
+    );
+
     final hasAnyData = accountItems.isNotEmpty ||
         categoryItems.isNotEmpty ||
         budgetItems.isNotEmpty ||
@@ -1735,12 +2334,21 @@ class FinanceRepository {
           'Import file does not contain any finance data.');
     }
 
+    final backupDirectory = await getApplicationDocumentsDirectory();
+    final restorePoint = p.join(
+      backupDirectory.path,
+      'finance_compass_before_import_${DateTime.now().millisecondsSinceEpoch}.json',
+    );
+    await exportJsonSnapshot(restorePoint);
+
     await database.replaceAllWithSeedData(
       accountItems: accountItems,
       categoryItems: categoryItems,
       budgetItems: budgetItems,
       transactionItems: transactionItems,
       snapshotItems: snapshotItems,
+      templateItems: templateItems,
+      recurringRuleItems: recurringRuleItems,
       metaValues: {
         for (final entry in metaPayload.entries) entry.key: '${entry.value}',
       },
@@ -1749,9 +2357,7 @@ class FinanceRepository {
   }
 
   Future<ImportPreview> previewImportJson(String path) async {
-    final file = File(path);
-    final raw = await file.readAsString();
-    final payload = jsonDecode(raw) as Map<String, dynamic>;
+    final payload = await _readImportPayload(path);
     return ImportPreview(
       accounts: (payload['accounts'] as List<dynamic>? ?? const []).length,
       categories: (payload['categories'] as List<dynamic>? ?? const []).length,
@@ -1762,6 +2368,124 @@ class FinanceRepository {
           (payload['asset_snapshots'] as List<dynamic>? ?? const []).length,
       exportedAt: payload['exported_at'] as String?,
     );
+  }
+
+  Future<Map<String, dynamic>> _readImportPayload(String path) async {
+    final file = File(path);
+    if (!await file.exists() || await file.length() == 0) {
+      throw const FormatException('所选 JSON 是空文件（0 KB），没有导入任何数据。');
+    }
+
+    Object? decoded;
+    try {
+      decoded = jsonDecode(await file.readAsString());
+    } on FormatException catch (error) {
+      throw FormatException('JSON 内容不完整或已损坏：${error.message}');
+    }
+    if (decoded is! Map) {
+      throw const FormatException('Finance Compass JSON 顶层必须是对象。');
+    }
+    final payload = Map<String, dynamic>.from(decoded);
+    final formatVersion = (payload['format_version'] as num?)?.toInt() ?? 1;
+    if (formatVersion < 1 || formatVersion > 3) {
+      throw FormatException('不支持的备份格式版本：$formatVersion。');
+    }
+    const listFields = [
+      'accounts',
+      'categories',
+      'budgets',
+      'transactions',
+      'asset_snapshots',
+      'transaction_templates',
+      'recurring_transaction_rules',
+    ];
+    for (final field in listFields) {
+      final value = payload[field];
+      if (value != null && value is! List) {
+        throw FormatException('JSON 字段 "$field" 必须是数组。');
+      }
+    }
+    if (payload['meta'] != null && payload['meta'] is! Map) {
+      throw const FormatException('JSON 字段 "meta" 必须是对象。');
+    }
+    return payload;
+  }
+
+  void _validateImportReferences({
+    required List<Account> accounts,
+    required List<Category> categories,
+    required List<Budget> budgets,
+    required List<FinanceTransaction> transactions,
+    required List<AssetSnapshot> snapshots,
+    required List<preset.TransactionTemplate> templates,
+    required List<preset.RecurringTransactionRule> recurringRules,
+  }) {
+    Set<String> uniqueIds(Iterable<String> ids, String label) {
+      final values = <String>{};
+      for (final id in ids) {
+        if (id.trim().isEmpty || !values.add(id)) {
+          throw FormatException('$label包含空白或重复 ID：$id');
+        }
+      }
+      return values;
+    }
+
+    final accountIds = uniqueIds(accounts.map((item) => item.id), '账户');
+    final categoryIds = uniqueIds(categories.map((item) => item.id), '类别');
+    uniqueIds(budgets.map((item) => item.id), '预算');
+    uniqueIds(transactions.map((item) => item.id), '交易');
+    uniqueIds(snapshots.map((item) => item.id), '资产快照');
+    uniqueIds(templates.map((item) => item.id), '快速模板');
+    final recurringRuleIds =
+        uniqueIds(recurringRules.map((item) => item.id), '周期规则');
+
+    void requireAccount(String id, String owner) {
+      if (!accountIds.contains(id)) {
+        throw FormatException('$owner 引用了不存在的账户：$id');
+      }
+    }
+
+    void requireCategory(String? id, String owner) {
+      if (id != null && !categoryIds.contains(id)) {
+        throw FormatException('$owner 引用了不存在的类别：$id');
+      }
+    }
+
+    for (final category in categories) {
+      requireCategory(category.parentId, '类别 ${category.id}');
+    }
+    for (final budget in budgets) {
+      requireCategory(budget.categoryId, '预算 ${budget.id}');
+    }
+    for (final transaction in transactions) {
+      requireAccount(transaction.accountId, '交易 ${transaction.id}');
+      if (transaction.toAccountId case final String targetId) {
+        requireAccount(targetId, '交易 ${transaction.id}');
+      }
+      requireCategory(transaction.categoryId, '交易 ${transaction.id}');
+      if (transaction.recurringRuleId case final String ruleId) {
+        if (!recurringRuleIds.contains(ruleId)) {
+          throw FormatException('交易 ${transaction.id} 引用了不存在的周期规则：$ruleId');
+        }
+      }
+    }
+    for (final snapshot in snapshots) {
+      requireAccount(snapshot.accountId, '资产快照 ${snapshot.id}');
+    }
+    for (final template in templates) {
+      requireAccount(template.accountId, '快速模板 ${template.id}');
+      if (template.toAccountId case final String targetId) {
+        requireAccount(targetId, '快速模板 ${template.id}');
+      }
+      requireCategory(template.categoryId, '快速模板 ${template.id}');
+    }
+    for (final rule in recurringRules) {
+      requireAccount(rule.accountId, '周期规则 ${rule.id}');
+      if (rule.toAccountId case final String targetId) {
+        requireAccount(targetId, '周期规则 ${rule.id}');
+      }
+      requireCategory(rule.categoryId, '周期规则 ${rule.id}');
+    }
   }
 
   Future<FinanceRepository> addCategory(Category category) async {
@@ -1822,6 +2546,12 @@ class FinanceRepository {
   Future<FinanceRepository> deleteExistingTransaction(
       String transactionId) async {
     await database.deleteTransaction(transactionId);
+    return _refreshWithGoalSync();
+  }
+
+  Future<FinanceRepository> deleteExistingTransactions(
+      Iterable<String> transactionIds) async {
+    await database.deleteTransactionsByIds(transactionIds);
     return _refreshWithGoalSync();
   }
 
@@ -1955,10 +2685,11 @@ class FinanceRepository {
   Future<void> _saveTransactionTemplates(
     List<TransactionTemplate> templates,
   ) async {
-    if (templates.isEmpty) {
-      await database.deleteMetaValue('transaction_templates_json');
-      return;
-    }
+    await database.replaceTransactionTemplates(
+      templates
+          .map((item) => preset.TransactionTemplate.fromJson(item.toJson()))
+          .toList(),
+    );
     await database.setMetaValue(
       'transaction_templates_json',
       jsonEncode(templates.map((item) => item.toJson()).toList()),
@@ -1968,10 +2699,12 @@ class FinanceRepository {
   Future<void> _saveRecurringTransactionRules(
     List<RecurringTransactionRule> rules,
   ) async {
-    if (rules.isEmpty) {
-      await database.deleteMetaValue('recurring_transaction_rules_json');
-      return;
-    }
+    await database.replaceRecurringTransactionRules(
+      rules
+          .map(
+              (item) => preset.RecurringTransactionRule.fromJson(item.toJson()))
+          .toList(),
+    );
     await database.setMetaValue(
       'recurring_transaction_rules_json',
       jsonEncode(rules.map((item) => item.toJson()).toList()),
@@ -2082,45 +2815,31 @@ class FinanceRepository {
     }
   }
 
-  double _cashFlowDelta(FinanceTransaction transaction) {
-    double deltaFor(String accountId, double amount, String currency) {
-      final account = _accounts.firstWhere(
-        (item) => item.id == accountId,
-        orElse: () => Account(
-          id: accountId,
-          name: accountId,
-          accountType: AccountType.other,
-          reportGroup: ReportGroup.investment,
-          currency: transaction.currency,
-          currentBalance: 0,
-        ),
-      );
-      if (account.reportGroup != ReportGroup.cash &&
-          account.reportGroup != ReportGroup.credit) {
-        return 0;
+  double _actualCashFlowDelta(FinanceTransaction transaction) {
+    Account? accountFor(String accountId) {
+      for (final account in _accounts) {
+        if (account.id == accountId) return account;
       }
-      return convertToBase(amount, currency);
+      return null;
     }
 
+    final source = accountFor(transaction.accountId);
+    final target = transaction.toAccountId == null
+        ? null
+        : accountFor(transaction.toAccountId!);
+    final amount = transactionAmountInBase(transaction);
     switch (transaction.type) {
       case TransactionType.income:
-        return deltaFor(
-            transaction.accountId, transaction.amount, transaction.currency);
+        return source?.reportGroup == ReportGroup.cash ? amount : 0;
       case TransactionType.expense:
-        return deltaFor(
-            transaction.accountId, -transaction.amount, transaction.currency);
+        return source?.reportGroup == ReportGroup.cash ? -amount : 0;
       case TransactionType.adjustment:
-        return 0;
+        return source?.reportGroup == ReportGroup.cash ? amount : 0;
       case TransactionType.transfer:
-        var delta = deltaFor(
-            transaction.accountId, -transaction.amount, transaction.currency);
-        final toAccountId = transaction.toAccountId;
-        if (toAccountId != null) {
-          delta += deltaFor(
-            toAccountId,
-            transaction.transferInAmount,
-            transaction.transferInCurrency,
-          );
+        var delta = 0.0;
+        if (source?.reportGroup == ReportGroup.cash) delta -= amount;
+        if (target?.reportGroup == ReportGroup.cash) {
+          delta += transferIncomingAmountInBase(transaction);
         }
         return delta;
     }
@@ -2128,6 +2847,16 @@ class FinanceRepository {
 
   String _accountReconciliationKey(String accountId) {
     return 'account_reconciled_month_$accountId';
+  }
+
+  String _creditCardStatementAmountsKey(String accountId) {
+    return 'credit_card_statement_amounts_${accountId}_json';
+  }
+
+  String _statementDateKey(DateTime value) {
+    final month = value.month.toString().padLeft(2, '0');
+    final day = value.day.toString().padLeft(2, '0');
+    return '${value.year}-$month-$day';
   }
 
   String _traceTitleForTransaction(FinanceTransaction transaction) {
@@ -2308,6 +3037,7 @@ class TransactionTemplate {
     this.categoryId,
     this.description,
     this.merchant,
+    this.sortOrder = 0,
   });
 
   final String id;
@@ -2323,6 +3053,7 @@ class TransactionTemplate {
   final TransactionStatus status;
   final String? description;
   final String? merchant;
+  final int sortOrder;
 
   factory TransactionTemplate.fromTransaction({
     required String id,
@@ -2360,6 +3091,7 @@ class TransactionTemplate {
         'status': status.name,
         'description': description,
         'merchant': merchant,
+        'sort_order': sortOrder,
       };
 
   factory TransactionTemplate.fromJson(Map<String, dynamic> json) {
@@ -2382,6 +3114,7 @@ class TransactionTemplate {
           : TransactionStatus.values.byName(json['status'] as String),
       description: json['description'] as String?,
       merchant: json['merchant'] as String?,
+      sortOrder: (json['sort_order'] as num?)?.toInt() ?? 0,
     );
   }
 }
@@ -2446,9 +3179,7 @@ class RecurringTransactionRule {
       toCurrency: transaction.toCurrency,
       startDate: transaction.transactionDate,
       intervalMonths: intervalMonths,
-      status: transaction.status == TransactionStatus.planned
-          ? TransactionStatus.actual
-          : transaction.status,
+      status: transaction.status,
       description: transaction.description,
       merchant: transaction.merchant,
     );
@@ -2480,6 +3211,7 @@ class RecurringTransactionRule {
 
   RecurringTransactionRule copyWith({
     List<String>? generatedMonthKeys,
+    bool? isActive,
   }) {
     return RecurringTransactionRule(
       id: id,
@@ -2499,7 +3231,7 @@ class RecurringTransactionRule {
       merchant: merchant,
       endDate: endDate,
       generatedMonthKeys: generatedMonthKeys ?? this.generatedMonthKeys,
-      isActive: isActive,
+      isActive: isActive ?? this.isActive,
     );
   }
 
@@ -2571,6 +3303,58 @@ class CashFlowProjectionPoint {
   final double transfers;
   final double net;
   final double endingCash;
+}
+
+class CashFlowSummary {
+  const CashFlowSummary({
+    required this.inflow,
+    required this.outflow,
+  });
+
+  final double inflow;
+  final double outflow;
+
+  double get net => inflow - outflow;
+}
+
+class MonthlyFundingNeed {
+  const MonthlyFundingNeed({
+    required this.monthKey,
+    required this.cashInflow,
+    required this.knownCashOutflow,
+    required this.creditDue,
+    required this.loanDue,
+    required this.coveredDebtPayments,
+  });
+
+  final String monthKey;
+  final double cashInflow;
+  final double knownCashOutflow;
+  final double creditDue;
+  final double loanDue;
+
+  /// Portion of [totalDebtDue] already represented by a payment transaction.
+  final double coveredDebtPayments;
+
+  double get totalDebtDue => creditDue + loanDue;
+
+  double get uncoveredDebtDue => (totalDebtDue - coveredDebtPayments)
+      .clamp(0.0, double.infinity)
+      .toDouble();
+
+  /// Cash outflow already recorded for the month plus debt due without a
+  /// matching payment transaction. Repayments already in cash outflow are not
+  /// added for a second time.
+  double get totalCashRequired => knownCashOutflow + uncoveredDebtDue;
+
+  double get projectedNetAfterFunding => cashInflow - totalCashRequired;
+}
+
+class _CreditDueSnapshot {
+  const _CreditDueSnapshot({required this.amount, required this.asOf});
+
+  final double amount;
+  final DateTime asOf;
 }
 
 class CreditCardPaymentReminder {

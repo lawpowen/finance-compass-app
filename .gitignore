@@ -34,6 +34,11 @@ migrate_working_dir/
 /coverage/
 /outputs/
 
+# Local Codex inputs and generated delivery artifacts
+/.codex-remote-attachments/
+/analysis/
+/artifacts/
+
 # Symbolication related
 app.*.symbols
 
@@ -44,3 +49,8 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Android release signing secrets
+/android/key.properties
+/android/app/*.jks
+/android/app/*.keystore

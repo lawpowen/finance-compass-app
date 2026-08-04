@@ -1,0 +1,407 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:drift/native.dart';
+import 'package:finance_app/src/core/data/finance_repository.dart';
+import 'package:finance_app/src/core/database/app_database.dart'
+    show AppDatabase;
+import 'package:finance_app/src/core/models/account.dart';
+import 'package:finance_app/src/core/models/category.dart';
+import 'package:finance_app/src/core/models/transaction.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('full export preview includes real data, templates, and recurring rules',
+      () async {
+    final database = AppDatabase.forTesting(NativeDatabase.memory());
+    var repository = await FinanceRepository.load(database);
+
+    repository = await repository.addAccount(
+      const Account(
+        id: 'cash',
+        name: 'Cash',
+        accountType: AccountType.cash,
+        reportGroup: ReportGroup.cash,
+        currency: 'MYR',
+        currentBalance: 1000,
+        initialBalance: 1000,
+      ),
+    );
+    repository = await repository.addCategory(
+      const Category(
+        id: 'food',
+        name: 'Food',
+        type: CategoryType.expense,
+      ),
+    );
+    final now = DateTime.now();
+    final transaction = FinanceTransaction(
+      id: 'txn_lunch',
+      type: TransactionType.expense,
+      accountId: 'cash',
+      categoryId: 'food',
+      amount: 18,
+      currency: 'MYR',
+      transactionDate: DateTime(now.year, now.month, now.day),
+      merchant: 'Lunch',
+    );
+    repository = await repository.addTransaction(transaction);
+    repository = await repository.addTransactionTemplate(
+      name: 'Lunch template',
+      transaction: transaction,
+    );
+    repository = await repository.addRecurringTransactionRule(
+      name: 'Monthly lunch',
+      transaction: transaction,
+      intervalMonths: 1,
+    );
+
+    final template = repository.transactionTemplates.single;
+    repository = await repository.saveTransactionTemplate(
+      TransactionTemplate(
+        id: template.id,
+        name: template.name,
+        type: template.type,
+        accountId: template.accountId,
+        amount: template.amount,
+        currency: template.currency,
+        categoryId: template.categoryId,
+        merchant: template.merchant,
+        sortOrder: 4,
+      ),
+    );
+    final rule = repository.recurringTransactionRules.single;
+    repository = await repository.saveRecurringTransactionRule(
+      rule.copyWith(isActive: false),
+    );
+
+    final bytes = await repository.exportJsonSnapshotBytes();
+    final payload = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+    expect(payload['format_version'], 3);
+    expect(payload['transaction_date_semantics'], 'occurrence_date');
+    expect((payload['accounts'] as List), hasLength(1));
+    expect((payload['categories'] as List), hasLength(1));
+    expect((payload['transactions'] as List), hasLength(4));
+    expect(
+      (payload['transaction_templates'] as List).single['sort_order'],
+      4,
+    );
+    expect(
+      (payload['recurring_transaction_rules'] as List).single['is_active'],
+      isFalse,
+    );
+
+    final directory = await Directory.systemTemp.createTemp('finance_export');
+    final file = File('${directory.path}/snapshot.json');
+    await file.writeAsBytes(bytes);
+    final preview = await repository.previewImportJson(file.path);
+    expect(preview.accounts, 1);
+    expect(preview.categories, 1);
+    expect(preview.transactions, 4);
+
+    const pathProviderChannel =
+        MethodChannel('plugins.flutter.io/path_provider');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pathProviderChannel, (call) async {
+      if (call.method == 'getApplicationDocumentsDirectory') {
+        return directory.path;
+      }
+      return null;
+    });
+    await database.close();
+
+    final importedDatabase = AppDatabase.forTesting(NativeDatabase.memory());
+    var importedRepository = await FinanceRepository.load(importedDatabase);
+    importedRepository = await importedRepository.importJsonSnapshot(file.path);
+    expect(importedRepository.accounts.single.id, 'cash');
+    expect(importedRepository.categories.single.id, 'food');
+    expect(
+      importedRepository.transactions
+          .singleWhere((item) => item.id == transaction.id)
+          .merchant,
+      'Lunch',
+    );
+    expect(
+      importedRepository.transactions
+          .where((item) => item.status == TransactionStatus.planned),
+      hasLength(3),
+    );
+    expect(importedRepository.transactionTemplates.single.sortOrder, 4);
+    expect(
+        importedRepository.recurringTransactionRules.single.isActive, isFalse);
+
+    await importedDatabase.close();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pathProviderChannel, null);
+    await directory.delete(recursive: true);
+  });
+
+  test('legacy credit-card import discards per-transaction settlement date',
+      () async {
+    final directory =
+        await Directory.systemTemp.createTemp('finance_card_import');
+    const pathProviderChannel =
+        MethodChannel('plugins.flutter.io/path_provider');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pathProviderChannel, (call) async {
+      if (call.method == 'getApplicationDocumentsDirectory') {
+        return directory.path;
+      }
+      return null;
+    });
+
+    final file = File('${directory.path}/legacy-card.json');
+    await file.writeAsString(jsonEncode({
+      'accounts': [
+        {
+          'id': 'card',
+          'name': 'Legacy Card',
+          'account_type': 'creditCard',
+          'report_group': 'credit',
+          'currency': 'MYR',
+          'current_balance': -88,
+        }
+      ],
+      'transactions': [
+        {
+          'id': 'purchase',
+          'type': 'expense',
+          'account_id': 'card',
+          'amount': 88,
+          'currency': 'MYR',
+          'record_date': '2026-06-20T00:00:00.000',
+          'transaction_date': '2026-07-12T00:00:00.000',
+          'status': 'actual',
+        }
+      ],
+    }));
+
+    final database = AppDatabase.forTesting(NativeDatabase.memory());
+    var repository = await FinanceRepository.load(database);
+    repository = await repository.importJsonSnapshot(file.path);
+
+    expect(repository.transactions.single.recordDate, DateTime(2026, 6, 20));
+    expect(
+        repository.transactions.single.transactionDate, DateTime(2026, 6, 20));
+
+    await file.writeAsString(jsonEncode({
+      'format_version': 3,
+      'transaction_date_semantics': 'occurrence_date',
+      'accounts': [
+        {
+          'id': 'card',
+          'name': 'Current Card',
+          'account_type': 'creditCard',
+          'report_group': 'credit',
+          'currency': 'MYR',
+          'current_balance': -88,
+        }
+      ],
+      'transactions': [
+        {
+          'id': 'edited_purchase',
+          'type': 'expense',
+          'account_id': 'card',
+          'amount': 88,
+          'currency': 'MYR',
+          'record_date': '2026-06-20T00:00:00.000',
+          'transaction_date': '2026-06-25T00:00:00.000',
+          'status': 'actual',
+        }
+      ],
+    }));
+    repository = await repository.importJsonSnapshot(file.path);
+    expect(repository.transactions.single.recordDate, DateTime(2026, 6, 20));
+    expect(
+        repository.transactions.single.transactionDate, DateTime(2026, 6, 25));
+
+    await database.close();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pathProviderChannel, null);
+    await directory.delete(recursive: true);
+  });
+
+  test('empty export file is rejected without changing current data', () async {
+    final directory =
+        await Directory.systemTemp.createTemp('finance_empty_import');
+    final file = File('${directory.path}/empty.json');
+    await file.writeAsBytes(const []);
+
+    final database = AppDatabase.forTesting(NativeDatabase.memory());
+    var repository = await FinanceRepository.load(database);
+    repository = await repository.addAccount(
+      const Account(
+        id: 'safe_cash',
+        name: 'Safe cash',
+        accountType: AccountType.cash,
+        reportGroup: ReportGroup.cash,
+        currency: 'MYR',
+        currentBalance: 88,
+      ),
+    );
+
+    await expectLater(
+      repository.importJsonSnapshot(file.path),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          contains('0 KB'),
+        ),
+      ),
+    );
+    final reloaded = await FinanceRepository.load(database);
+    expect(reloaded.accounts.single.id, 'safe_cash');
+    expect(reloaded.accounts.single.currentBalance, 88);
+
+    await database.close();
+    await directory.delete(recursive: true);
+  });
+
+  test('broken account references roll back instead of replacing live data',
+      () async {
+    final directory =
+        await Directory.systemTemp.createTemp('finance_invalid_import');
+    const pathProviderChannel =
+        MethodChannel('plugins.flutter.io/path_provider');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pathProviderChannel, (call) async {
+      if (call.method == 'getApplicationDocumentsDirectory') {
+        return directory.path;
+      }
+      return null;
+    });
+    final file = File('${directory.path}/invalid.json');
+    await file.writeAsString(jsonEncode({
+      'format_version': 3,
+      'accounts': [
+        {
+          'id': 'imported_cash',
+          'name': 'Imported cash',
+          'account_type': 'cash',
+          'report_group': 'cash',
+          'currency': 'MYR',
+          'current_balance': 10,
+        }
+      ],
+      'transactions': [
+        {
+          'id': 'broken_transfer',
+          'type': 'transfer',
+          'account_id': 'imported_cash',
+          'to_account_id': 'missing_target',
+          'amount': 10,
+          'currency': 'MYR',
+          'record_date': '2026-07-20T00:00:00.000',
+          'transaction_date': '2026-07-20T00:00:00.000',
+          'status': 'actual',
+        }
+      ],
+    }));
+
+    final database = AppDatabase.forTesting(NativeDatabase.memory());
+    var repository = await FinanceRepository.load(database);
+    repository = await repository.addAccount(
+      const Account(
+        id: 'original_cash',
+        name: 'Original cash',
+        accountType: AccountType.cash,
+        reportGroup: ReportGroup.cash,
+        currency: 'MYR',
+        currentBalance: 99,
+      ),
+    );
+
+    await expectLater(
+      repository.importJsonSnapshot(file.path),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          contains('missing_target'),
+        ),
+      ),
+    );
+    final reloaded = await FinanceRepository.load(database);
+    expect(reloaded.accounts.single.id, 'original_cash');
+    expect(reloaded.accounts.single.currentBalance, 99);
+
+    await database.close();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pathProviderChannel, null);
+    await directory.delete(recursive: true);
+  });
+
+  test('import repairs legacy zero same-currency transfer destination balance',
+      () async {
+    final directory =
+        await Directory.systemTemp.createTemp('finance_transfer_repair');
+    const pathProviderChannel =
+        MethodChannel('plugins.flutter.io/path_provider');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pathProviderChannel, (call) async {
+      if (call.method == 'getApplicationDocumentsDirectory') {
+        return directory.path;
+      }
+      return null;
+    });
+    final file = File('${directory.path}/legacy-zero-transfer.json');
+    await file.writeAsString(jsonEncode({
+      'format_version': 3,
+      'accounts': [
+        {
+          'id': 'grab',
+          'name': 'Grab',
+          'account_type': 'cash',
+          'report_group': 'cash',
+          'currency': 'MYR',
+          'current_balance': 500,
+        },
+        {
+          'id': 'uob_one',
+          'name': 'UOB One',
+          'account_type': 'cash',
+          'report_group': 'cash',
+          'currency': 'MYR',
+          'current_balance': 100,
+        }
+      ],
+      'transactions': [
+        {
+          'id': 'grab-to-uob-one',
+          'type': 'transfer',
+          'account_id': 'grab',
+          'to_account_id': 'uob_one',
+          'amount': 500,
+          'currency': 'MYR',
+          'to_amount': 0,
+          'to_currency': 'MYR',
+          'record_date': '2026-07-19T00:00:00.000',
+          'transaction_date': '2026-07-19T00:00:00.000',
+          'status': 'actual',
+        }
+      ],
+    }));
+
+    final database = AppDatabase.forTesting(NativeDatabase.memory());
+    var repository = await FinanceRepository.load(database);
+    repository = await repository.importJsonSnapshot(file.path);
+
+    expect(
+      repository.accounts
+          .firstWhere((account) => account.id == 'uob_one')
+          .currentBalance,
+      600,
+    );
+    expect(repository.transactions.single.toAmount, isNull);
+    expect(repository.transactions.single.transferInAmount, 500);
+
+    await database.close();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pathProviderChannel, null);
+    await directory.delete(recursive: true);
+  });
+}

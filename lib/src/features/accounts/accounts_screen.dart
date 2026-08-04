@@ -44,7 +44,8 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
   }
 
   Future<void> _loadCollapsedAccounts() async {
-    final raw = await DatabaseProvider.instance.getMetaValue('collapsed_accounts');
+    final raw =
+        await DatabaseProvider.instance.getMetaValue('collapsed_accounts');
     if (raw != null && mounted) {
       try {
         final List<dynamic> decoded = jsonDecode(raw);
@@ -87,7 +88,10 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
     final displayCutoff = _endOfMonth(effectiveCutoffMonth);
     final goalSummaries =
         repository.assetGoalSummaries(cutoffDate: displayCutoff);
-    final goalHistory = repository.totalAssetHistory(cutoffDate: displayCutoff);
+    final goalHistory = repository.totalAssetHistory(
+      cutoffDate: displayCutoff,
+      includeCredit: false,
+    );
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -166,7 +170,7 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
         SectionCard(
           title: '资产目标',
           subtitle:
-              goalSummaries.isEmpty ? '设定目标后会自动记录首次达成日期。' : '支持同时追踪多个净资产目标。',
+              goalSummaries.isEmpty ? '设定目标后会自动记录首次达成日期。' : '支持同时追踪多个总资产目标。',
           child: goalSummaries.isEmpty
               ? Align(
                   alignment: Alignment.centerLeft,
@@ -329,8 +333,9 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
                                       const SizedBox(height: 4),
                                       Text(
                                         '${_accountTypeLabel(account.accountType)} · $topCategory',
-                                        style:
-                                            Theme.of(context).textTheme.bodySmall,
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall,
                                       ),
                                       const SizedBox(height: 6),
                                       FinanceStatusChip(
@@ -366,8 +371,9 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
                                         displayedMarketValue,
                                         account.currency,
                                       ),
-                                      style:
-                                          Theme.of(context).textTheme.labelSmall,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .labelSmall,
                                     ),
                                     FinanceActionMenuButton<String>(
                                       tooltip: '账户操作',
@@ -395,7 +401,8 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
                                           destructive: true,
                                         ),
                                       ],
-                                      onSelected: (value) => _handleAccountAction(
+                                      onSelected: (value) =>
+                                          _handleAccountAction(
                                         context,
                                         value,
                                         account,
@@ -766,6 +773,8 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
         return '交易账户';
       case AccountType.fund:
         return '基金';
+      case AccountType.loan:
+        return '贷款';
       case AccountType.other:
         return '其他';
     }
@@ -911,7 +920,7 @@ class _GoalCard extends StatelessWidget {
                         value: formatMoney(summary.goal.targetAmount),
                       ),
                       _MetricChip(
-                        label: '当前净资产',
+                        label: '当前总资产',
                         value: formatMoney(summary.currentAssets),
                       ),
                       _MetricChip(

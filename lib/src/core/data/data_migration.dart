@@ -40,7 +40,8 @@ Future<void> migrateLegacyData(AppDatabase db) async {
     await _ensureTransactionStatuses(db);
   }
 
-  await db.setMetaValue(_migrationVersionKey, _currentMigrationVersion.toString());
+  await db.setMetaValue(
+      _migrationVersionKey, _currentMigrationVersion.toString());
 }
 
 /// Sets up sensible defaults for a fresh install.
@@ -125,8 +126,7 @@ Future<void> _ensureAccountReportGroups(AppDatabase db) async {
       }
       final inferred = _inferReportGroup(accountType);
 
-      await (db.update(db.accounts)
-            ..where((tbl) => tbl.id.equals(row.id)))
+      await (db.update(db.accounts)..where((tbl) => tbl.id.equals(row.id)))
           .write(
         AccountsCompanion(
           reportGroup: Value(inferred.name),
@@ -155,6 +155,7 @@ Future<void> _ensureTransactionStatuses(AppDatabase db) async {
 ReportGroup _inferReportGroup(AccountType accountType) {
   switch (accountType) {
     case AccountType.creditCard:
+    case AccountType.loan:
       return ReportGroup.credit;
     case AccountType.stock:
     case AccountType.crypto:

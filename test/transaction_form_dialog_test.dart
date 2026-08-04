@@ -39,14 +39,35 @@ void main() {
       transactions.map((item) => item.recordDate.day).toList(),
       [20, 20, 20, 20, 20, 20],
     );
-    expect(transactions.first.status, TransactionStatus.actual);
     expect(
-      transactions.skip(1).map((item) => item.status).toSet(),
-      {TransactionStatus.planned},
+      transactions.map((item) => item.status),
+      everyElement(TransactionStatus.actual),
     );
     expect(transactions.first.transactionDate, DateTime(2026, 4, 22));
     expect(transactions.last.transactionDate, DateTime(2026, 9, 22));
     expect(transactions.last.toAmount, 800);
     expect(transactions.last.toCurrency, 'TWD');
+  });
+
+  test('buildRecurringTransactions keeps planned status for every month', () {
+    final baseTransaction = FinanceTransaction(
+      id: 'txn_planned',
+      type: TransactionType.expense,
+      accountId: 'acc_1',
+      amount: 50,
+      currency: 'MYR',
+      transactionDate: DateTime(2026, 7, 18),
+      status: TransactionStatus.planned,
+    );
+
+    final transactions = buildRecurringTransactions(
+      baseTransaction: baseTransaction,
+      months: 4,
+    );
+
+    expect(
+      transactions.map((item) => item.status),
+      everyElement(TransactionStatus.planned),
+    );
   });
 }

@@ -48,7 +48,15 @@ class FinanceTransaction {
 
   bool get affectsBalance => status != TransactionStatus.planned;
 
-  double get transferInAmount => toAmount ?? amount;
+  double get transferInAmount {
+    final normalizedSource = currency.trim().toUpperCase();
+    final normalizedTarget = (toCurrency ?? currency).trim().toUpperCase();
+    final isLegacyZeroSameCurrencyTransfer = type == TransactionType.transfer &&
+        amount != 0 &&
+        toAmount == 0 &&
+        normalizedSource == normalizedTarget;
+    return isLegacyZeroSameCurrencyTransfer ? amount : toAmount ?? amount;
+  }
 
   String get transferInCurrency => toCurrency ?? currency;
 }

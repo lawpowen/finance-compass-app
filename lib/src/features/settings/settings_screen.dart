@@ -2,10 +2,8 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
-import 'package:file_saver/file_saver.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
 import '../../core/data/finance_repository.dart';
 import '../../core/providers/mutations/account_mutations.dart';
@@ -84,6 +82,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     setState(() => _isBusy = true);
     try {
       await task();
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('操作失败：$error')),
+        );
+      }
     } finally {
       if (mounted) {
         setState(() => _isBusy = false);
@@ -158,7 +162,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     required Future<Uint8List> Function() bytesBuilder,
     required String successLabel,
     String Function(Uint8List bytes)? validateBytes,
-    bool openAfterSave = false,
   }) async {
     await _runBusyTask(() async {
       final bytes = await bytesBuilder();
@@ -183,19 +186,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         return;
       }
 
-      final savedPath = await FileSaver.instance.saveAs(
-        name: fileName,
+      final savedPath = await FilePicker.platform.saveFile(
+        dialogTitle: '选择保存位置',
+        fileName: '$fileName.json',
+        type: FileType.custom,
+        allowedExtensions: const ['json'],
         bytes: bytes,
-        fileExtension: 'json',
-        mimeType: MimeType.custom,
-        customMimeType: 'application/json',
       );
-      if (openAfterSave && savedPath != null && savedPath.trim().isNotEmpty) {
-        await OpenFilex.open(
-          savedPath,
-          type: 'application/json',
-        );
-      }
       if (!mounted) {
         return;
       }
@@ -281,6 +278,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('导入完成')),
         );
+        Navigator.of(context, rootNavigator: true)
+            .popUntil((route) => route.isFirst);
       }
     });
   }

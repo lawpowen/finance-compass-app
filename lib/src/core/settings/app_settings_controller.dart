@@ -6,18 +6,19 @@ import 'app_theme_style.dart';
 class AppSettingsController extends ChangeNotifier {
   AppSettingsController();
 
-  AppThemeStyle _themeStyle = AppThemeStyle.tide;
+  AppThemeStyle _themeStyle = AppThemeStyle.abyss;
   bool _isLoaded = false;
 
   AppThemeStyle get themeStyle => _themeStyle;
   bool get isLoaded => _isLoaded;
 
   Future<void> load() async {
-    final rawValue = await DatabaseProvider.instance.getMetaValue('theme_style');
+    final rawValue =
+        await DatabaseProvider.instance.getMetaValue('theme_style');
     if (rawValue != null) {
       _themeStyle = AppThemeStyle.values.firstWhere(
         (style) => style.name == rawValue,
-        orElse: () => AppThemeStyle.tide,
+        orElse: () => AppThemeStyle.abyss,
       );
     }
     _isLoaded = true;

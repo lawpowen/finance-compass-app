@@ -1,5 +1,7 @@
 # Finance Compass
 
+当前版本：`0.8.0+41`。工程文档索引见 [docs/README.md](docs/README.md)。
+
 完整中文需求与设计文档请看：[finance-app-design.md](finance-app-design.md)。
 
 `Finance Compass` is a Flutter-based personal finance app focused on:
@@ -12,7 +14,32 @@
 
 This project is already beyond a simple MVP skeleton. It includes local persistence with `SQLite + Drift`, account and transaction management, reporting, asset snapshots, multi-currency exchange-rate settings, and import/export flows.
 
+## Download / 普通用户下载
+
+无需安装 Flutter 或其他开发工具，请按设备选择：
+
+### Windows 10/11 x64
+
+**[下载 Windows 安装版（推荐）](https://github.com/lawpowen-cte/finance-compass-app/releases/download/v0.8.0/FinanceCompass-Windows-x64-Setup-v0.8.0.exe)**
+
+安装包目前没有商业 Authenticode 代码签名，Windows 可能显示“未知发布者”或 SmartScreen 提示。请确认文件来自本仓库，并可使用发布页提供的 SHA-256 校验值核对。
+
+不想安装时，可使用 **[Windows 便携版 ZIP](https://github.com/lawpowen-cte/finance-compass-app/releases/download/v0.8.0/FinanceCompass-Windows-x64-Portable-v0.8.0.zip)**。必须完整解压后运行 `FinanceCompass.exe`，不能只复制单个 EXE。
+
+### Android
+
+**[下载 Android APK](https://github.com/lawpowen-cte/finance-compass-app/releases/download/v0.8.0/FinanceCompass-Android-v0.8.0.apk)**
+
+APK 使用 Finance Compass 独立发布密钥签名。首次侧载时，Android 可能要求允许浏览器或文件管理器“安装未知应用”。
+
+还可以进入 **[全部版本和校验文件](https://github.com/lawpowen-cte/finance-compass-app/releases/latest)**。GitHub 自动显示的 `Source code` 压缩包不是普通用户安装包。
+
 ## Current Highlights
+
+- 全应用交互门禁：可见箭头和启用控件必须执行真实操作；周期规则、预算月份、报表区间、货币格式和应用内提醒均已接入，计划能力明确禁用。
+- 交易页顶部三种口径为“实际消费”“实际现金”“信用/贷款”；“实际现金”卡以“需准备现金”为副标题，把已知现金流出与尚未安排的到期信用卡/贷款合并，已安排还款不重复计算，不再额外占用独立大卡。未来月份的现金流出按现金账户整笔进出计算，贷款转账使用完整月供。
+- 报表收入/支出统一为实际现金流入/流出；资产目标按不扣除信用卡和贷款的总资产计算；信用账户还款使用“选择同币种现金账户 → 确认金额”的专用流程。
+- 月度预算是按生效月延续的规则：新月份金额只覆盖该月及以后，更早月份继续使用当时有效的旧规则。
 
 - Cross-platform Flutter app for Android, Windows, iOS, macOS, Linux, and Web targets.
 - Local-first finance database using SQLite and Drift.
@@ -21,6 +48,9 @@ This project is already beyond a simple MVP skeleton. It includes local persiste
 - Cross-currency transfers with separate source and target amounts.
 - Reusable budgets with positive and negative rollover.
 - Planned versus actual transaction states.
+- Transaction editing with confirmed deletion and finite signed amounts, including zero and negative values.
+- Credit-card statement history preserves each cycle's original bill amount after repayment, while remaining debt is calculated separately. Day-one statement cuts are labeled as the month that just ended, matching PayLater bill-month conventions.
+- Loan accounts calculate complete amortization schedules for equal installments, equal principal, and flat-rate loans, with an optional bank-quoted regular payment for equal-installment and flat-rate contracts.
 - Recurring transaction rules and compact quick templates.
 - Account cutoff-month calculations that exclude future transactions.
 - Investment and retirement snapshots with contribution, withdrawal, cost, cash balance, and PnL views.
@@ -72,11 +102,13 @@ Purpose:
 
 Key behavior:
 
-- Accounts page supports a selectable cutoff month.
-- All balances and asset summaries on this page respect that cutoff month.
-- Future transactions after the selected cutoff are excluded from displayed values.
+- Accounts page supports a real cutoff-month selector from the earliest ledger month through the current month.
+- All balances and asset summaries respect the selected month-end cutoff, and account details inherit the same cutoff.
+- Historical account details are explicitly read-only and offer a one-tap return to the current month; future and planned transactions are excluded.
 - Each account can show a balance trace explaining how the cutoff balance is derived.
 - Each account can be marked as reconciled up to a selected month.
+- Loan setup accepts the contract principal, annual rate, term, tracking start date, monthly payment day, repayment method, and an optional opening outstanding balance for loans first recorded mid-contract. The loan detail shows only the installments that remain to be tracked, including principal, interest, payment, and remaining principal.
+- Recording a scheduled loan payment creates a principal transfer to the loan plus a separate interest expense, so cash outflow and outstanding principal remain accurate.
 
 ### Transactions
 
@@ -97,7 +129,9 @@ Key behavior:
 - transactions can be reused directly or saved as templates
 - templates prefill amount, account, category, type, description, merchant, and currency
 - planned transactions are shown in planning views but do not change account balances
-- recurring rules can generate future planned transactions for 1-12 selected months
+- the transaction page defaults to actual records; switching to `包含预计` keeps actual records visible and adds planned records to the list, income, expense, and net cash-flow totals
+- the middle transaction-basis card becomes the unfiltered funding-need total for current and future months: known cash outflow plus uncovered credit-card and loan payments due in that month, without a second standalone card or duplicate repayment counting
+- recurring rules generate 1-12 selected months while preserving the rule's actual or planned status for every month
 
 ### Budgets
 
@@ -163,6 +197,7 @@ Represents real-world accounts such as:
 - crypto
 - trading
 - fund
+- loan
 
 Important fields:
 
@@ -274,6 +309,8 @@ Business meaning:
 - `transfer`: moves funds between two accounts; `amount/currency` is the source account amount and `toAmount/toCurrency` is the target account amount
 - `adjustment`: contribution or manual funding adjustment, mainly for investment and retirement accounts
 - `status = planned`: used for expected future cash flow and budget planning; it does not affect account balances
+- Credit-card committed debt and limit usage include every actual/settled record, including future-dated installments that already lock the limit, while excluding every planned record. Billing periods and due reminders still stop at today.
+- Credit-card details provide a statement-month picker derived from the account statement day. Selecting a historical month switches the amount, timeline and transaction list to that exact billing cycle.
 - `status = actual`: counted as real bookkeeping and affects account balances
 
 ### `asset_snapshots`
@@ -340,12 +377,25 @@ Stores app-level metadata such as:
 
 - A transaction can be saved as a recurring rule.
 - Rules support monthly, every-2-months, quarterly, and yearly intervals.
-- Generating a rule asks for a 1-12 month range and avoids already generated months.
+- Saving a rule immediately creates planned transactions through the next three complete calendar months; future occurrences are always planned rather than posted to balances.
+- The automation page can extend a rule by a chosen 1-12 month range and avoids already generated months.
 
 ### Credit Card Reminders
 
 - Credit accounts with negative balances are surfaced as payment reminders.
-- The first version uses a default reminder date of the 25th of the next month.
+- Credit-card accounts support a credit limit, statement day, and payment due day.
+- Legacy cards without those fields keep an explicitly estimated reminder on the 25th of the next month until setup is completed.
+- Card purchases remain ordinary transactions; billing dates are not stored per transaction.
+
+### Loan Amortization
+
+- Equal installments use the reducing-balance annuity formula. Equal-installment and flat-rate contracts may use a bank-quoted regular monthly payment; the final installment automatically reconciles the remaining principal and contractual interest.
+- Equal principal keeps the principal component level and produces a declining payment.
+- Flat-rate loans calculate interest from the original principal for the full term.
+- A mid-contract opening balance does not create historical payment transactions. Its future flat-rate rows keep the original contract's monthly interest basis and continue from the reported outstanding principal.
+- The first tracked payment is scheduled in the month after the tracking start date. Payment days 29–31 are clamped to the last day of shorter months.
+- The schedule is derived from account terms. After creating a loan, the app asks whether to generate every remaining installment as a planned principal transfer plus a planned interest expense; the same action remains available on the loan detail page.
+- Recording an actual installment replaces its matching planned pair. Only the principal transfer reduces the loan balance, while principal plus interest leaves the selected repayment account.
 
 ### Investment and Retirement Calculations
 
@@ -428,33 +478,53 @@ Main structure under `lib/src`:
 - `features/shared`
   - reusable UI building blocks
 
+## Buy the developer a coffee / 请开发者喝杯咖啡
+
+Finance Compass 免费提供。如果它对你有帮助，欢迎自愿支持继续开发。支持不会解锁额外功能，也不形成服务权益；付款前请确认收款人是 **LAW PO WEN**。
+
+<img src="assets/support/touch-n-go-support-qr.jpg" alt="Touch 'n Go QR code for voluntarily supporting Finance Compass development" width="360">
+
+应用只显示这张静态二维码，不接入支付 SDK、不读取付款结果，也不会自动上传财务资料。
+
 ## Development
 
-Run from the project folder:
+Run from the project folder with the configured Flutter SDK:
 
 ```powershell
-C:\Users\dell\.puro\envs\stable\flutter\bin\flutter.bat pub get
-C:\Users\dell\.puro\envs\stable\flutter\bin\flutter.bat analyze
-C:\Users\dell\.puro\envs\stable\flutter\bin\flutter.bat test
+flutter pub get
+flutter analyze --no-fatal-infos --no-fatal-warnings
+flutter test
 ```
 
 Build Android APK:
 
 ```powershell
-C:\Users\dell\.puro\envs\stable\flutter\bin\flutter.bat build apk
+flutter build apk --release
 ```
 
-Build Android release APK and copy it to an app-named file:
+Build the side-by-side installable debug APK for a physical ARM64 device:
 
 ```powershell
-cd C:\Users\dell\ai_labs\finance_app
-puro flutter build apk --release
-Copy-Item -LiteralPath build\app\outputs\flutter-apk\app-release.apk -Destination build\app\outputs\flutter-apk\Finance_Compass_release.apk -Force
+flutter build apk --debug --split-per-abi
+```
+
+The debug variant is labeled `Finance Compass Debug` and uses the independent
+application ID `com.financecompass.app.debug`. It can be installed beside the
+release application (`com.financecompass.app`) and has a separate Android data
+directory.
+
+Android release builds require local `android/key.properties` and a release keystore. See [public release workflow](docs/RELEASE_WORKFLOW.md); signing secrets are never committed.
+
+Build Android release APK:
+
+```powershell
+flutter build apk --release
 ```
 
 Build Windows release:
 
 ```powershell
-Get-Process finance_app -ErrorAction SilentlyContinue | Stop-Process -Force
-C:\Users\dell\.puro\envs\stable\flutter\bin\flutter.bat build windows
+flutter build windows --release
 ```
+
+Distribute the complete Windows Release directory through the installer or portable ZIP. `FinanceCompass.exe` depends on adjacent DLL and `data/` files and must not be distributed alone.

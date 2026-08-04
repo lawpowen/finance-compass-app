@@ -11,13 +11,16 @@ class AssetSnapshotFormDialog extends StatefulWidget {
     super.key,
     required this.repository,
     this.initialSnapshot,
+    this.initialAccountId,
   });
 
   final FinanceRepository repository;
   final AssetSnapshot? initialSnapshot;
+  final String? initialAccountId;
 
   @override
-  State<AssetSnapshotFormDialog> createState() => _AssetSnapshotFormDialogState();
+  State<AssetSnapshotFormDialog> createState() =>
+      _AssetSnapshotFormDialogState();
 }
 
 class _AssetSnapshotFormDialogState extends State<AssetSnapshotFormDialog> {
@@ -29,9 +32,12 @@ class _AssetSnapshotFormDialogState extends State<AssetSnapshotFormDialog> {
   late DateTime snapshotDate;
   String? accountId;
 
-  double get _marketValue => double.tryParse(marketValueController.text.trim()) ?? 0;
-  double get _cashBalance => double.tryParse(cashBalanceController.text.trim()) ?? 0;
-  double get _manualCostBasis => double.tryParse(costBasisController.text.trim()) ?? 0;
+  double get _marketValue =>
+      double.tryParse(marketValueController.text.trim()) ?? 0;
+  double get _cashBalance =>
+      double.tryParse(cashBalanceController.text.trim()) ?? 0;
+  double get _manualCostBasis =>
+      double.tryParse(costBasisController.text.trim()) ?? 0;
 
   bool get _canEditInitialCostBasis {
     if (accountId == null) {
@@ -71,7 +77,9 @@ class _AssetSnapshotFormDialogState extends State<AssetSnapshotFormDialog> {
     if (_canEditInitialCostBasis) {
       return _manualCostBasis;
     }
-    final firstSnapshot = accountId == null ? null : widget.repository.firstSnapshotForAccount(accountId!);
+    final firstSnapshot = accountId == null
+        ? null
+        : widget.repository.firstSnapshotForAccount(accountId!);
     if (firstSnapshot == null) {
       return _totalFlowSummary.netContribution;
     }
@@ -86,18 +94,24 @@ class _AssetSnapshotFormDialogState extends State<AssetSnapshotFormDialog> {
   void initState() {
     super.initState();
     final initial = widget.initialSnapshot;
-    marketValueController = TextEditingController(text: initial?.marketValue.toString() ?? '');
-    cashBalanceController = TextEditingController(text: initial?.cashBalance.toString() ?? '0');
-    costBasisController = TextEditingController(text: initial?.costBasis.toString() ?? '0');
+    marketValueController =
+        TextEditingController(text: initial?.marketValue.toString() ?? '');
+    cashBalanceController =
+        TextEditingController(text: initial?.cashBalance.toString() ?? '0');
+    costBasisController =
+        TextEditingController(text: initial?.costBasis.toString() ?? '0');
     snapshotDate = initial?.snapshotDate ?? DateTime.now();
     final investments = widget.repository.investmentAccounts();
-    accountId = initial?.accountId ?? (investments.isNotEmpty ? investments.first.id : null);
+    accountId = initial?.accountId ??
+        widget.initialAccountId ??
+        (investments.isNotEmpty ? investments.first.id : null);
     marketValueController.addListener(_refreshPreview);
     cashBalanceController.addListener(_refreshPreview);
     costBasisController.addListener(_refreshPreview);
 
     if (!_canEditInitialCostBasis && accountId != null) {
-      final firstSnapshot = widget.repository.firstSnapshotForAccount(accountId!);
+      final firstSnapshot =
+          widget.repository.firstSnapshotForAccount(accountId!);
       if (firstSnapshot != null) {
         costBasisController.text = firstSnapshot.costBasis.toString();
       }
@@ -119,7 +133,7 @@ class _AssetSnapshotFormDialogState extends State<AssetSnapshotFormDialog> {
   Widget build(BuildContext context) {
     final investments = widget.repository.investmentAccounts();
     return AlertDialog(
-      title: Text(widget.initialSnapshot == null ? '新增资产快照' : '编辑资产快照'),
+      title: Text(widget.initialSnapshot == null ? '更新市值' : '编辑市值记录'),
       content: SizedBox(
         width: 420,
         child: Form(
@@ -130,6 +144,7 @@ class _AssetSnapshotFormDialogState extends State<AssetSnapshotFormDialog> {
               children: [
                 DropdownButtonFormField<String>(
                   value: accountId,
+                  isExpanded: true,
                   decoration: const InputDecoration(
                     labelText: '投资账户',
                     border: OutlineInputBorder(),
@@ -137,16 +152,24 @@ class _AssetSnapshotFormDialogState extends State<AssetSnapshotFormDialog> {
                   items: investments
                       .map((account) => DropdownMenuItem(
                             value: account.id,
-                            child: Text(account.name),
+                            child: Text(
+                              account.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ))
                       .toList(),
-                  onChanged: widget.initialSnapshot == null
+                  onChanged: widget.initialSnapshot == null &&
+                          widget.initialAccountId == null
                       ? (value) {
                           setState(() {
                             accountId = value;
-                            final firstSnapshot =
-                                value == null ? null : widget.repository.firstSnapshotForAccount(value);
-                            costBasisController.text = (firstSnapshot?.costBasis ?? 0).toString();
+                            final firstSnapshot = value == null
+                                ? null
+                                : widget.repository
+                                    .firstSnapshotForAccount(value);
+                            costBasisController.text =
+                                (firstSnapshot?.costBasis ?? 0).toString();
                           });
                         }
                       : null,
@@ -167,14 +190,16 @@ class _AssetSnapshotFormDialogState extends State<AssetSnapshotFormDialog> {
                 FinanceTextField(
                   controller: marketValueController,
                   label: '账户总市值',
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
                   validator: _numberRequired,
                 ),
                 const SizedBox(height: 12),
                 FinanceTextField(
                   controller: cashBalanceController,
                   label: '账户现金余额',
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
                   validator: _numberRequired,
                 ),
                 if (_canEditInitialCostBasis) ...[
@@ -182,7 +207,8 @@ class _AssetSnapshotFormDialogState extends State<AssetSnapshotFormDialog> {
                   FinanceTextField(
                     controller: costBasisController,
                     label: '累计成本基线',
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
                     validator: _numberRequired,
                   ),
                 ],
@@ -198,14 +224,17 @@ class _AssetSnapshotFormDialogState extends State<AssetSnapshotFormDialog> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('自动计算', style: Theme.of(context).textTheme.titleSmall),
+                      Text('自动计算',
+                          style: Theme.of(context).textTheme.titleSmall),
                       const SizedBox(height: 8),
                       if (_canEditInitialCostBasis)
                         Text('累计成本基线: ${formatMoney(_manualCostBasis)}')
                       else ...[
-                        Text('累计投入: ${formatMoney(_totalFlowSummary.contribution)}'),
+                        Text(
+                            '累计投入: ${formatMoney(_totalFlowSummary.contribution)}'),
                         const SizedBox(height: 4),
-                        Text('累计取出: ${formatMoney(_totalFlowSummary.withdrawal)}'),
+                        Text(
+                            '累计取出: ${formatMoney(_totalFlowSummary.withdrawal)}'),
                         const SizedBox(height: 4),
                       ],
                       Text('累计成本: ${formatMoney(_effectiveCostBasis)}'),
@@ -220,7 +249,9 @@ class _AssetSnapshotFormDialogState extends State<AssetSnapshotFormDialog> {
         ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('取消')),
+        TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('取消')),
         FilledButton(onPressed: _submit, child: const Text('保存')),
       ],
     );

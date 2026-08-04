@@ -746,7 +746,7 @@ class _DashboardRangeSelector extends StatelessWidget {
                 onSelected: onAll,
               ),
               if (activeQuickRange == '自选')
-                _QuickRangeChip(label: '自选', selected: true, onSelected: () {}),
+                const _QuickRangeChip(label: '自选', selected: true),
             ],
           ),
           const SizedBox(height: 12),
@@ -811,19 +811,19 @@ class _QuickRangeChip extends StatelessWidget {
   const _QuickRangeChip({
     required this.label,
     required this.selected,
-    required this.onSelected,
+    this.onSelected,
   });
 
   final String label;
   final bool selected;
-  final VoidCallback onSelected;
+  final VoidCallback? onSelected;
 
   @override
   Widget build(BuildContext context) {
     return ChoiceChip(
       label: Text(label),
       selected: selected,
-      onSelected: (_) => onSelected(),
+      onSelected: onSelected == null ? null : (_) => onSelected!(),
       visualDensity: VisualDensity.compact,
     );
   }
