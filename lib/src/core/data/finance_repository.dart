@@ -636,25 +636,33 @@ class FinanceRepository {
       }
     }
 
-    final sourceDate = latestSnapshotBeforeDate?.snapshotDate;
+    if (latestSnapshotBeforeDate == null && accountSnapshots.isNotEmpty) {
+      return _openingBalanceTrace(account, cutoffDate);
+    }
+
     var runningBalance =
         latestSnapshotBeforeDate?.marketValue ?? account.currentBalance;
     final traceEntries = <AccountBalanceTraceEntry>[];
-    final reversingTransactions = _transactions.where((transaction) {
-      if (!transaction.transactionDate.isAfter(cutoffDate)) {
-        return false;
-      }
-      if (sourceDate != null &&
-          !transaction.transactionDate.isAfter(sourceDate)) {
-        return false;
-      }
-      return _transactionDeltaForAccount(account.id, transaction) != 0;
-    }).toList()
-      ..sort((a, b) => b.transactionDate.compareTo(a.transactionDate));
+    final adjustments = latestSnapshotBeforeDate != null
+        ? _snapshotAnchoredAdjustments(
+            account.id,
+            latestSnapshotBeforeDate,
+            cutoffDate,
+          )
+        : (_transactions
+                .where((transaction) =>
+                    transaction.transactionDate.isAfter(cutoffDate) &&
+                    _transactionDeltaForAccount(account.id, transaction) != 0)
+                .toList()
+              ..sort((a, b) => b.transactionDate.compareTo(a.transactionDate)))
+            .map((transaction) => (
+                  transaction: transaction,
+                  appliedDelta:
+                      -_transactionDeltaForAccount(account.id, transaction),
+                ))
+            .toList();
 
-    for (final transaction in reversingTransactions) {
-      final appliedDelta =
-          -_transactionDeltaForAccount(account.id, transaction);
+    for (final (:transaction, :appliedDelta) in adjustments) {
       runningBalance += appliedDelta;
       traceEntries.add(
         AccountBalanceTraceEntry(
@@ -677,6 +685,46 @@ class FinanceRepository {
       sourceLabel: sourceLabel,
       sourceAmount:
           latestSnapshotBeforeDate?.marketValue ?? account.currentBalance,
+      entries: traceEntries,
+      endingBalance: runningBalance,
+    );
+  }
+
+  /// Trace for a cutoff before the account's first snapshot: start from
+  /// [Account.initialBalance] and apply every transaction up to the cutoff.
+  AccountBalanceTrace _openingBalanceTrace(
+    Account account,
+    DateTime cutoffDate,
+  ) {
+    var runningBalance = account.initialBalance;
+    final traceEntries = <AccountBalanceTraceEntry>[];
+    final applyingTransactions = _transactions
+        .where((transaction) =>
+            !transaction.transactionDate.isAfter(cutoffDate) &&
+            _transactionDeltaForAccount(account.id, transaction) != 0)
+        .toList()
+      ..sort((a, b) => a.transactionDate.compareTo(b.transactionDate));
+
+    for (final transaction in applyingTransactions) {
+      final appliedDelta = _transactionDeltaForAccount(account.id, transaction);
+      runningBalance += appliedDelta;
+      traceEntries.add(
+        AccountBalanceTraceEntry(
+          transactionId: transaction.id,
+          date: transaction.transactionDate,
+          title: _traceTitleForTransaction(transaction),
+          subtitle: _traceSubtitleForTransaction(account.id, transaction),
+          delta: appliedDelta,
+          runningBalance: runningBalance,
+        ),
+      );
+    }
+
+    return AccountBalanceTrace(
+      account: account,
+      cutoffDate: cutoffDate,
+      sourceLabel: '账户期初余额（首张资产快照之前）',
+      sourceAmount: account.initialBalance,
       entries: traceEntries,
       endingBalance: runningBalance,
     );
@@ -745,7 +793,11 @@ class FinanceRepository {
     }
 
     if (targetDate.isBefore(firstSnapshot.snapshotDate)) {
-      return firstSnapshot.costBasis;
+      // The first snapshot's baseline is not known yet at [targetDate].
+      return investmentFlowSummaryForAccount(
+        accountId,
+        upToDate: targetDate,
+      ).contribution;
     }
 
     final deltaFlow = investmentFlowSummaryForAccount(
@@ -798,8 +850,13 @@ class FinanceRepository {
       accountId,
       upToDate: targetDate,
     );
+    final firstSnapshot = firstSnapshotForAccount(accountId);
     final flow = investmentFlowSummaryForAccount(
       accountId,
+      fromDateExclusive: firstSnapshot != null &&
+              !targetDate.isBefore(firstSnapshot.snapshotDate)
+          ? firstSnapshot.snapshotDate
+          : null,
       upToDate: targetDate,
     );
     return (cumulativeCost - flow.withdrawal)
@@ -2741,14 +2798,24 @@ class FinanceRepository {
     }
 
     if (latestSnapshotBeforeDate != null) {
-      var balance = latestSnapshotBeforeDate.marketValue;
+      return _snapshotAnchoredAdjustments(
+        account.id,
+        latestSnapshotBeforeDate,
+        date,
+      ).fold(
+        latestSnapshotBeforeDate.marketValue,
+        (balance, item) => balance + item.appliedDelta,
+      );
+    }
+
+    if (accountSnapshots.isNotEmpty) {
+      // Before the first snapshot, currentBalance already reflects future
+      // snapshots, so rebuild the pre-snapshot ledger forward instead.
+      var balance = account.initialBalance;
       for (final transaction in _transactions) {
-        if (!transaction.transactionDate.isAfter(date) ||
-            !transaction.transactionDate
-                .isAfter(latestSnapshotBeforeDate.snapshotDate)) {
-          continue;
+        if (!transaction.transactionDate.isAfter(date)) {
+          balance += _transactionDeltaForAccount(account.id, transaction);
         }
-        balance -= _transactionDeltaForAccount(account.id, transaction);
       }
       return balance;
     }
@@ -2760,6 +2827,51 @@ class FinanceRepository {
       }
     }
     return balance;
+  }
+
+  /// Adjustments from [anchor]'s market value to the balance at [date].
+  ///
+  /// Transfers/adjustments are folded into the latest snapshot's market value
+  /// when recorded, so those dated after [date] are taken back out. Income and
+  /// expense are never folded, so those in (anchor date, [date]] are added and
+  /// later ones are ignored. Forward items come first (oldest first), then
+  /// reversals (newest first).
+  List<({FinanceTransaction transaction, double appliedDelta})>
+      _snapshotAnchoredAdjustments(
+    String accountId,
+    AssetSnapshot anchor,
+    DateTime date,
+  ) {
+    final forward = <({FinanceTransaction transaction, double appliedDelta})>[];
+    final reversed =
+        <({FinanceTransaction transaction, double appliedDelta})>[];
+    for (final transaction in _transactions) {
+      if (!transaction.transactionDate.isAfter(anchor.snapshotDate)) {
+        continue;
+      }
+      final delta = _transactionDeltaForAccount(accountId, transaction);
+      if (delta == 0) {
+        continue;
+      }
+      final afterDate = transaction.transactionDate.isAfter(date);
+      if (_foldsIntoSnapshot(transaction)) {
+        if (afterDate) {
+          reversed.add((transaction: transaction, appliedDelta: -delta));
+        }
+      } else if (!afterDate) {
+        forward.add((transaction: transaction, appliedDelta: delta));
+      }
+    }
+    forward.sort((a, b) =>
+        a.transaction.transactionDate.compareTo(b.transaction.transactionDate));
+    reversed.sort((a, b) =>
+        b.transaction.transactionDate.compareTo(a.transaction.transactionDate));
+    return [...forward, ...reversed];
+  }
+
+  bool _foldsIntoSnapshot(FinanceTransaction transaction) {
+    return transaction.type == TransactionType.transfer ||
+        transaction.type == TransactionType.adjustment;
   }
 
   double _transactionDeltaForAccount(

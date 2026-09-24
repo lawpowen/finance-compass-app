@@ -44,6 +44,58 @@ flowchart LR
 
 资产目标继续存放于 `app_meta.asset_goals_json`，不新增字段或迁移。`assetGoalSummaries` 及目标页趋势调用 `totalAssetsAt(..., includeCredit: false)`，只汇总非 `ReportGroup.credit` 账户，因此信用卡和贷款负债不扣减目标金额；`totalAssetHistory` 的 `includeCredit` 默认为 `true`，保证净资产报表继续使用原口径，只有资产目标显式传入 `false`。旧版单一目标迁移后的默认名称改为“资产目标”，目标金额和首次达成日期保持不变。
 
+## 投资快照与剩余成本
+
+`asset_snapshots.cost_basis` 在首张快照中是该日的成本基线；新建首张快照时，表单以截至该日的实际投入减实际取出预填，用户可根据此前未录入的历史调整。后续累计成本为首张基线加首张快照之后的实际投入；剩余成本再扣首张快照之后的实际取出，最低为零。没有快照时，剩余成本为实际投入减实际取出。首张快照之前的取出已包含在基线中，不得重复扣除。未实现盈亏与比例均以同一截止日的总市值和剩余成本计算；报表跨账户汇总时先把每个账户的市值和剩余成本换算成主币种。`planned` 不计入实际投入或取出。该修正只重算展示值，不迁移或改写既有快照与交易；如历史基线本身录入错误，仍需由用户更正首张快照。
+
+### 快照市值的折入语义与根本限制
+
+`_syncInvestmentFlowIntoSnapshot` 在记录、编辑或删除实际 `transfer`/`adjustment` 时，把金额加到**当时日期最晚**的快照的 `market_value` 和 `cash_balance` 上，不论交易日期早于还是晚于该快照。`income`/`expense` 从不折入。系统**没有记录**每笔转账/调整被折入了哪一张快照：`asset_snapshots` 与 `transactions` 只有 `created_at`，交易编辑不会更新时间戳，导入时全部重置为导入时刻，而且精度只到秒，因此无法据此可靠推断。结果是：只要账户有实际转账或调整，**非最新**快照的市值中含有哪些资金流就无法从数据库推断。本次修复只处理不依赖这一信息的写入路径，其余路径改为明确拒绝，不猜测。
+
+### 快照写入后的物化余额
+
+`AppDatabase.insertAssetSnapshot`、`updateAssetSnapshot`、`deleteAssetSnapshot` 在同一数据库事务内处理 `accounts.current_balance`；拒绝时抛出 `SnapshotBalanceAmbiguityException`（消息为中文、面向用户），事务整体回滚，快照与余额均不变。`planned` 从不参与计算，也不触发拒绝。
+
+| 操作 | 条件 | 结果 |
+| --- | --- | --- |
+| 新增 | 新快照日期不早于所有现有快照（成为最新） | 已存在、日期晚于该快照的实际转账/调整折入其 `market_value`/`cash_balance`（与之后新录入的转账相同规则）；`current_balance` = 该市值 + 日期晚于快照的实际收入/支出 |
+| 新增 | 回溯日期（非最新） | 按录入值保存，`current_balance` 不变 |
+| 编辑 | 编辑前后都是最新 | `current_balance` 增加市值差额，并按新旧日期之间的实际收入/支出修正（日期后移时，被移入快照之前的收入/支出扣除；前移时加回） |
+| 编辑 | 编辑前后都不是最新 | `current_balance` 不变 |
+| 编辑 | “最新快照”发生变化 | 账户有实际转账/调整时拒绝；否则以新的最新快照市值 + 其后实际收入/支出重建 |
+| 编辑 | 改换 `account_id` | 以 `ArgumentError` 拒绝（界面本身不提供该操作） |
+| 删除 | 非最新 | `current_balance` 不变 |
+| 删除 | 唯一快照 | `current_balance` = `initial_balance` + 全部实际交易 |
+| 删除 | 最新且仍有较早快照 | 账户有实际转账/调整时拒绝；否则以剩余最新快照市值 + 其后实际收入/支出重建 |
+
+```mermaid
+flowchart TD
+  W[快照写入] --> L{是否影响“最新快照”?}
+  L -- 否 --> K[current_balance 不变]
+  L -- 同一张仍为最新 --> D[按市值差额与跨日期收入/支出增量修正]
+  L -- 新增成为最新 --> F[折入其后转账/调整 → 市值 + 其后收入/支出]
+  L -- 删除唯一快照 --> G[initial_balance + 全部实际交易]
+  L -- 最新快照改变 --> A{有实际转账/调整?}
+  A -- 否 --> R[新最新快照市值 + 其后收入/支出]
+  A -- 是 --> X[SnapshotBalanceAmbiguityException 回滚]
+```
+
+增量路径以当前的 `current_balance` 为基准，不会修复旧逻辑已经写错的值；本次不做数据迁移或批量重算。
+
+### 快照之后的历史读取
+
+`FinanceRepository.accountBalanceAt`、`accountBalanceTrace`，以及 `AccountService`、`AssetService` 中对应的读取，以截止日前最近一张快照为锚点：市值 + 快照之后到截止日的实际收入/支出 − 截止日之后已折入的实际转账/调整。截止日之后的收入/支出不扣减，因为它们从未计入快照市值。当锚点就是最新快照时，远期截止日的读取结果等于上表维护的 `current_balance`。当锚点是**非最新**快照时，“截止日之后的转账/调整已折入该快照”只对按时间顺序录入的数据成立；补录或旧数据可能使历史值偏差。这一点受上述根本限制约束，本次未改变。
+
+### 首张快照之前的历史读取
+
+账户已有快照、但截止日早于首张快照时，`accountBalanceAt`/`accountBalanceTrace` 从 `initial_balance` 正向累加截止日及之前的实际交易，不再以已包含未来快照的 `current_balance` 反推；`costBasisForAccount` 在该区间只返回截至当日的实际投入，不返回首张快照的 `cost_basis`。没有任何快照的账户仍由 `current_balance` 回退未来交易。以上变更均无 schema、迁移或备份格式变化。
+
+### 完整修复所需的最小设计（尚未实现）
+
+该设计仅为提案：新增关联表，例如 `snapshot_flow_folds(snapshot_id, transaction_id, amount)`，由 `_syncInvestmentFlowIntoSnapshot` 和新增快照时的折入逻辑写入，交易反转时按记录精确撤销。这样删除或重排最新快照时，可以把被删快照吸收的资金流准确转移到新的最新快照。已有数据没有这类记录，只能标记为“折入未知”，继续执行上述拒绝规则，或由用户逐户确认重建。这需要 schema 升级（v10）、导入导出格式扩展和迁移测试。
+
+## 信用卡专用还款
+
 信用卡专用还款流程只允许选择与信用账户同币种的 `ReportGroup.cash` 来源，确认后写入一笔 `actual transfer`。同币种还款以 `amount` 同时作为现金扣款和信用账户入账，`to_amount` 保持 `NULL`；它不新增消费支出，但按完整 `amount` 进入实际现金流出。
 
 ## 实际现金报表口径

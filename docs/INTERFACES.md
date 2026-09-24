@@ -1,8 +1,20 @@
 # 接口与导入导出
 
+投资成本读取接口：`FinanceRepository.costBasisForAccount(accountId, upToDate)` 返回首张快照基线加之后实际投入的累计成本；`remainingCostBasisForAccount(accountId, upToDate)` 再扣首张快照之后的实际取出，供资产卡片、详情与报表计算未实现盈亏。没有快照时按全部实际投入减实际取出计算。`snapshotRemainingCostBasis` 和 `snapshotUnrealizedPnl` 采用相同截止日口径；这些调用只读，不改写快照或交易。截止日早于首张快照时，`costBasisForAccount` 只返回截至当日的实际投入，`accountBalanceAt` / `accountBalanceTrace` 从 `initial_balance` 累加截止日及之前的实际交易，均不读取未来快照。
+
+快照写入接口：`FinanceRepository.addAssetSnapshot`、`updateExistingAssetSnapshot`、`deleteExistingAssetSnapshot` 分别调用 `AppDatabase.insertAssetSnapshot`、`updateAssetSnapshot`、`deleteAssetSnapshot`，签名不变，返回刷新后的 Repository。契约变化如下：
+- 新增成为最新的快照时，存储的 `marketValue` 可能大于录入值，因为已折入日期晚于它的实际转账/调整。
+- `Account.currentBalance` 按 `DATA_DESIGN.md` 的决策表维护，不再等于“最新快照市值”，删除唯一快照后也不再为 0。
+- 删除最新快照（仍有较早快照），或编辑时改变了“最新快照”，并且账户有实际转账/调整时，Future 以 `SnapshotBalanceAmbiguityException`（定义于 `core/database/app_database.dart`，`toString()` 为中文提示）失败，数据库不变。
+- 编辑时改换 `accountId` 以 `ArgumentError` 失败。
+
+`AssetMutations` 不捕获这些异常，由调用页面处理。账户详情页已有的 `try/catch` 会以 SnackBar 显示提示。
+
+余额读取接口：`accountBalanceAt(accountId, date)` 在快照之后的截止日返回“快照市值 + 快照后到截止日的实际收入/支出 − 截止日后已折入的实际转账/调整”。`accountBalanceTrace` 的条目依次为：收入/支出正向加入（旧到新），然后转账/调整扣回（新到旧）；`endingBalance` 与 `accountBalanceAt` 相同。
+
 ## 自托管 Web 接口边界
 
-Web 自托管版没有 JSON/REST/GraphQL 服务端接口。Caddy 仅提供静态 `index.html`、Flutter 资源、`manifest.json`、`service-worker.js`、`pwa_bootstrap.js`、`sqlite3.wasm` 和 `drift_worker.js`；所有账本 CRUD 仍在浏览器内通过 Drift 执行。反向代理只可把 `https://finance.example.com/` 转发到 `127.0.0.1:8080`，并应在这一层实施 TLS/认证。`sqlite3.wasm` 必须以 `application/wasm` 响应。
+Web 自托管版没有 JSON/REST/GraphQL 服务端接口。Caddy 仅提供静态 `index.html`、`flutter_bootstrap.js` 与其他 Flutter 资源、`manifest.json`、`service-worker.js`、`pwa_bootstrap.js`、`sqlite3.wasm`、`drift_worker.js` 和同源回退字体 `fonts/`（清单为 `fonts/SHA256SUMS`，Service Worker 安装时按它预缓存）；`flutter_service_worker.js` 仅作为 Flutter 生成的自注销存根存在，应用不注册它；所有账本 CRUD 仍在浏览器内通过 Drift 执行。反向代理只可把 `https://finance.example.com/` 转发到 `127.0.0.1:8080`，并应在这一层实施 TLS/认证。`sqlite3.wasm` 必须以 `application/wasm` 响应。
 
 浏览器文件选择器可能没有本机路径，`ExportMutations.previewImportBytes` 与 `importJsonBytes` 接收 `Uint8List`，供 Web 按字节预览和导入 JSON；原生 `previewImport`/`importJson` 保留路径接口。两者使用相同的 JSON 格式验证和 Drift 事务替换规则。
 

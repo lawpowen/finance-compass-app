@@ -1,4 +1,5 @@
-// Flutter 3.44 no longer generates a service worker. This shell worker caches
+// Flutter 3.44 only emits a self-unregistering flutter_service_worker.js stub,
+// and web/flutter_bootstrap.js never registers it. This shell worker caches
 // static application files only; finance records remain browser-local.
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {

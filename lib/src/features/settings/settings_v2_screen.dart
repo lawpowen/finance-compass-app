@@ -247,7 +247,7 @@ class FinanceCompassAboutPage extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 6),
-              const Text('版本 0.9.0+42 · 本地优先的个人财务罗盘'),
+              const Text('版本 0.9.1+43 · 本地优先的个人财务罗盘'),
               const SizedBox(height: 12),
               const Card(
                 child: ListTile(

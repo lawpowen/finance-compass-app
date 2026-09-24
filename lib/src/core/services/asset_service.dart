@@ -150,7 +150,11 @@ class AssetService {
     }
 
     if (targetDate.isBefore(firstSnapshot.snapshotDate)) {
-      return firstSnapshot.costBasis;
+      // 首张快照的基线在 [targetDate] 时尚不存在，只按此前账本累计投入。
+      return investmentFlowSummaryForAccount(
+        accountId,
+        upToDate: targetDate,
+      ).contribution;
     }
 
     final deltaFlow = investmentFlowSummaryForAccount(
@@ -206,8 +210,13 @@ class AssetService {
       accountId,
       upToDate: targetDate,
     );
+    final firstSnapshot = firstSnapshotForAccount(accountId);
     final flow = investmentFlowSummaryForAccount(
       accountId,
+      fromDateExclusive: firstSnapshot != null &&
+              !targetDate.isBefore(firstSnapshot.snapshotDate)
+          ? firstSnapshot.snapshotDate
+          : null,
       upToDate: targetDate,
     );
     return (cumulativeCost - flow.withdrawal)
@@ -477,14 +486,33 @@ class AssetService {
     }
 
     if (latestSnapshotBeforeDate != null) {
+      // 转账/调整已并入快照市值，截止日之后的需扣回；收入/支出从不并入，
+      // 只加上快照之后到截止日的部分。
       var balance = latestSnapshotBeforeDate.marketValue;
       for (final transaction in _transactions) {
-        if (!transaction.transactionDate.isAfter(date) ||
-            !transaction.transactionDate
-                .isAfter(latestSnapshotBeforeDate.snapshotDate)) {
+        if (!transaction.transactionDate
+            .isAfter(latestSnapshotBeforeDate.snapshotDate)) {
           continue;
         }
-        balance -= _transactionDeltaForAccount(account.id, transaction);
+        final afterDate = transaction.transactionDate.isAfter(date);
+        final folded = transaction.type == TransactionType.transfer ||
+            transaction.type == TransactionType.adjustment;
+        if (folded && afterDate) {
+          balance -= _transactionDeltaForAccount(account.id, transaction);
+        } else if (!folded && !afterDate) {
+          balance += _transactionDeltaForAccount(account.id, transaction);
+        }
+      }
+      return balance;
+    }
+
+    if (accountSnapshots.isNotEmpty) {
+      // 首张快照之前：当前余额已含未来快照，改为从期初余额正向累加。
+      var balance = account.initialBalance;
+      for (final transaction in _transactions) {
+        if (!transaction.transactionDate.isAfter(date)) {
+          balance += _transactionDeltaForAccount(account.id, transaction);
+        }
       }
       return balance;
     }

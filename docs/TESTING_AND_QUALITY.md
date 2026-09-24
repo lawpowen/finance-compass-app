@@ -8,7 +8,7 @@
 - 验证首页、Service Worker、`sqlite3.wasm`、`drift_worker.js`、WASM MIME、CSP 与缓存响应头，并检查容器无额外 capability、根文件系统不可写。
 - 测试必须使用独立 Compose project name，完成后停止并删除临时容器、网络和测试目录，不影响 homelab 既有服务。
 
-自托管 Web/PWA 发布门禁必须完成 `tool/build_web.ps1` 或 `tool/build_web.sh`，并检查 `build/web` 内存在 `sqlite3.wasm`、`drift_worker.js`、`service-worker.js`、`pwa_bootstrap.js`、manifest 和 index。静态容器应验证 `sqlite3.wasm` 为 `application/wasm`，入口/Worker 禁止长期缓存，Compose 默认只绑定 loopback，且 runtime ZIP 内的 Dockerfile、Compose、`webroot`、Windows PowerShell、Ubuntu/macOS shell 启动器路径相互匹配。
+自托管 Web/PWA 发布门禁必须完成 `tool/build_web.ps1` 或 `tool/build_web.sh` 并以 `Web build complete` 结束。脚本自动检查：必需文件（含 `flutter_bootstrap.js`、`main.dart.js`、`canvaskit/chromium/`）、`service-worker.js` 的 `CORE` 每一项都存在、`sqlite3.wasm` 锁定哈希、`drift_worker.js` 与刚编译版本一致、`web/fonts/SHA256SUMS` 哈希及 `main.dart.js` 中 Roboto/Noto Sans SC 回退 URL 全部收录、bootstrap 含 `"useLocalCanvasKit":true` 与 `fontFallbackBaseUrl: 'fonts/'` 且不含 Service Worker 设置、无 `*.symbols`/`*.map`/`*.deps`/`.last_build_id`/Worker 源码；任一失败会删除 `build/web`。`test/web_delivery_contract_test.dart` 在源码层固定这些契约。此外必须在真实浏览器、同 Caddy CSP 下确认界面文字渲染、Service Worker 控制页面、重载后注册仍是 `service-worker.js`、离线重载仍能显示。静态容器应验证 `sqlite3.wasm` 为 `application/wasm`，入口/Worker 禁止长期缓存，Compose 默认只绑定 loopback，且 runtime ZIP 内的 Dockerfile、Compose、`webroot`、Windows PowerShell、Ubuntu/macOS shell 启动器路径相互匹配。
 
 Web 回归至少覆盖：浏览器 FilePicker bytes 导入预览/替换路径、JSON 导出下载、在 HTTPS Safari 添加到主屏幕和 Android Chrome PWA 安装（实机）、首次完整加载后离线重开、不同 profile 之间不自动同步、清除站点数据后仅能依赖 JSON 恢复。Safari/Android 的安装入口为平台行为，自动化构建不能替代真机验收。
 
@@ -47,6 +47,13 @@ Web 回归至少覆盖：浏览器 FilePicker bytes 导入预览/替换路径、
 - 银行结单快照回归：验证完成对账后传入的权威账单金额覆盖交易合计与还款下限；未提供快照时保持原推算，损坏 meta 必须安全回退。历史快照不得改变当前欠款和额度使用。
 - 已确定账单与银行明细回归：未来 `actual` 分期按各月结算日形成可浏览账单并显示对应还款日，未来 `planned` 完全排除；UOB 样本以账单截止余额纳入消费、还款和退款，防止使用毛消费额替代待还金额；本期已还清且存在超额还款时，下期已使用额度扣除可证明的超额部分，同时保留下一结算日前未来已确定消费。
 - 投资市值入口回归：在 390×844 逻辑像素验证投资账户详情可打开市值更新表单、账户被锁定为当前账户，长账户名不产生横向溢出。
+- 投资成本回归：验证首张快照成本基线、后续投入和取出按截止日计算剩余成本；报表、账户卡片和详情页均以剩余成本计算未实现盈亏，取出不得制造虚假亏损，首张快照之前的取出不得重复扣除；`planned` 不参与实际投入与取出。
+- 快照余额回归（`snapshot_balance_rebuild_test.dart`，17 项）：全部以内存 Drift 数据库真实写入，并通过重新 `FinanceRepository.load` 读取持久化值。多数用例额外断言远期 `accountBalanceAt` 等于 `current_balance`。
+  - 删除：删除唯一快照（无交易恢复 1000；含转入与收入时按期初余额重放为 1400）；无转账时删除最新快照（1320）或历史快照（1570 不变）；1 月 1000、3 月 1200 快照后补录 2 月转入 100，删除 3 月快照被 `SnapshotBalanceAmbiguityException` 拒绝，重新加载后两张快照、3 月市值 1300 与余额 1300 均不变；仅有 `planned` 转账时不拒绝。
+  - 编辑：市值 1000→1050 且其后有 100 收入时为 1150；有转账时原地编辑最新快照（1170）；把最新快照移到收入之后（1050）；改变最新快照被拒绝且数据不变；改换账户抛 `ArgumentError`。
+  - 新增：回溯日期快照不覆盖锚点；已有 3 月转入 100 后插入市值 1050 的 2 月快照，存储市值为 1150、余额为 1180，2 月底读取 1050、3 月底 1180，`planned` 转账不折入。
+  - 快照之后读取：1 月 10 日快照 1000、1 月 20 日收入 100、2 月收入 50 时，1 月 31 日为 1100、1 月 15 日为 1000（不是 950）；含转账的序列逐日核对，追溯终值与余额一致；`AccountService` 结果与 Repository 一致。
+  - 首张快照之前：1 月底为 1050 / 0 / 0，而非 1200 / 900；`AssetService` 与 `AccountService` 镜像一致。
 - 状态与时间口径回归：验证 EPF/退休账户默认余额与流入只到当前月、未来 `actual` 不提前进入普通账户默认现状、`planned` 不进入实际余额；信用卡账单不读取未来交易，但当前欠款和额度使用包含未来 `actual`、排除未来 `planned`；预测从今天余额起算并只累计一次未来实际/预计交易。
 - 交易批量删除回归：在 390×844 视口长按第一笔、点击追加第二笔、确认删除，验证两行立即消失、成功提示出现且账户余额恢复；数据库层另以一个有效 ID 和一个失效 ID 验证整批回滚。
 - 交易编辑删除与有符号金额回归：编辑页滚动至删除入口后分别验证取消与确认；确认结果只包含待删除 ID。金额用例覆盖 `0.00` 与负数保存，并在 Repository 层验证零金额无余额影响、负支出/负转账的代数方向及删除后的余额完全恢复。
@@ -60,10 +67,13 @@ Web 回归至少覆盖：浏览器 FilePicker bytes 导入预览/替换路径、
 ## 完成门禁
 
 ```powershell
+dart format --output=none --set-exit-if-changed lib test
 flutter analyze
 flutter test
 flutter build windows --debug
 ```
+
+格式检查退出码非 0 时视为未通过：只对报告的文件执行 `dart format`，确认差异仅为空白后重跑全部检查，与 [发布流程](RELEASE_WORKFLOW.md) 的源码检查一致。
 
 发布前还需执行 Android release build、实体 Android 设备触控/返回键测试，以及导入真实 v1/v6 备份的人工回归。
 
@@ -148,6 +158,24 @@ flutter build windows --debug
 - Android：核对 `com.financecompass.app`、`0.8.0`、versionCode `41`、三种 ABI、APK Signature Scheme v2、单一签名证书和内置支持收款码。
 - Windows：Release 构建成功；主程序元数据为 `Finance Compass 0.8.0+41`；安装程序由 Inno Setup 6.7.3 编译成功；便携 ZIP 包含主程序、运行库、插件、`data/` 和支持收款码。
 - 发布文件：安装程序、便携 ZIP、Android APK 的 SHA-256 已生成并从 `SHA256SUMS.txt` 逐项回算通过。详细证据见 [v0.8.0 公开发布 QA](public-release-qa-v0.8.0-2026-08-04.md)。
+
+## 2026-09-24 v0.9.1 发布准备源码检查（尚未发布）
+
+- 格式：首次检查有 6 个文件不合规；格式化后，去除空白的内容比对确认与格式化前一致，重跑 `dart format --output=none --set-exit-if-changed lib test` 退出码 0（141 个文件，0 个需改）。
+- 全量测试：131 项通过，2 项按设计跳过。
+- 静态分析：`flutter analyze --no-fatal-infos --no-fatal-warnings` 退出码 0，无编译错误；保留 106 项既有问题（3 项 warning、103 项 info）。
+- 未执行：Android/Windows/自托管发布构建、签名核对、SHA-256 与实体设备回归，这些仍按 [发布流程](RELEASE_WORKFLOW.md) 待办。详见 [变更记录](CHANGELOG.md)。
+
+## 2026-09-24 v0.9.1 自托管 Web 构建交付契约验证（尚未发布）
+
+- 复现：`build/web/.last_build_id` 指向经 junction 路径（`C:\Users\pwlaw\Documents\Codex\…`）的旧构建配置时，从 `D:\Codex\Projects\…` 直接运行 `flutter build web` 打印 `Built build\web`，文件数却由 44 降为 24，`manifest.json` 等被删；清空输出目录后仍经 junction 构建时，`main.dart.js`、`assets/`、`canvaskit/` 仍缺失（stamp 中混有 C:/D: 两种路径）。修复后两种路径均产出相同的 142 个文件。
+- Windows：`tool/build_web.ps1` 分别经 junction 路径与物理路径运行，均以 `142 files, 36 precache entries and 102 fallback fonts verified` 结束；`sqlite3.wasm` 为 730,989 bytes、SHA-256 `922A76B1…52117`，与锁定一致；无 `*.symbols`、`*.map`、`*.deps`、`.last_build_id`、`drift_worker.dart`。
+- Shell：Git Bash（`MSYS2_ARG_CONV_EXCL='*'`）运行 `tool/build_web.sh`，结果同为 142 个文件、36 项预缓存、102 个字体。Docker 构建未在本机执行（无 Docker），其 `RUN` 与该脚本相同。
+- 负向：向 `CORE` 加入不存在的 `./not-shipped.js`、从 `SHA256SUMS` 删除一行、移除 Roboto 家族，以及伪造 Flutter 写入部分输出后退出 1，均按预期失败；失败后 `build/web` 已删除。
+- 浏览器：Edge headless，按 Caddy CSP 提供 `build/web`：首次加载、重载与离线重载均由 `service-worker.js` 控制，缓存 138 项（36 项 `CORE` + 102 个字体），无 CSP/字体错误、无第三方请求，中文界面文字完整显示（离线重载亦然）。修复字体前同样环境下界面完全没有文字，并出现约 2 万次被 CSP 拒绝的 `fonts.gstatic.com` 请求。
+- 打包：`package_selfhost.ps1 -SkipWebBuild` 输出到临时目录，ZIP 条目均为 `/` 分隔、无 sidecar，`webroot` 与 `build/web` 文件清单一致。
+- 测试：`web_delivery_contract_test.dart` 8 项通过；全量 `flutter test` 135 项通过、2 项按设计跳过；`dart format` 无需修改；`flutter analyze` 无 error，保留 106 项既有问题（3 项 warning、103 项 info，均不在本次修改文件中）。
+- 更正：2026-08-04 v0.9.0 记录中“输出不含 `gstatic.com`”并不准确——旧 PowerShell 检查对 `Get-Content -Raw` 多文件返回的数组调用 `.Contains()`，实际从未比对子字符串；`flutter.js` 始终包含 gstatic CanvasKit URL，`main.dart.js` 始终包含字体回退地址，同一检查在 shell/Docker 中会必然失败。
 
 ## UI 质量
 

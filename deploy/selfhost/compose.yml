@@ -3,7 +3,7 @@ services:
     build:
       context: ../..
       dockerfile: deploy/selfhost/Dockerfile
-    image: finance-compass-web:0.9.0
+    image: finance-compass-web:0.9.1
     restart: unless-stopped
     # Safe default: reachable only from the host. Put Caddy/Nginx/Tailscale in
     # front of this port before exposing it to any network.

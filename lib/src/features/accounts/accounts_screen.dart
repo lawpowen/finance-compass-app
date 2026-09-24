@@ -422,6 +422,11 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
                               currency: account.currency,
                               displayedMarketValue: displayedMarketValue,
                               displayedCostBasis: displayedCostBasis,
+                              remainingCostBasis:
+                                  repository.remainingCostBasisForAccount(
+                                account.id,
+                                upToDate: displayCutoff,
+                              ),
                               displayedCashBalance: displayedCashBalance,
                               flowSummary: displayedFlow,
                               trendValues: repository
@@ -684,7 +689,7 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  '说明：系统以当前余额或最近资产快照为锚点，扣回截止日之后已经记录的交易，得到该时间点余额。',
+                  '说明：无资产快照时，系统以当前余额为锚点，扣回截止日之后已经记录的交易；有资产快照时，以截止日前最近一张快照为锚点，加上快照之后到截止日的收入与支出，并扣回截止日之后已并入快照市值的转账与调整；截止日早于首张资产快照时，改为从账户期初余额累加截止日及之前的交易。',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
                 const SizedBox(height: 12),
@@ -692,7 +697,7 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
                 const SizedBox(height: 8),
                 if (trace.entries.isEmpty)
                   Text(
-                    '没有截止日之后影响此账户的交易。',
+                    '没有需要调整此账户余额的交易。',
                     style: Theme.of(context).textTheme.bodyMedium,
                   )
                 else
@@ -1069,6 +1074,7 @@ class _SnapshotSummary extends StatelessWidget {
     required this.flowSummary,
     required this.displayedMarketValue,
     required this.displayedCostBasis,
+    required this.remainingCostBasis,
     required this.displayedCashBalance,
     required this.trendValues,
   });
@@ -1078,14 +1084,12 @@ class _SnapshotSummary extends StatelessWidget {
   final InvestmentFlowSummary flowSummary;
   final double displayedMarketValue;
   final double displayedCostBasis;
+  final double remainingCostBasis;
   final double displayedCashBalance;
   final List<double> trendValues;
 
   @override
   Widget build(BuildContext context) {
-    final remainingCostBasis = (displayedCostBasis - flowSummary.withdrawal)
-        .clamp(0, double.infinity)
-        .toDouble();
     final pnl = displayedMarketValue - remainingCostBasis;
     final ratio = remainingCostBasis == 0 ? 0.0 : pnl / remainingCostBasis;
     final pnlColor =

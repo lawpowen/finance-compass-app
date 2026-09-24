@@ -190,25 +190,66 @@ class AccountService {
       }
     }
 
-    final sourceDate = latestSnapshotBeforeDate?.snapshotDate;
+    final openingLedger =
+        latestSnapshotBeforeDate == null && accountSnapshots.isNotEmpty;
+    if (openingLedger) {
+      // 首张快照之前：从期初余额正向累加截止日及之前的交易。
+      var runningBalance = account.initialBalance;
+      final traceEntries = <AccountBalanceTraceEntry>[];
+      final applyingTransactions = _transactions
+          .where((transaction) =>
+              !transaction.transactionDate.isAfter(cutoffDate) &&
+              _transactionDeltaForAccount(account.id, transaction) != 0)
+          .toList()
+        ..sort((a, b) => a.transactionDate.compareTo(b.transactionDate));
+      for (final transaction in applyingTransactions) {
+        final appliedDelta =
+            _transactionDeltaForAccount(account.id, transaction);
+        runningBalance += appliedDelta;
+        traceEntries.add(
+          AccountBalanceTraceEntry(
+            transactionId: transaction.id,
+            date: transaction.transactionDate,
+            title: _traceTitleForTransaction(transaction),
+            subtitle: _traceSubtitleForTransaction(account.id, transaction),
+            delta: appliedDelta,
+            runningBalance: runningBalance,
+          ),
+        );
+      }
+      return AccountBalanceTrace(
+        account: account,
+        cutoffDate: cutoffDate,
+        sourceLabel: '账户期初余额（首张资产快照之前）',
+        sourceAmount: account.initialBalance,
+        entries: traceEntries,
+        endingBalance: runningBalance,
+      );
+    }
+
     var runningBalance =
         latestSnapshotBeforeDate?.marketValue ?? account.currentBalance;
     final traceEntries = <AccountBalanceTraceEntry>[];
-    final reversingTransactions = _transactions.where((transaction) {
-      if (!transaction.transactionDate.isAfter(cutoffDate)) {
-        return false;
-      }
-      if (sourceDate != null &&
-          !transaction.transactionDate.isAfter(sourceDate)) {
-        return false;
-      }
-      return _transactionDeltaForAccount(account.id, transaction) != 0;
-    }).toList()
-      ..sort((a, b) => b.transactionDate.compareTo(a.transactionDate));
+    final adjustments = latestSnapshotBeforeDate != null
+        ? _snapshotAnchoredDeltas(
+            account.id,
+            latestSnapshotBeforeDate,
+            cutoffDate,
+          )
+        : (_transactions
+                .where((transaction) =>
+                    transaction.transactionDate.isAfter(cutoffDate) &&
+                    _transactionDeltaForAccount(account.id, transaction) != 0)
+                .toList()
+              ..sort((a, b) => b.transactionDate.compareTo(a.transactionDate)))
+            .map((transaction) => (
+                  transaction: transaction,
+                  appliedDelta:
+                      -_transactionDeltaForAccount(account.id, transaction),
+                ))
+            .toList();
 
-    for (final transaction in reversingTransactions) {
-      final appliedDelta =
-          -_transactionDeltaForAccount(account.id, transaction);
+    for (final (:transaction, :appliedDelta) in adjustments) {
       runningBalance += appliedDelta;
       traceEntries.add(
         AccountBalanceTraceEntry(
@@ -285,6 +326,7 @@ class AccountService {
   /// 计算账户在 [date] 的余额（账户原币）。
   ///
   /// 优先使用最近快照，然后叠加其后交易影响；
+  /// 早于首张快照时，从期初余额正向累加截止日及之前的交易；
   /// 若无快照，则从当前余额反向扣除。
   double _accountBalanceAt(Account account, DateTime date) {
     final accountSnapshots = _snapshots
@@ -300,14 +342,20 @@ class AccountService {
     }
 
     if (latestSnapshotBeforeDate != null) {
-      var balance = latestSnapshotBeforeDate.marketValue;
+      return latestSnapshotBeforeDate.marketValue +
+          _snapshotAnchoredDeltas(
+            account.id,
+            latestSnapshotBeforeDate,
+            date,
+          ).fold(0.0, (sum, item) => sum + item.appliedDelta);
+    }
+
+    if (accountSnapshots.isNotEmpty) {
+      var balance = account.initialBalance;
       for (final transaction in _transactions) {
-        if (!transaction.transactionDate.isAfter(date) ||
-            !transaction.transactionDate
-                .isAfter(latestSnapshotBeforeDate.snapshotDate)) {
-          continue;
+        if (!transaction.transactionDate.isAfter(date)) {
+          balance += _transactionDeltaForAccount(account.id, transaction);
         }
-        balance -= _transactionDeltaForAccount(account.id, transaction);
       }
       return balance;
     }
@@ -319,6 +367,42 @@ class AccountService {
       }
     }
     return balance;
+  }
+
+  /// 从快照市值到 [date] 余额的逐笔调整：转账/调整已并入快照市值，
+  /// 截止日之后的需扣回（新到旧）；收入/支出从不并入，快照之后到截止日的
+  /// 需加上（旧到新）。与 Repository 同名逻辑保持一致。
+  List<({FinanceTransaction transaction, double appliedDelta})>
+      _snapshotAnchoredDeltas(
+    String accountId,
+    AssetSnapshot anchor,
+    DateTime date,
+  ) {
+    final forward = <({FinanceTransaction transaction, double appliedDelta})>[];
+    final reversed =
+        <({FinanceTransaction transaction, double appliedDelta})>[];
+    for (final transaction in _transactions) {
+      if (!transaction.transactionDate.isAfter(anchor.snapshotDate)) {
+        continue;
+      }
+      final delta = _transactionDeltaForAccount(accountId, transaction);
+      if (delta == 0) {
+        continue;
+      }
+      final afterDate = transaction.transactionDate.isAfter(date);
+      final folded = transaction.type == TransactionType.transfer ||
+          transaction.type == TransactionType.adjustment;
+      if (folded && afterDate) {
+        reversed.add((transaction: transaction, appliedDelta: -delta));
+      } else if (!folded && !afterDate) {
+        forward.add((transaction: transaction, appliedDelta: delta));
+      }
+    }
+    forward.sort((a, b) =>
+        a.transaction.transactionDate.compareTo(b.transaction.transactionDate));
+    reversed.sort((a, b) =>
+        b.transaction.transactionDate.compareTo(a.transaction.transactionDate));
+    return [...forward, ...reversed];
   }
 
   /// 单笔交易对指定账户的余额影响。
