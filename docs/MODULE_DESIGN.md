@@ -6,7 +6,7 @@
 
 `core/platform/local_file_io.dart` 对文件路径操作使用条件导入。原生目标可建立导入前 JSON 恢复点；浏览器目标不伪造隐藏服务器文件。浏览器导入依赖 `FilePicker` bytes，并在覆盖前由 UI 预览；用户必须主动下载当前 JSON 作为恢复点。
 
-`deploy/selfhost/` 只包含构建/静态托管边界：Docker 多阶段构建会编译 Flutter Web、Drift Worker，再由 Caddy 送出文件；发行 ZIP 使用已构建的 `webroot` 与 runtime-only Dockerfile，因此解压后无需原始 Flutter 源码。访问控制和 TLS 是外层反向代理责任。
+`deploy/selfhost/` 只包含构建/静态托管边界：Docker 多阶段构建运行与本机相同的 `tool/build_web.sh`（编译 Drift Worker 与 Flutter Web 并校验交付契约），再由 Caddy 送出文件；`web/flutter_bootstrap.js` 决定引擎加载配置（不注册 Flutter 的 Service Worker 存根、回退字体走同源 `fonts/`），`web/service-worker.js` 是唯一应用 Worker；发行 ZIP 使用已构建的 `webroot` 与 runtime-only Dockerfile，因此解压后无需原始 Flutter 源码。访问控制和 TLS 是外层反向代理责任。
 
 ## `core/database`
 
@@ -47,6 +47,12 @@ Settings public support：右上帮助入口打开 `FinanceCompassAboutPage`，�
 页面失败时显示 provider 错误；表单验证失败不得写入数据库。删除账户/类别时，如存在交易、快照、预算、模板或周期规则引用，必须拒绝删除。
 
 ## 账户统计截止与交互提示
+
+投资与退休账户的资产卡片、账户详情和报表调用 `FinanceRepository.remainingCostBasisForAccount` 计算未实现盈亏；首张快照表单从实际交易净投入预填可编辑成本基线。`AssetService` 保持相同成本计算契约。取出后的报表不得继续使用未扣取出的累计成本作分母；历史截止仍只读取截止日前的实际交易。缺少正确历史成本基线时，页面只能按已录入数据计算，用户可编辑首张快照补正。
+
+`AppDatabase` 的快照增、改、删在事务内按“是否影响最新快照”分派物化余额处理（决策表见 `DATA_DESIGN.md`“快照写入后的物化余额”）。辅助方法 `_actualFlowsForAccount`、`_incomeExpenseAfter`、`_isLatestAmong`、`_latestRow`、`_writeCurrentBalance` 均为私有。无法无损处理的情况抛出公开异常 `SnapshotBalanceAmbiguityException`：删除最新快照且仍有较早快照，或编辑改变了“最新快照”，并且账户存在实际转账/调整。事务随之回滚。账户详情页现有的 `try/catch` 会以“删除失败：…”或“保存失败：…”显示该中文消息，其中建议改为编辑该快照的市值。改换快照所属账户以 `ArgumentError` 拒绝。
+
+读取侧：`FinanceRepository._snapshotAnchoredAdjustments` 生成从快照市值到截止日余额的逐笔调整，包括快照之后到截止日的收入/支出（正序），以及截止日之后已折入的转账/调整（倒序扣回）。`_accountBalanceAt` 与 `accountBalanceTrace` 共用这份列表，保证追溯终值等于显示余额。`AccountService._snapshotAnchoredDeltas` 与 `AssetService._accountBalanceAt` 使用同一规则。“已有快照但截止日早于首张快照”的区间改用期初余额与此前账本，`costBasisForAccount`（Repository 与 `AssetService`）在该区间只返回实际投入。账户页“数字追溯”对话框的说明文字覆盖三种锚点：无快照、快照后、首张快照前。
 
 `AccountsV2Screen` 在内存中保存所选统计月份，以月末生成统一 `cutoffDate`；可选范围从最早交易、资产快照或贷款追踪月份连续列到当前月。现金、投资、退休、信用卡和贷款汇总都按该截止日期计算，打开 `AccountDetailScreen`、`CreditCardDetailScreen` 或 `LoanDetailScreen` 时通过可空 `cutoffDate` 继续传递。历史详情显示截止提示并关闭全部写入入口，返回本月后恢复实时状态与操作。
 

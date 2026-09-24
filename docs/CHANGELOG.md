@@ -1,5 +1,88 @@
 # 变更记录
 
+## 2026-09-24
+
+### Finance Compass v0.9.1 补丁版本发布准备（尚未发布）
+
+- 行为：版本号改为 `0.9.1+43`，设置页“关于与支持”显示 `版本 0.9.1+43 · 本地优先的个人财务罗盘`（修正了 `·` 与“本地”之间缺少的空格）。本补丁包含下面两项 2026-09-24 修复：投资快照成本与取出口径，以及快照写入的余额维护与历史读取。README 与 `SELF_HOSTING.md` 的六个下载直链已指向 `v0.9.1` 资产名。**尚未创建 `v0.9.1` 标签或 GitHub Release，也未上传产物**，因此这些直链在发布前会返回 404。上一个已公开发布的版本仍是 `v0.9.0`。
+- 设计：`pubspec.yaml` 仍是版本来源，Android `versionName`/`versionCode` 由 Flutter 从中读取（`0.9.1` / `43`）。自托管 Service Worker 的 `CACHE_NAME` 由 `finance-compass-shell-v0.9.0.1` 改为 `finance-compass-shell-v0.9.1`，否则缓存优先的已安装 PWA 会继续使用旧 `main.dart.js`，拿不到本次修复。两份 Compose 的本地镜像标签改为 `finance-compass-web:0.9.1`。`tool/package_selfhost.ps1` 默认 `-Version 0.9.1`，输出到 `artifacts/release/v0.9.1`。
+- 兼容性：无 schema、迁移、JSON 备份格式、权限或应用 ID 变化。`0.9.0` 的备份可直接导入。Android 以更高的 versionCode `43` 和同一发布密钥覆盖升级；Windows 安装器使用固定 `AppId` 原地升级。两项行为修复会改变部分读数：未实现盈亏按剩余成本计算，以及快照后/首张快照前的历史余额。快照编辑/删除在有实际转账的账户中可能以 `SnapshotBalanceAmbiguityException` 拒绝。旧逻辑写错的 `current_balance` 不会被批量更正。回滚到 `v0.9.0` 不需要数据迁移，但会恢复旧的计算口径。
+- 安全与运维：未改动签名配置、`android/key.properties`、发布密钥或任何用户数据。PWA 首次升级时，旧 Worker 可能仍会接管一次页面，关闭标签页重开即可换用新 Worker；账本存放在 Drift 浏览器存储中，不受缓存更换影响。本机已按 `RELEASE_WORKFLOW.md` 构建、验证签名并复核六项 SHA-256；GitHub 资产上传仍待执行。
+- 文档：更新 README（当前版本与六个直链）、`SELF_HOSTING.md`（当前版本、直链、打包命令、Service Worker 缓存更换规则）、`RELEASE_WORKFLOW.md`（当前版本、改版本同步清单，原先硬编码为 `0.8.0`/`41` 的 APK 检查改为对照 `pubspec.yaml`，以及 `SHA256SUMS.txt` 的发布契约、产物检查与上传条目由三个二进制产物改为六个：Android、Windows 两个、自托管三个）、`docs/README.md`、`SECURITY_AND_OPERATIONS.md`、`TESTING_AND_QUALITY.md`（完成门禁加入格式检查，并记录 v0.9.1 源码检查结果）、[v0.9.1 发布 QA](public-release-qa-v0.9.1-2026-09-24.md) 与本记录。v0.9.0 的历史段落与 `public-release-qa-v0.9.0-2026-08-04.md` 保持原样。
+- 验证：版本字符串全仓检索确认，剩余的 `0.9.0` 引用都属于历史描述。2026-09-24 首次复验时 `dart format --output=none --set-exit-if-changed lib test` 失败（退出码 1），141 个文件中有 6 个未按格式化规则排版：`lib/src/core/data/finance_repository.dart`、`lib/src/core/database/app_database.dart`、`lib/src/core/services/account_service.dart`、`lib/src/features/accounts/asset_snapshot_form_dialog.dart`、`lib/src/features/reports/reports_screen.dart`、`test/snapshot_balance_rebuild_test.dart`。随后只对这 6 个文件执行 `dart format`，并在格式化前留存副本比对：去除全部空白字符后，6 个文件与格式化前逐字节一致，说明只改了换行和缩进，没有改动逻辑、标记或尾随逗号。格式化后在同一工作树重跑三项检查，全部通过：`dart format --output=none --set-exit-if-changed lib test` 退出码 0（`Formatted 141 files (0 changed)`）；`flutter test` 为 131 项通过、2 项按设计跳过（`All tests passed!`，退出码 0）；`flutter analyze --no-fatal-infos --no-fatal-warnings` 退出码 0，无编译错误（0 项 error），报告 106 项问题（3 项 warning、103 项 info；warning 包括 `transactions_v2_screen.dart` 未使用的 `_referenceTransactions` 与 `ai_analysis_integration_test.dart` 未使用的局部变量 `snapshots`）。随后 Web 交付修复后全量测试为 135 项通过、2 项跳过；六项正式包已构建并逐项核对 `SHA256SUMS.txt`，详见 [v0.9.1 发布 QA](public-release-qa-v0.9.1-2026-09-24.md)。
+- 限制：源码与本机发布资产检查已完成；格式、测试与静态分析三项源码检查已通过，但 106 项既有 lint info/warning 未在本补丁中清理。六项发布产物已构建，Android 发布签名与 v0.9.0 一致；GitHub 标签、Release 与资产上传仍待执行。Docker 与真机验收范围见 [发布 QA](public-release-qa-v0.9.1-2026-09-24.md)。两项修复的已知限制见下面的条目。iOS Safari 与 Android Chrome 的 HTTPS 安装和系统存储回收仍需目标设备人工验收。
+
+### 自托管 Web 构建交付契约修复（Flutter 删除刚写入的输出、Worker 存根覆盖、界面无文字）
+
+- 行为：
+  - `tool/build_web.ps1` 在 Windows 上打印 `Built build\web` 后因缺少 `manifest.json` 失败，`build/web` 只剩 22 个文件。根因是 Flutter 构建系统按路径字符串追踪输出。`C:\Users\pwlaw\Documents\Codex` 是指向 `D:\Codex\Projects` 的 junction，经不同路径构建会得到不同配置哈希；`build/web/.last_build_id` 指向旧配置时，Flutter 在构建完成后删除旧 `outputs.json` 中列出的文件，而它们正是刚写入的同一批文件。经 junction 构建时 stamp 还会混入两种路径，清空输出目录也不足以避免。
+  - 现在脚本先解析到物理路径（PowerShell 解析 junction/符号链接，shell 用 `pwd -P`），并总是清空 `build/web` 再构建。
+  - Flutter 3.44 仍生成 `flutter_service_worker.js`，只是自注销存根；原 `CORE` 与两个脚本却要求它存在。更严重的是，默认 bootstrap 在已有 `service-worker.js` 注册时会把该存根注册到同一 scope，下一次访问即注销离线外壳。新增 `web/flutter_bootstrap.js`，加载时不传 Service Worker 设置；`CORE` 不再包含存根，改为补上 Chrome/Edge 实际加载的 `canvaskit/chromium/`、favicon、图标、`NOTICES`、CupertinoIcons 与字体清单。
+  - 真实浏览器验证发现，v0.9.0 起自托管 Web 在 Caddy CSP 下**完全不显示文字**：CanvasKit 从 `fonts.gstatic.com` 取 Roboto/Noto Sans SC，被 `connect-src 'self'` 拒绝，且引擎持续重试。现在 `web/fonts/` 同源提供这 102 个文件（约 2.4 MB，SIL OFL 1.1），`fontFallbackBaseUrl` 指向 `fonts/`，Service Worker 按 `fonts/SHA256SUMS` 全部预缓存，离线也能显示中文。
+  - 构建产物不再包含 CanvasKit `*.symbols`（约 9 MB 调试符号）和 `.last_build_id`；任何失败都会删除 `build/web`，避免 `package_selfhost.ps1 -SkipWebBuild` 打包半成品。
+- 设计：
+  - `deploy/selfhost/Dockerfile` 改为运行 `SKIP_PUB_GET=1 sh tool/build_web.sh`，三条构建路径使用同一份检查：必需文件、解析 `CORE` 逐项存在、`sqlite3.wasm` 锁定哈希、`drift_worker.js` 一致、字体哈希与 `main.dart.js` 回退 URL 覆盖（Roboto/Noto Sans SC 固定必需）、`useLocalCanvasKit`、bootstrap 来源、sidecar 排除。
+  - 旧 gstatic 检查被替换：PowerShell 版对数组调用 `.Contains()`，从未生效；shell/Docker 版因 `flutter.js` 始终含 CanvasKit CDN 分支而必然失败。现在要求 `"useLocalCanvasKit":true`，并只允许 `main.dart.js` 含引擎默认字体回退地址。
+  - 应用代码、数据库、JSON 格式与 Caddyfile 均未改变。
+- 安全与运维：
+  - 站点仍不向第三方发起请求。CSP 未放宽，未收录的回退字体（emoji、日/韩/繁体字体家族等）仍被拒绝，相应字符显示为方框。
+  - `web/fonts/SHA256SUMS` 与 `tool/sqlite3_wasm.lock` 一样属于供应链锁；升级 Flutter 若改变字体版本，构建会失败并列出需补的路径。
+  - 已安装 v0.9.0 PWA 的浏览器在新 `service-worker.js`（`CACHE_NAME` `finance-compass-shell-v0.9.1`）激活后换用新外壳。回滚到旧脚本会重新引入上述三个问题。
+- 文档：更新 `SELF_HOSTING.md`（交付契约、Service Worker 存根、同源字体与更新方法、Git Bash 注意事项）、`RELEASE_WORKFLOW.md`、`TESTING_AND_QUALITY.md`（门禁与本次验证，并更正 v0.9.0 记录中“输出不含 `gstatic.com`”的说法）、`SECURITY_AND_OPERATIONS.md`、`INTERFACES.md`、`MODULE_DESIGN.md`、`ARCHITECTURE.md`、`TRACEABILITY.md` 与本记录。
+- 验证：
+  - 复现：junction 构建后，从物理路径运行 `flutter build web`，文件由 44 个降为 24 个。
+  - 修复后，经 junction 与物理路径分别运行 `build_web.ps1`，以及在 Git Bash 运行 `build_web.sh`，均得到 142 个文件、36 项预缓存、102 个字体，`sqlite3.wasm` 哈希与锁定一致。
+  - 四类负向用例（多余 `CORE` 项、缺失锁定行、缺失字体家族、构建失败）均按预期失败，且失败后删除 `build/web`。
+  - Edge headless 在 Caddy CSP 下：首次加载、重载、离线重载均由 `service-worker.js` 控制，缓存 138 项，中文界面完整显示，无 CSP 错误与第三方请求。
+  - 临时目录打包的 ZIP 与 `build/web` 一致，无 sidecar。
+  - `web_delivery_contract_test.dart` 8 项通过；全量 135 项通过、2 项跳过；`dart format` 无变更；`flutter analyze` 无 error（106 项既有问题）。
+- 限制：
+  - 本机无 Docker，Dockerfile 路径未实际构建。
+  - iOS Safari/Android Chrome 的 HTTPS 安装与离线重开仍需实机验收。
+  - 未收录的文字系统与 emoji 在自托管 Web 中显示为方框。
+  - 在 Git Bash 中运行 `build_web.sh` 需设置 `MSYS2_ARG_CONV_EXCL='*'`。
+
+### 投资快照成本与取出口径修正
+
+- 行为：资产卡片、详情和报表的未实现盈亏统一按总市值减剩余成本展示；取出不再使报表虚报亏损。首张快照表单按现有实际交易净投入预填成本基线，仍可手动校正。
+- 设计：首张快照成本视为当日基线，只将其后的投入和取出用于后续成本变化；已包含在基线内的历史取出不再重复扣除。Repository 与 AssetService 使用相同规则，报表跨币种先换算主币种再汇总。
+- 安全与运维：无 schema、备份格式、权限或部署变化；既有账本不被批量改写，历史基线错误仍须手动修正。
+- 文档：更新 `SYSTEM_REQUIREMENTS.md`、`DATA_DESIGN.md`、`MODULE_DESIGN.md`、`INTERFACES.md`、`TRACEABILITY.md`、`TESTING_AND_QUALITY.md` 和根目录 `finance-app-design.md`。
+- 验证：新增投入、取出、成本基线和 `planned` 排除回归；投资成本、账户详情与余额追溯相关测试共 5 项通过。定向静态分析无编译或类型错误，保留 35 项既有 lint（含 1 项未使用元素警告）。
+- 限制：现有成本模型按取出金额减少剩余成本，不能区分取出本金和已实现收益。
+
+### 资产快照写入的余额维护、快照后历史读取与首张快照前历史读取
+
+- 行为：
+  - 删除唯一快照后，余额按期初余额加实际交易重建，不再归零。
+  - 原地编辑最新快照市值时保留其后的实际收入/支出：1000 的快照在其后有 100 收入时，改为 1050 后余额为 1150。
+  - 新增成为最新的快照时，已存在、日期晚于它的实际转账/调整会折入其市值，余额再加其后收入/支出。
+  - 回溯日期快照、非最新快照的编辑或删除，不再改动余额。
+  - 在已有实际转账/调整的账户中删除最新快照（仍有较早快照），或编辑后改变了哪张是最新快照：改为明确拒绝，以中文提示建议改为编辑快照市值，数据库不变。
+  - 快照之后某日的余额会加上快照后到当日的收入/支出，不再从快照值中扣减未来收入。
+  - 首张快照之前的余额按此前账本计算，累计成本只算实际投入，不再泄漏未来快照。
+  - “数字追溯”与显示余额同口径。
+- 设计：
+  - `AppDatabase` 按“是否影响最新快照”分派处理，并新增公开异常 `SnapshotBalanceAmbiguityException`。改换快照账户以 `ArgumentError` 拒绝。
+  - `FinanceRepository` 新增 `_snapshotAnchoredAdjustments`，供余额与追溯共用；`AccountService` 与 `AssetService` 同步。
+  - 保留 `_syncInvestmentFlowIntoSnapshot` 把转账/调整折入最新快照的既有语义。
+  - 公开方法签名不变，但快照写入可能以新异常失败，新增最新快照时存储市值可能大于录入值。
+- 安全与运维：无 schema、迁移、备份格式、权限或部署变化。增量路径不修复旧逻辑已写错的 `current_balance`，也不做批量重算。回滚只需还原代码文件。
+- 文档：更新 `SYSTEM_REQUIREMENTS.md`、`DATA_DESIGN.md`（新增折入语义根本限制、决策表、Mermaid 流程与提案设计）、`MODULE_DESIGN.md`、`INTERFACES.md`、`TESTING_AND_QUALITY.md`、`TRACEABILITY.md`。
+- 验证：
+  - `snapshot_balance_rebuild_test.dart` 17 项，全部基于真实内存数据库并重新加载。
+  - 与 `investment_cost_basis_test.dart`、`account_trace_test.dart`、`investment_market_value_entry_test.dart` 合计 22 项定向通过。
+  - 全量 `flutter test` 131 项通过、2 项按设计跳过。
+  - 定向 `flutter analyze` 仅余 1 项既有 `deprecated_member_use` info（`accounts_screen.dart:125`）。
+- 限制（未修复，根因见 `DATA_DESIGN.md`“快照市值的折入语义与根本限制”）：
+  - 系统未记录转账/调整折入了哪张快照，因此上述被拒绝的操作在有转账的账户中无法完成，用户只能编辑最新快照的市值。
+  - 以非最新快照为锚点的历史余额，仍假设转账按时间顺序录入。
+  - 旧逻辑已写错的余额不会自动更正。
+  - 最新快照之前补录的收入/支出会计入 `current_balance`，但显示余额（快照锚点）不含它们。
+  - 同一日期的多张快照先后次序不确定。
+  - 首张快照之前的历史依赖 `initial_balance` 准确；旧账户若为 0，该区间历史余额接近 0。
+  - 完整修复需要新增折入记录表（提案，未实现）。
+
 ## 2026-08-04
 
 ### 自托管 ZIP 与最小权限容器兼容修复

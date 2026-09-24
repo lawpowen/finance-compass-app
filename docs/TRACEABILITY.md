@@ -10,6 +10,8 @@
 | 可点击控件、设置行、导航箭头和表单选择器 | `INTERACTION_AUDIT.md`、`UI_REFERENCE.md`、`TESTING_AND_QUALITY.md`、根目录 `design-qa.md` |
 | `features/accounts/accounts_v2_screen.dart` 及三个账户详情的 `cutoffDate` | `SYSTEM_REQUIREMENTS.md`、`MODULE_DESIGN.md`、`DATA_DESIGN.md`、`INTERFACES.md`、`UI_REFERENCE.md`、`INTERACTION_AUDIT.md`、`TESTING_AND_QUALITY.md`、`CHANGELOG.md` |
 | `features/accounts/asset_goals_page.dart`、Repository 资产目标接口 | `SYSTEM_REQUIREMENTS.md`、`MODULE_DESIGN.md`、`DATA_DESIGN.md`、`UI_REFERENCE.md`、`TESTING_AND_QUALITY.md`、`CHANGELOG.md` |
+| `AppDatabase.insertAssetSnapshot` / `updateAssetSnapshot` / `deleteAssetSnapshot`、`SnapshotBalanceAmbiguityException`、`_syncInvestmentFlowIntoSnapshot`，Repository `_accountBalanceAt` / `_snapshotAnchoredAdjustments` / `accountBalanceTrace` / `costBasisForAccount` 及 `AssetService`/`AccountService` 同名读取，`test/snapshot_balance_rebuild_test.dart` | `SYSTEM_REQUIREMENTS.md`、`MODULE_DESIGN.md`、`DATA_DESIGN.md`、`INTERFACES.md`、`TESTING_AND_QUALITY.md`、`CHANGELOG.md` |
+| `features/accounts/asset_snapshot_form_dialog.dart`、`accounts_screen.dart`、`features/reports/reports_screen.dart` 与投资成本接口 | `SYSTEM_REQUIREMENTS.md`、`MODULE_DESIGN.md`、`DATA_DESIGN.md`、`INTERFACES.md`、`TESTING_AND_QUALITY.md`、`CHANGELOG.md` |
 | `features/accounts/credit_card_detail_screen.dart` 的专用还款流程 | `SYSTEM_REQUIREMENTS.md`、`MODULE_DESIGN.md`、`DATA_DESIGN.md`、`UI_REFERENCE.md`、`INTERACTION_AUDIT.md`、`SECURITY_AND_OPERATIONS.md`、`TESTING_AND_QUALITY.md`、`CHANGELOG.md` |
 | `features/reports/**`、`actualCashFlowSummary*`、`futureCashFlowProjection` | `SYSTEM_REQUIREMENTS.md`、`ARCHITECTURE.md`、`MODULE_DESIGN.md`、`DATA_DESIGN.md`、`INTERFACES.md`、`UI_REFERENCE.md`、`TESTING_AND_QUALITY.md`、`CHANGELOG.md` |
 | `features/transactions/transactions_v2_screen.dart` 的月度资金需求、`monthlyFundingNeedForMonth` | `README.md`、`SYSTEM_REQUIREMENTS.md`、`ARCHITECTURE.md`、`MODULE_DESIGN.md`、`INTERFACES.md`、`UI_REFERENCE.md`、`TESTING_AND_QUALITY.md`、`CHANGELOG.md` |
@@ -21,7 +23,7 @@
 | `pubspec.yaml`、Android 配置 | `ARCHITECTURE.md`、`SECURITY_AND_OPERATIONS.md`、`CHANGELOG.md` |
 | `assets/support/**`、`features/settings/settings_v2_screen.dart` 的关于与支持页 | `SYSTEM_REQUIREMENTS.md`、`MODULE_DESIGN.md`、`INTERFACES.md`、`SECURITY_AND_OPERATIONS.md`、`UI_REFERENCE.md`、`TESTING_AND_QUALITY.md`、`CHANGELOG.md`、根目录 `README.md` |
 | `packaging/**`、Windows/Android 发布配置 | `ARCHITECTURE.md`、`RELEASE_WORKFLOW.md`、`SECURITY_AND_OPERATIONS.md`、`TESTING_AND_QUALITY.md`、`CHANGELOG.md`、根目录 `README.md` |
-| `web/**`、`core/database/database_connection*`、`core/platform/local_file_io*` | `SELF_HOSTING.md`、`ARCHITECTURE.md`、`MODULE_DESIGN.md`、`INTERFACES.md`、`SECURITY_AND_OPERATIONS.md`、`TESTING_AND_QUALITY.md`、`CHANGELOG.md` |
+| `web/**`（含 `web/flutter_bootstrap.js`、`web/service-worker.js` 的 `CORE`、`web/fonts/**` 与 `SHA256SUMS`）、`core/database/database_connection*`、`core/platform/local_file_io*`、`test/web_delivery_contract_test.dart` | `SELF_HOSTING.md`、`ARCHITECTURE.md`、`MODULE_DESIGN.md`、`INTERFACES.md`、`SECURITY_AND_OPERATIONS.md`、`RELEASE_WORKFLOW.md`、`TESTING_AND_QUALITY.md`、`CHANGELOG.md` |
 | `deploy/selfhost/**`、`tool/build_web.*`、`tool/package_selfhost.ps1` | `SELF_HOSTING.md`、`ARCHITECTURE.md`、`SECURITY_AND_OPERATIONS.md`、`RELEASE_WORKFLOW.md`、`TESTING_AND_QUALITY.md`、`CHANGELOG.md`、根目录 `README.md` |
 
 任何重要变更还必须更新 `CHANGELOG.md`。未来计划不得写成当前能力。

@@ -94,17 +94,24 @@ class _AssetSnapshotFormDialogState extends State<AssetSnapshotFormDialog> {
   void initState() {
     super.initState();
     final initial = widget.initialSnapshot;
-    marketValueController =
-        TextEditingController(text: initial?.marketValue.toString() ?? '');
-    cashBalanceController =
-        TextEditingController(text: initial?.cashBalance.toString() ?? '0');
-    costBasisController =
-        TextEditingController(text: initial?.costBasis.toString() ?? '0');
-    snapshotDate = initial?.snapshotDate ?? DateTime.now();
     final investments = widget.repository.investmentAccounts();
     accountId = initial?.accountId ??
         widget.initialAccountId ??
         (investments.isNotEmpty ? investments.first.id : null);
+    snapshotDate = initial?.snapshotDate ?? DateTime.now();
+    marketValueController =
+        TextEditingController(text: initial?.marketValue.toString() ?? '');
+    cashBalanceController =
+        TextEditingController(text: initial?.cashBalance.toString() ?? '0');
+    final initialCostBasis = accountId == null
+        ? 0.0
+        : widget.repository
+            .investmentFlowSummaryForAccount(accountId!, upToDate: snapshotDate)
+            .netContribution
+            .clamp(0, double.infinity)
+            .toDouble();
+    costBasisController = TextEditingController(
+        text: (initial?.costBasis ?? initialCostBasis).toString());
     marketValueController.addListener(_refreshPreview);
     cashBalanceController.addListener(_refreshPreview);
     costBasisController.addListener(_refreshPreview);
@@ -168,8 +175,19 @@ class _AssetSnapshotFormDialogState extends State<AssetSnapshotFormDialog> {
                                 ? null
                                 : widget.repository
                                     .firstSnapshotForAccount(value);
+                            final initialCostBasis = value == null
+                                ? 0.0
+                                : widget.repository
+                                    .investmentFlowSummaryForAccount(
+                                      value,
+                                      upToDate: snapshotDate,
+                                    )
+                                    .netContribution
+                                    .clamp(0, double.infinity)
+                                    .toDouble();
                             costBasisController.text =
-                                (firstSnapshot?.costBasis ?? 0).toString();
+                                (firstSnapshot?.costBasis ?? initialCostBasis)
+                                    .toString();
                           });
                         }
                       : null,

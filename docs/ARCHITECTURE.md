@@ -9,6 +9,7 @@
 - Drift + SQLite：本地持久化，当前 schema 版本为 9
 - `file_picker`、`share_plus`：导入、导出与外部 AI 分享
 - Drift WASM + OPFS/IndexedDB：Web 的浏览器本地 SQLite；`web/sqlite3.wasm` 和编译后的 `drift_worker.js` 必须同源提供
+- Web 渲染：CanvasKit 随站点提供（`--no-web-resources-cdn`），正文回退字体 Roboto/Noto Sans SC 由 `web/fonts/` 同源提供；离线外壳由 `web/service-worker.js` 缓存，`web/flutter_bootstrap.js` 不注册 Flutter 生成的 Service Worker 存根
 
 ## 运行结构
 

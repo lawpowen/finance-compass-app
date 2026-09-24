@@ -1117,36 +1117,100 @@ class AppDatabase extends _$AppDatabase {
     });
   }
 
+  /// Inserts a snapshot and keeps `current_balance` consistent with it.
+  ///
+  /// A snapshot that becomes the latest one is a fresh observation at its
+  /// date, so actual transfers/adjustments already recorded after that date
+  /// are folded into its stored market value (the same rule
+  /// [_syncInvestmentFlowIntoSnapshot] applies to later records), and
+  /// `current_balance` becomes that value plus actual income/expense after
+  /// the date. A backdated (non-latest) snapshot leaves the balance alone.
   Future<void> insertAssetSnapshot(model.AssetSnapshot snapshot) async {
     await super.transaction(() async {
+      final others = await _snapshotRowsForAccount(snapshot.accountId);
+      final becomesLatest = _isLatestAmong(snapshot.snapshotDate, others);
+      var marketValue = snapshot.marketValue;
+      var cashBalance = snapshot.cashBalance;
+      var unrealizedPnl = snapshot.unrealizedPnl;
+      List<_AccountFlow> flows = const [];
+      if (becomesLatest) {
+        flows = await _actualFlowsForAccount(snapshot.accountId);
+        final folded = flows
+            .where((flow) =>
+                flow.foldsIntoSnapshot &&
+                flow.date.isAfter(snapshot.snapshotDate))
+            .fold(0.0, (sum, flow) => sum + flow.delta);
+        if (folded != 0) {
+          marketValue += folded;
+          cashBalance =
+              (cashBalance + folded).clamp(0, double.infinity).toDouble();
+          unrealizedPnl = marketValue - snapshot.costBasis;
+        }
+      }
+
       await into(assetSnapshots).insert(
         AssetSnapshotsCompanion.insert(
           id: snapshot.id,
           accountId: snapshot.accountId,
           snapshotDate: snapshot.snapshotDate,
-          marketValue: snapshot.marketValue,
+          marketValue: marketValue,
           costBasis: Value(snapshot.costBasis),
-          cashBalance: Value(snapshot.cashBalance),
-          unrealizedPnl: Value(snapshot.unrealizedPnl),
+          cashBalance: Value(cashBalance),
+          unrealizedPnl: Value(unrealizedPnl),
         ),
       );
 
-      await (update(accounts)
-            ..where((tbl) => tbl.id.equals(snapshot.accountId)))
-          .write(
-        AccountsCompanion(
-          currentBalance: Value(snapshot.marketValue),
-        ),
-      );
+      if (becomesLatest) {
+        await _writeCurrentBalance(
+          snapshot.accountId,
+          marketValue + _incomeExpenseAfter(flows, snapshot.snapshotDate),
+        );
+      }
     });
   }
 
+  /// Updates a snapshot in place.
+  ///
+  /// Editing the latest snapshot (it stays latest) shifts `current_balance`
+  /// by the market value change and by actual income/expense that moved
+  /// across the old/new date. Editing a non-latest snapshot that stays
+  /// non-latest leaves the balance alone. Changing *which* snapshot is latest
+  /// is refused with [SnapshotBalanceAmbiguityException] when the account has
+  /// actual transfers/adjustments, because the database does not record which
+  /// snapshot absorbed them. Moving a snapshot to another account is not
+  /// supported.
   Future<void> updateAssetSnapshot(model.AssetSnapshot snapshot) async {
     await super.transaction(() async {
+      final existing = await (select(assetSnapshots)
+            ..where((tbl) => tbl.id.equals(snapshot.id)))
+          .getSingleOrNull();
+      if (existing == null) {
+        return;
+      }
+      if (existing.accountId != snapshot.accountId) {
+        throw ArgumentError.value(
+          snapshot.accountId,
+          'snapshot.accountId',
+          '资产快照不能改换账户，请删除后在目标账户重新录入。',
+        );
+      }
+      final others = (await _snapshotRowsForAccount(snapshot.accountId))
+          .where((row) => row.id != snapshot.id)
+          .toList();
+      final wasLatest = _isLatestAmong(existing.snapshotDate, others);
+      final isLatest = _isLatestAmong(snapshot.snapshotDate, others);
+      final flows = await _actualFlowsForAccount(snapshot.accountId);
+      if (wasLatest != isLatest &&
+          flows.any((flow) => flow.foldsIntoSnapshot)) {
+        throw const SnapshotBalanceAmbiguityException(
+          '该账户已有实际转账或调整，改变“最新快照”会让余额无法可靠重建（系统没有记录这些资金流已并入哪一张快照）。'
+          '请保持该快照相对其他快照的先后顺序，只修改市值或在同一区间内调整日期。',
+        );
+      }
+
       await (update(assetSnapshots)..where((tbl) => tbl.id.equals(snapshot.id)))
           .write(
         AssetSnapshotsCompanion(
-          accountId: Value(snapshot.accountId),
           snapshotDate: Value(snapshot.snapshotDate),
           marketValue: Value(snapshot.marketValue),
           costBasis: Value(snapshot.costBasis),
@@ -1155,23 +1219,40 @@ class AppDatabase extends _$AppDatabase {
         ),
       );
 
-      final latest = await (select(assetSnapshots)
-            ..where((tbl) => tbl.accountId.equals(snapshot.accountId))
-            ..orderBy([(tbl) => OrderingTerm.desc(tbl.snapshotDate)])
-            ..limit(1))
-          .getSingleOrNull();
-      if (latest != null) {
-        await (update(accounts)
+      if (wasLatest && isLatest) {
+        final account = await (select(accounts)
               ..where((tbl) => tbl.id.equals(snapshot.accountId)))
-            .write(
-          AccountsCompanion(
-            currentBalance: Value(latest.marketValue),
-          ),
+            .getSingle();
+        await _writeCurrentBalance(
+          snapshot.accountId,
+          account.currentBalance +
+              (snapshot.marketValue - existing.marketValue) +
+              _incomeExpenseAfter(flows, snapshot.snapshotDate) -
+              _incomeExpenseAfter(flows, existing.snapshotDate),
+        );
+      } else if (wasLatest != isLatest) {
+        // Only reachable without transfers/adjustments, so no snapshot holds
+        // folded flows and the new latest value is a plain observation.
+        final anchorValue =
+            isLatest ? snapshot.marketValue : _latestRow(others).marketValue;
+        final anchorDate =
+            isLatest ? snapshot.snapshotDate : _latestRow(others).snapshotDate;
+        await _writeCurrentBalance(
+          snapshot.accountId,
+          anchorValue + _incomeExpenseAfter(flows, anchorDate),
         );
       }
     });
   }
 
+  /// Deletes a snapshot and rebuilds `current_balance` where that is lossless.
+  ///
+  /// Deleting a non-latest snapshot leaves the balance alone. Deleting the
+  /// only snapshot rebuilds the ledger from `initial_balance` plus every
+  /// actual transaction. Deleting the latest snapshot while older ones
+  /// remain is refused with [SnapshotBalanceAmbiguityException] when the
+  /// account has actual transfers/adjustments (see [updateAssetSnapshot]);
+  /// otherwise the previous snapshot becomes the anchor.
   Future<void> deleteAssetSnapshot(String snapshotId) async {
     await super.transaction(() async {
       final existing = await (select(assetSnapshots)
@@ -1181,20 +1262,125 @@ class AppDatabase extends _$AppDatabase {
         return;
       }
       final accountId = existing.accountId;
+      final others = (await _snapshotRowsForAccount(accountId))
+          .where((row) => row.id != snapshotId)
+          .toList();
+      final wasLatest = _isLatestAmong(existing.snapshotDate, others);
+      final flows = await _actualFlowsForAccount(accountId);
+      if (others.isNotEmpty &&
+          wasLatest &&
+          flows.any((flow) => flow.foldsIntoSnapshot)) {
+        throw const SnapshotBalanceAmbiguityException(
+          '该账户已有实际转账或调整，删除最新快照后无法确定较早快照是否已包含这些资金流，为避免错账已阻止删除。'
+          '请改为编辑这张快照的市值。',
+        );
+      }
+
       await (delete(assetSnapshots)..where((tbl) => tbl.id.equals(snapshotId)))
           .go();
 
-      final latest = await (select(assetSnapshots)
-            ..where((tbl) => tbl.accountId.equals(accountId))
-            ..orderBy([(tbl) => OrderingTerm.desc(tbl.snapshotDate)])
-            ..limit(1))
-          .getSingleOrNull();
-      await (update(accounts)..where((tbl) => tbl.id.equals(accountId))).write(
-        AccountsCompanion(
-          currentBalance: Value(latest?.marketValue ?? 0),
-        ),
-      );
+      if (others.isEmpty) {
+        final account = await (select(accounts)
+              ..where((tbl) => tbl.id.equals(accountId)))
+            .getSingle();
+        await _writeCurrentBalance(
+          accountId,
+          flows.fold(
+            account.initialBalance,
+            (sum, flow) => sum + flow.delta,
+          ),
+        );
+      } else if (wasLatest) {
+        final anchor = _latestRow(others);
+        await _writeCurrentBalance(
+          accountId,
+          anchor.marketValue + _incomeExpenseAfter(flows, anchor.snapshotDate),
+        );
+      }
     });
+  }
+
+  Future<List<AssetSnapshot>> _snapshotRowsForAccount(String accountId) {
+    return (select(assetSnapshots)
+          ..where((tbl) => tbl.accountId.equals(accountId)))
+        .get();
+  }
+
+  /// Whether a snapshot dated [date] is (or ties) the latest among [others].
+  bool _isLatestAmong(DateTime date, List<AssetSnapshot> others) {
+    return others.every((row) => !date.isBefore(row.snapshotDate));
+  }
+
+  AssetSnapshot _latestRow(List<AssetSnapshot> rows) {
+    return rows.reduce(
+      (latest, row) =>
+          row.snapshotDate.isAfter(latest.snapshotDate) ? row : latest,
+    );
+  }
+
+  /// Signed balance effect of every actual (non-planned) transaction on
+  /// [accountId].
+  Future<List<_AccountFlow>> _actualFlowsForAccount(String accountId) async {
+    final rows = await (select(transactions)
+          ..where((tbl) =>
+              tbl.accountId.equals(accountId) |
+              tbl.toAccountId.equals(accountId)))
+        .get();
+    final flows = <_AccountFlow>[];
+    for (final row in rows) {
+      if (row.status == model.TransactionStatus.planned.name) {
+        continue;
+      }
+      final type = enumByName(model.TransactionType.values, row.type);
+      var delta = 0.0;
+      switch (type) {
+        case model.TransactionType.income:
+        case model.TransactionType.adjustment:
+          delta = row.accountId == accountId ? row.amount : 0;
+        case model.TransactionType.expense:
+          delta = row.accountId == accountId ? -row.amount : 0;
+        case model.TransactionType.transfer:
+          if (row.accountId == accountId) {
+            delta -= row.amount;
+          }
+          if (row.toAccountId == accountId) {
+            delta += model.FinanceTransaction(
+              id: row.id,
+              type: type,
+              accountId: row.accountId,
+              toAccountId: row.toAccountId,
+              amount: row.amount,
+              currency: row.currency,
+              toAmount: row.toAmount,
+              toCurrency: row.toCurrency,
+              transactionDate: row.transactionDate,
+            ).transferInAmount;
+          }
+      }
+      if (delta != 0) {
+        flows.add(_AccountFlow(
+          date: row.transactionDate,
+          delta: delta,
+          foldsIntoSnapshot: type == model.TransactionType.transfer ||
+              type == model.TransactionType.adjustment,
+        ));
+      }
+    }
+    return flows;
+  }
+
+  /// Actual income/expense dated after [date]; these are never folded into a
+  /// snapshot's market value.
+  double _incomeExpenseAfter(List<_AccountFlow> flows, DateTime date) {
+    return flows
+        .where((flow) => !flow.foldsIntoSnapshot && flow.date.isAfter(date))
+        .fold(0.0, (sum, flow) => sum + flow.delta);
+  }
+
+  Future<void> _writeCurrentBalance(String accountId, double balance) {
+    return (update(accounts)..where((tbl) => tbl.id.equals(accountId))).write(
+      AccountsCompanion(currentBalance: Value(balance)),
+    );
   }
 
   Future<void> clearAllUserData() async {
@@ -1395,4 +1581,31 @@ class AppDatabase extends _$AppDatabase {
       );
     }
   }
+}
+
+/// Raised when a snapshot write would need to know which snapshot absorbed
+/// earlier transfers/adjustments, which the schema does not record. The write
+/// is rolled back; [toString] is the user-facing message.
+class SnapshotBalanceAmbiguityException implements Exception {
+  const SnapshotBalanceAmbiguityException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
+class _AccountFlow {
+  const _AccountFlow({
+    required this.date,
+    required this.delta,
+    required this.foldsIntoSnapshot,
+  });
+
+  final DateTime date;
+  final double delta;
+
+  /// Transfers and adjustments are folded into the latest snapshot's market
+  /// value by `_syncInvestmentFlowIntoSnapshot`; income/expense are not.
+  final bool foldsIntoSnapshot;
 }

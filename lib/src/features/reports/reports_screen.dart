@@ -1071,14 +1071,24 @@ class _AssetHealthSection extends StatelessWidget {
     final investmentAccounts = repository.investmentAccounts();
     final cutoffDate = repository.currentMonthCutoffDate();
     double totalMarketValue = 0;
-    double totalCostBasis = 0;
+    double totalRemainingCostBasis = 0;
     for (final account in investmentAccounts) {
-      totalMarketValue += repository.accountBalanceAt(account.id, cutoffDate);
-      totalCostBasis += repository.costBasisForAccount(account.id);
+      totalMarketValue += repository.convertToBase(
+        repository.accountBalanceAt(account.id, cutoffDate),
+        account.currency,
+      );
+      totalRemainingCostBasis += repository.convertToBase(
+        repository.remainingCostBasisForAccount(
+          account.id,
+          upToDate: cutoffDate,
+        ),
+        account.currency,
+      );
     }
-    final unrealizedPnL = totalMarketValue - totalCostBasis;
-    final pnlRatio =
-        totalCostBasis > 0 ? (unrealizedPnL / totalCostBasis * 100) : 0.0;
+    final unrealizedPnL = totalMarketValue - totalRemainingCostBasis;
+    final pnlRatio = totalRemainingCostBasis > 0
+        ? (unrealizedPnL / totalRemainingCostBasis * 100)
+        : 0.0;
 
     // Asset trend
     final history = repository.totalAssetHistory();
