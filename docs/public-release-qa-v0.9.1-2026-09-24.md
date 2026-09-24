@@ -28,9 +28,15 @@
 | `FinanceCompass-SelfHost-Windows-v0.9.1.zip` | 16,604,438 | `644237d88b35df232bd2ce16eb13c1f5f93fe30ac9d61c8e33da4c57e88e19d8` |
 | `FinanceCompass-SelfHost-macOS-v0.9.1.zip` | 16,604,438 | `0d471267400f463d77e6a2170337839127e6d5cfc1410d9ca4e648349abf26a1` |
 
+## GitHub 公开回读
+
+- [PR #5](https://github.com/lawpowen/finance-compass-app/pull/5) 已合并；`main` 合并提交为 `41240d92f23b1cdb9fe480bb4c114b8a9b8e840f`，`v0.9.1` 标签指向该提交。合并提交与本机已构建的源码树一致。
+- [v0.9.1 Release](https://github.com/lawpowen/finance-compass-app/releases/tag/v0.9.1) 已公开，非草稿、非预发布；GitHub `releases/latest` 返回该版本。六个包与 `SHA256SUMS.txt` 共七个附件，GitHub 回读的大小和 SHA-256 digest 与本机逐项一致。
+- 无认证访问 `releases/latest` 返回 200 并跳转至 `v0.9.1`；README 的六条直接下载链接逐项返回 200，`Content-Length` 与本机文件大小一致。
+
 ## 已知限制
 
 - 本机没有 Docker，未实际构建或启动 Docker 路径；iOS Safari 和 Android Chrome 的 HTTPS 安装、离线重开仍待真机验收。
 - Windows 安装器没有商业 Authenticode 签名，SmartScreen 可能提示未知发布者；本次未在交互桌面打开安装版或便携版页面。
 - Web 未收录的 emoji、日文、韩文、繁体回退字体可能显示为方框。Web 账本仍只保存在当前浏览器 profile，清除站点数据或换设备前须导出 JSON。
-- GitHub 标签、Release 与资产公开回读将在上传后补记；本页记录上传前的本机验证结果。
+- 发布后未在目标设备重新安装 Android APK 或打开 Windows 安装版；用户设备与 Docker 环境的实机验收仍按上述限制执行。
