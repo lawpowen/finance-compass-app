@@ -4,7 +4,7 @@
 
 Finance Compass `0.10.0+44` 可构建为自托管的 Flutter Web 应用。自托管服务器只分发 HTML、JavaScript、静态资源、`sqlite3.wasm` 与 Drift Worker；**没有后端 API、用户账户、服务端 SQLite、服务端备份或跨设备同步**。因此它适合让 iPhone、iPad、Android 和桌面浏览器访问同一私有网址，但不是云同步服务。
 
-公开发布包（v0.10.0 发布准备中，以下直链在 GitHub Release 上传资产后才可下载；此前请使用 [已发布版本](https://github.com/lawpowen/finance-compass-app/releases/latest) v0.9.1）：
+公开发布包（[v0.10.0 Release](https://github.com/lawpowen/finance-compass-app/releases/tag/v0.10.0)，校验值见 Release 中的 `SHA256SUMS.txt`）：
 
 - [Ubuntu v0.10.0](https://github.com/lawpowen/finance-compass-app/releases/download/v0.10.0/FinanceCompass-SelfHost-Ubuntu-v0.10.0.zip)
 - [Windows v0.10.0](https://github.com/lawpowen/finance-compass-app/releases/download/v0.10.0/FinanceCompass-SelfHost-Windows-v0.10.0.zip)
