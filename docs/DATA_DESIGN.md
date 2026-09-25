@@ -42,7 +42,15 @@ flowchart LR
 
 ## 资产目标统计口径
 
-资产目标继续存放于 `app_meta.asset_goals_json`，不新增字段或迁移。`assetGoalSummaries` 及目标页趋势调用 `totalAssetsAt(..., includeCredit: false)`，只汇总非 `ReportGroup.credit` 账户，因此信用卡和贷款负债不扣减目标金额；`totalAssetHistory` 的 `includeCredit` 默认为 `true`，保证净资产报表继续使用原口径，只有资产目标显式传入 `false`。旧版单一目标迁移后的默认名称改为“资产目标”，目标金额和首次达成日期保持不变。
+资产目标继续存放于 `app_meta.asset_goals_json`，不新增字段或迁移。`assetGoalSummaries` 及目标页趋势调用 `totalAssetsAt(..., includeCredit: false)`，只汇总非 `ReportGroup.credit` 账户，因此信用卡和贷款负债不扣减目标金额；`totalAssetHistory` 的 `includeCredit` 默认为 `true`，保证净资产报表继续使用原口径，只有资产目标显式传入 `false`。旧版单一目标迁移后的默认名称为“资产目标”，目标金额保留；旧的首次达成日期在展示时不再直接采用，并在下次相关写入时按现有账本重算。
+
+截止日与首次达成日期（`AssetGoal.reachedAt`，JSON 字段 `reached_at`）：
+
+- `assetGoalSummaries({cutoffDate})` 经 `assetGoalCutoffDate` 把缺省或晚于今天的截止日钳制到今天 23:59:59.999；早于今天的截止日按原值使用。`currentAssets`、`history` 与 `isReached` 因此都不计入未来日期的实际交易或快照，`planned` 交易本来就不影响余额。
+- `reachedAt` 每次从账本重算，不读取已存储值：只检查截止日前涉及非 credit 账户的实际交易日和快照日，按日终总资产找出首次 ≥ 目标金额的那一天，而不是月末。跨月中途达成记为当天，快照升值记为快照日。
+- 最早事件日之前的余额（期初余额）已达标的目标无法确认日期，`reachedAt` 为空但 `isReached` 仍为真；从未达标的目标同样为空。曾达标后回落时 `reachedAt` 保留历史首次日期，`isReached` 按当前资产为假。
+- Repository 的交易、快照、账户、汇率及导入等相关写入路径经 `_refreshWithGoalSync` 重算后写回 `asset_goals_json`；只改模板、规则或对账标记的路径不触发目标同步。删除或修改交易后已不成立的旧日期会被清除；即使尚未发生写入，页面摘要也从账本实时计算而不信任旧值。`AssetService` 镜像实现保持相同规则。
+- 多币种历史总资产沿用现有 `convertToBase` 的当前汇率，不保存逐日历史汇率；修改汇率后，历史首次达成日期也可能随重算改变。当天尚未到时但被标记为 `actual` 的交易，按应用的日期口径计入当日日终。
 
 ## 投资快照与剩余成本
 
@@ -99,6 +107,8 @@ flowchart TD
 信用卡专用还款流程只允许选择与信用账户同币种的 `ReportGroup.cash` 来源，确认后写入一笔 `actual transfer`。同币种还款以 `amount` 同时作为现金扣款和信用账户入账，`to_amount` 保持 `NULL`；它不新增消费支出，但按完整 `amount` 进入实际现金流出。
 
 ## 实际现金报表口径
+
+报表页面由 `ReportsV2Screen` 直接读取派生数据，不新增表或迁移。旧详细报表的版块顺序曾写入 `app_meta.report_section_order_v2`；新版不再读取或修改该值，升级后旧值可留在本地，回滚至旧版时仍可使用。交易多选筛选只保存在页面状态，不写入账本或备份。
 
 实际现金汇总是交易和账户分组的派生读模型，不新增字段。现金类账户收入为流入、支出为流出、调整按符号进入；转账分别检查来源和目标是否为 `ReportGroup.cash`。现金到信用卡或贷款的转账按来源完整 `amount` 形成现金流出，目标端本金/还款入账不与其抵消；现金到现金的两端在总现金层面相抵为零。信用账户消费在支付现金前不进入现金流。历史报表排除 `planned`，未来月份明确选择“包含预计”或预测时才纳入。
 

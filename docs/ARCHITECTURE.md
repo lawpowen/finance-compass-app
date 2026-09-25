@@ -26,7 +26,7 @@ Web 变体将 `AppDatabase` 通过条件导入切换到 `database_connection_web
 
 `HomeScreen` 提供总览、账户、交易、预算、报表和设置六个主入口。页面通过 `financeRepositoryProvider` 读取不可变快照，通过 mutation providers 执行写入；写入后重新载入 Repository，避免页面持有过期数据。
 
-Repository 对报表提供实际现金读模型，只累计 `ReportGroup.cash` 两端增减。报表总览、详细趋势、现金流出分析、历史平均和未来预测共用该读模型；预算继续采用消费发生口径。这样信用消费和现金还款不会重复计入，结构化贷款月供也不会被目标本金入账抵消成利息差额。
+Repository 对报表提供实际现金读模型，只累计 `ReportGroup.cash` 两端增减。`ReportsV2Screen` 在同一页展示所选期间的净资产变化、实际现金流及按交易发生日统计的支出分类；当前资产构成、投资剩余成本和本月预算分别标注自己的时点。现金流使用 `actualCashFlowSummaryForMonths`，分类排行使用 `categoryTotalsForMonths`，预算继续采用消费发生口径。这样信用消费和现金还款不会重复计入现金流，结构化贷款月供也不会被目标本金入账抵消成利息差额。
 
 交易页中间口径卡使用只读派生模型 `MonthlyFundingNeed` 回答所选月份需要准备多少现金，取代旧现金收付净额卡而不再建立第二张独立大卡。Repository 先复用实际现金读模型取得已知流出，再按信用卡还款日与贷款摊销计划找出当月到期义务，并以对应还款交易计算覆盖额；总额只加入未覆盖部分，因此已有实际或预计还款不会重复计算。该模型是全月规划指标，不接收交易页下方账户、类型或类别筛选。
 
@@ -41,7 +41,7 @@ Repository 对信用卡提供两条明确分离的读取路径：账单、未出
 - `finance_theme.dart` 提供 12 款主题、Material 组件默认值和 `FinanceThemeTokens`。共享组件通过 `ThemeExtension` 读取当前调色板，避免只改变页面背景而留下固定青色控件。
 - `compass_ui.dart` 提供新版页面头部、卡片、图标徽章、设置行和悬浮操作按钮。
 - `*_v2_screen.dart` 是 0.8.0 的主页面实现。
-- 原 `TransactionsScreen`、`ReportsScreen` 和 `SettingsScreen` 仍作为高级筛选、详细报表和高级设置页使用；六个主入口采用紧凑的 v2 页面，避免在视觉重构中删除已有能力。
+- 交易的账户、类型、类别多选筛选直接由 `TransactionsV2Screen` 的底部面板处理；报表由 `ReportsV2Screen` 在页内完整展示。原 `TransactionsScreen` 与 `ReportsScreen` 不再有入口，源码已移除。`SettingsScreen` 仍作为高级设置页使用。
 - 默认风格为 `abyss` 深海主题；用户可在外观页拖动预览其他风格，确认后写入设置。首次应用 0.8.0 视觉迁移时写入 `ui_redesign_v2_applied=true`。
 
 ## 数据升级

@@ -1,6 +1,58 @@
 # 变更记录
 
+## 2026-09-25
+
+### Finance Compass v0.10.0 公开版发布准备（产物已构建，尚未发布）
+
+- 行为：版本号改为 `0.10.0+44`，设置页“关于与支持”显示 `版本 0.10.0+44 · 本地优先的个人财务罗盘`。本版准备收录下面及 2026-09-24 的四项未发布改动：外观页主题卡片点击预览、报表单页改版、交易条件多选，以及资产目标截止到今天与真实首次达成日。README 与 `SELF_HOSTING.md` 的六个下载直链已改为 `v0.10.0` 资产名，六项发布产物与 `SHA256SUMS.txt` 已在本机 `artifacts/release/v0.10.0` 构建并核对，但源码**尚未提交到 GitHub，也未创建标签或发布 GitHub Release**，所以这些链接暂时无法下载。README 与 `SELF_HOSTING.md` 已注明这一点，并引导用户到 `/releases/latest` 获取已发布的 v0.9.1。
+- 设计：`pubspec.yaml` 仍是版本来源，Android `versionName`/`versionCode` 为 `0.10.0` / `44`（已在构建产物中核对）。自托管 Service Worker 的 `CACHE_NAME` 由 `finance-compass-shell-v0.9.1` 改为 `finance-compass-shell-v0.10.0`，保证已安装的 PWA 换用新应用壳。两份 Compose 的本地镜像标签改为 `finance-compass-web:0.10.0`。`tool/package_selfhost.ps1` 默认 `-Version 0.10.0`，输出到 `artifacts/release/v0.10.0`。本次版本同步不改动应用逻辑。
+- 兼容性：版本同步本身不涉及 schema、迁移、JSON 备份格式、权限或应用 ID 变化；四项功能改动的兼容性见各自条目（旧 `report_section_order_v2` 值不再控制布局；已存储的资产目标 `reached_at` 在首次写入时会按新规则重算）。发布后 Android 将以更高的 versionCode `44` 和同一发布密钥覆盖升级；Windows 安装器沿用固定 `AppId` 原地升级。
+- 安全与运维：未改动签名配置、`android/key.properties`、发布密钥或用户数据。全量测试、Web 构建、六项产物构建与签名校验、`SHA256SUMS.txt` 已完成。按 `RELEASE_WORKFLOW.md`，仍须提交并通过 PR 合并、在 `main` 上打 `v0.10.0` 标签、创建 Release，并回读六条直链。回滚：发布前直接还原本次版本字段即可；发布后按回滚规则以更高补丁号修复。
+- 文档：更新 README（当前版本、六个直链、发布准备提示）、`SELF_HOSTING.md`（当前版本、三个直链、打包命令与 `CACHE_NAME` 示例）、`docs/README.md`、`SECURITY_AND_OPERATIONS.md`（Android 包版本）、`RELEASE_WORKFLOW.md`（当前版本与 APK 版本检查值）及本记录。产物构建后新增 [v0.10.0 发布前 QA](public-release-qa-v0.10.0-2026-09-25.md)，并同步 README、`docs/README.md`、`RELEASE_WORKFLOW.md`、`TESTING_AND_QUALITY.md` 中的发布状态。历史版本段落（README 中的 `0.9.0+42` 自托管说明、`SELF_HOSTING.md` 的 v0.9.0 字体问题、各版 QA 文档与既有变更记录）保持原样。
+- 验证：全仓检索确认，列明文件中剩余的 `0.9.1` 引用都指向已发布版本或历史 QA。六个直链的资产名符合发布契约。使用 Flutter 3.44.1 执行 `dart format --output=none --set-exit-if-changed lib test`，结果为 140 个文件、0 改动，退出码 0。`flutter analyze --no-fatal-infos --no-fatal-warnings` 退出码 0，共 67 项问题：0 error、2 项既有 warning、65 info。`tool/package_selfhost.ps1` 经 PowerShell 解析无语法错误，`node --check web/service-worker.js` 通过。本机没有 Docker，未执行 `docker compose config`。本次未重新运行 `flutter test`，全量测试结果见下方资产目标条目。
+  - 产物构建阶段：全量测试 156 项通过、2 项跳过、0 失败。格式检查 140 个文件，0 改动。静态分析 0 error、2 项既有 warning、65 info。
+  - Android APK：versionName `0.10.0`、versionCode `44`，含 3 个 ABI，v2 签名校验通过，证书 SHA-256 与 v0.9.1 相同。
+  - Windows：ProductVersion/FileVersion 为 `0.10.0+44`。Inno Setup 6.7.3 编译成功，便携 ZIP 共 23 个条目。
+  - 自托管 Web：构建结果为 142 个文件，验证 36 项预缓存和 102 个回退字体。三份自托管 ZIP 各有 150 个条目，均含 `webroot/index.html` 与 `compose.yml`。
+  - 支持二维码的 SHA-256 与上一版相同。`SHA256SUMS.txt` 六项回算一致。
+  - 文件名、大小和哈希见 [发布前 QA](public-release-qa-v0.10.0-2026-09-25.md)。
+- 限制：发布尚未完成。PR 合并、`v0.10.0` 标签、GitHub Release 与直链回读都未执行，六个 v0.10.0 直链在 Release 上传资产前无法下载。本轮未执行以下检查：
+  - Docker 构建；
+  - 浏览器离线与 CSP 回归；
+  - Windows 安装版或便携版实机打开；
+  - Android 真机安装；
+  - iOS/Android 浏览器的 HTTPS 安装。
+
+  触控、读屏和目标设备验收仍按各功能条目列出的限制处理。
+
+### 资产目标截止到今天与真实首次达成日
+
+- 行为：资产目标的当前总资产、趋势、进度和“已达成”只计到今天 23:59:59.999；本月稍后日期的实际交易、计划交易都不会让目标提前达成。首次达成日期改为资产真正跨过目标的那一天（含跨月中途达成和快照升值），不再是月末；期初余额已达标的目标不编造日期；修改或删除交易使旧日期不再成立时会清除已存储的 `reachedAt`。
+- 设计：新增 `FinanceRepository.assetGoalCutoffDate([requested])`，`assetGoalSummaries` 默认及传入的未来截止日都被钳制；`_assetGoalReachedDates` 按非 credit 账户的实际交易日和快照日逐日计算日终资产，不读取已存储值。`AssetService` 镜像同步相同规则。`AssetGoalsPage` 与旧 `AccountsScreen` 目标区块改用同一截止日。汇率更新、清除对账和导入改走 `_refreshWithGoalSync`。`asset_goals_json` 结构不变，无迁移。
+- 安全与运维：无权限、配置、schema 或部署变化。升级后首次写入会用重算结果覆盖旧 `reached_at`，旧的月末日期或已失效日期会被修正或清除；回滚代码后旧逻辑会在下一次写入时重新计算。
+- 文档：更新 `DATA_DESIGN.md`、`INTERFACES.md`、`MODULE_DESIGN.md`、`SYSTEM_REQUIREMENTS.md`、`UI_REFERENCE.md`、`TESTING_AND_QUALITY.md`、`TRACEABILITY.md` 与本记录。
+- 验证：Claude CLI Opus 5.5 High 执行目标日期定向测试 13 项和报表页定向测试 8 项，均通过；390×844 报表回归覆盖六个主要区块、滚动可见性、金额换行及读屏标签，导出的长图经人工复核无明显截断。最终全量 `flutter test --reporter compact` 为 156 项通过、2 项按设计跳过；`dart format --output=none --set-exit-if-changed lib test` 检查 140 文件、0 改动；`flutter analyze --no-fatal-infos --no-fatal-warnings` 为 0 error、2 项既有 warning、65 info。三项退出码均为 0。
+- 限制：目标曾在期初余额下达标、回落后再次跨过时仍不显示日期（首次达成日不可确认）。多币种历史资产按当前汇率换算，汇率变化可改写历史达成日；当天较晚时刻但已标记为 `actual` 的交易会按当日日终计入。AI 分析上下文调用 `assetGoalSummaries()` 时同样改为今天截止。
+
 ## 2026-09-24
+
+### 报表单页改版、交易条件多选与旧页面清理（开发分支）
+
+- 行为：报表期间选择同时更新净资产变化与趋势、实际现金流及按交易发生日统计的支出分类前五；资产构成和投资未实现盈亏标明当前月末口径，本月预算标明当前月份。旧健康信号不再跳到有问题的详细报表页，分享文字使用所选期间。交易账户、类型、类别各可多选：组内任一、组间同时满足，转账目标账户也可命中；取消不提交，应用后更新列表和可筛选指标，全月“需准备现金”保持独立口径。旧“高级筛选”按钮改为打开当前页多选面板。
+- 设计：`ReportsV2Screen` 在同一滚动页面展示实际现金流、交易发生口径的分类排行、资产构成、本月预算和按剩余成本计算的投资表现；`TransactionsV2Screen` 使用页面内 `_TransactionFilters` 与底部面板。移除不再有入口的 `ReportsScreen`、`TransactionsScreen` 及仅供旧筛选使用的 `FinanceFilterBar`。现有报表比较卡仍被测试引用，继续保留。报表的 `report_section_order_v2` 旧 meta 值不再控制布局，但不会清除。
+- 安全与运维：无数据库 schema、备份格式、权限或部署配置变化；筛选状态只存在页面内，不写入用户资料。旧详细交易页独有的跨月区间筛选不再有入口，主交易页仍提供月份导航和全局搜索。回滚到旧代码可恢复旧入口及仍保留在 meta 中的版块顺序。
+- 文档：同步 `SYSTEM_REQUIREMENTS.md`、`ARCHITECTURE.md`、`MODULE_DESIGN.md`、`DATA_DESIGN.md`、`UI_REFERENCE.md`、`INTERACTION_AUDIT.md`、`TRACEABILITY.md`、`TESTING_AND_QUALITY.md` 与本记录；历史代码审查资料增加过时提示。
+- 验证：主题交互 2 项、交易页 4 项、报表与交互接线 16 项定向测试通过；全量 `flutter test --reporter compact` 为 144 项通过、2 项按设计跳过（退出码 0）。`dart format --output=none --set-exit-if-changed lib test` 检查 139 文件、0 改动；全仓 `flutter analyze --no-fatal-infos --no-fatal-warnings` 退出码 0，0 error、2 项既有 warning、65 info。完整测试的 Claude CLI 后台任务与续跑被宿主权限层中断，最终全量命令由当前工作区直接执行。
+- 限制：尚未重新打包或发布；新报表的触控与读屏效果仍需目标设备人工验收。旧报表的自定义版块顺序与独立预测详情没有迁入单页。
+
+### 外观页主题卡片点击预览
+
+- 行为：外观页可点击相邻主题卡片切换并居中预览；点击不保存设置，只有“设为当前主题”会应用。应用后“当前正在使用”状态即时刷新。
+- 设计：`AppearancePage` 为卡片增加点击与读屏语义，并阻止程序翻页途中经过的卡片覆盖目标预览；滑动仍按实际停留页面切换预览。
+- 安全与运维：无权限、配置、schema、备份格式或部署变化；`theme_style` 仍由 `AppSettingsController.setThemeStyle` 写入。回滚可还原本次界面与测试改动。
+- 文档：更新 `UI_REFERENCE.md`、`TESTING_AND_QUALITY.md` 与本记录。
+- 验证：新增 widget 回归覆盖卡片点击、选中、居中、应用前设置不变及按钮应用；`flutter test test/appearance_carousel_test.dart` 的 2 项通过，定向分析无 error/warning，仍有两项新测试 API 弃用 info。全量验证结果见上方开发分支条目。
+- 限制：未在真机上验证触控与读屏软件。
 
 ### Finance Compass v0.9.1 补丁版本公开发布
 

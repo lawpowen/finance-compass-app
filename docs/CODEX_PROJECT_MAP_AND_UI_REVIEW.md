@@ -3,7 +3,7 @@
 最后分析：2026-06-04
 代码基准：`c623a49`
 
-> 历史说明：本文的 UI 评审结论基于 2026-06-04 的旧界面。0.8.0 当前主入口已改为 `DashboardV2Screen`、`AccountsV2Screen`、`TransactionsV2Screen`、`BudgetsV2Screen`、`ReportsV2Screen` 和 `SettingsV2Screen`；旧页面仅作为详细或高级功能入口保留。当前实现应以 `ARCHITECTURE.md`、`MODULE_DESIGN.md` 和根目录 `design-qa.md` 为准。
+> 历史说明：本文基于 2026-06-04 的代码基准，下面的文件路径和功能清单是当时状态，不代表当前实现。当前主入口使用 v2 页面；`ReportsScreen` 与 `TransactionsScreen` 已在 2026-09-24 的开发分支移除。当前实现以 [系统架构](ARCHITECTURE.md)、[模块设计](MODULE_DESIGN.md) 和 [变更记录](CHANGELOG.md) 为准。
 
 这份文档是给以后 Codex 快速接手用的工作地图。它不是完整需求文档，而是回答三个问题：
 

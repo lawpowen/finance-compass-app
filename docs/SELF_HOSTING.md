@@ -2,13 +2,13 @@
 
 ## 当前实现与边界
 
-Finance Compass `0.9.1+43` 可构建为自托管的 Flutter Web 应用。自托管服务器只分发 HTML、JavaScript、静态资源、`sqlite3.wasm` 与 Drift Worker；**没有后端 API、用户账户、服务端 SQLite、服务端备份或跨设备同步**。因此它适合让 iPhone、iPad、Android 和桌面浏览器访问同一私有网址，但不是云同步服务。
+Finance Compass `0.10.0+44` 可构建为自托管的 Flutter Web 应用。自托管服务器只分发 HTML、JavaScript、静态资源、`sqlite3.wasm` 与 Drift Worker；**没有后端 API、用户账户、服务端 SQLite、服务端备份或跨设备同步**。因此它适合让 iPhone、iPad、Android 和桌面浏览器访问同一私有网址，但不是云同步服务。
 
-公开发布包：
+公开发布包（v0.10.0 发布准备中，以下直链在 GitHub Release 上传资产后才可下载；此前请使用 [已发布版本](https://github.com/lawpowen/finance-compass-app/releases/latest) v0.9.1）：
 
-- [Ubuntu v0.9.1](https://github.com/lawpowen/finance-compass-app/releases/download/v0.9.1/FinanceCompass-SelfHost-Ubuntu-v0.9.1.zip)
-- [Windows v0.9.1](https://github.com/lawpowen/finance-compass-app/releases/download/v0.9.1/FinanceCompass-SelfHost-Windows-v0.9.1.zip)
-- [macOS v0.9.1](https://github.com/lawpowen/finance-compass-app/releases/download/v0.9.1/FinanceCompass-SelfHost-macOS-v0.9.1.zip)
+- [Ubuntu v0.10.0](https://github.com/lawpowen/finance-compass-app/releases/download/v0.10.0/FinanceCompass-SelfHost-Ubuntu-v0.10.0.zip)
+- [Windows v0.10.0](https://github.com/lawpowen/finance-compass-app/releases/download/v0.10.0/FinanceCompass-SelfHost-Windows-v0.10.0.zip)
+- [macOS v0.10.0](https://github.com/lawpowen/finance-compass-app/releases/download/v0.10.0/FinanceCompass-SelfHost-macOS-v0.10.0.zip)
 
 账本由 Drift WASM SQLite 保存在访问该网址的浏览器 profile 内。现代浏览器优先使用 OPFS，较旧/Safari 能力受限时可回退 IndexedDB。每一个“设备 + 浏览器 + 网站 origin”是一个独立账本：换设备、换浏览器或改变域名/端口都不会带来数据；清除该网站数据、无痕模式回收或浏览器存储被系统清理时可能丢失。使用前及每次重要录入后都应从“导入与导出”下载完整 JSON。
 
@@ -88,14 +88,14 @@ chmod +x tool/build_web.sh
 创建跨平台自托管交付 ZIP：
 
 ```powershell
-.\tool\package_selfhost.ps1 -Version 0.9.1
+.\tool\package_selfhost.ps1 -Version 0.10.0
 ```
 
 生成的 ZIP 内含 Dockerfile、Compose、Caddy 配置、Ubuntu/macOS shell 安装器与 Windows PowerShell 安装器。它不是 OS 原生 `.deb`、`.msi` 或 `.dmg`：三个系统均通过 Docker 提供相同、可复现的静态服务。不能从 Windows 对 macOS 签发可信 DMG，也不能声称未在目标 OS 构建的原生安装器已验证。
 
 ## 升级、回滚与恢复
 
-- **升级 Web 壳**：先从每个设备导出 JSON，再拉取/解压新版本并运行 `docker compose up -d --build`。`web/service-worker.js` 采用缓存优先策略，每个发布版本都必须更换 `CACHE_NAME`（`0.9.1` 为 `finance-compass-shell-v0.9.1`），新 Worker 激活时才会删除旧的 `finance-compass-shell-*` 应用壳缓存；它不触碰 Drift 浏览器存储中的账本。浏览器首次刷新可能仍使用旧 Service Worker；关闭标签页后重新打开，必要时在浏览器开发者工具清除“应用缓存”，但先导出 JSON。
+- **升级 Web 壳**：先从每个设备导出 JSON，再拉取/解压新版本并运行 `docker compose up -d --build`。`web/service-worker.js` 采用缓存优先策略，每个发布版本都必须更换 `CACHE_NAME`（`0.10.0` 为 `finance-compass-shell-v0.10.0`），新 Worker 激活时才会删除旧的 `finance-compass-shell-*` 应用壳缓存；它不触碰 Drift 浏览器存储中的账本。浏览器首次刷新可能仍使用旧 Service Worker；关闭标签页后重新打开，必要时在浏览器开发者工具清除“应用缓存”，但先导出 JSON。
 - **回滚 Web 壳**：部署旧镜像/源码即可；它不改变浏览器数据库 schema 之外的既有 Drift 迁移逻辑。若曾打开更高 schema，先按应用现有恢复策略导出 JSON，并确认旧应用能理解其格式。
 - **恢复账本**：打开同一受保护 origin，在“导入与导出”选择此前下载的 JSON。Web 不能悄悄在服务器创建恢复点；导入覆盖前，界面必须让用户先下载当前 JSON。
 - **丢失浏览器数据**：服务器不能恢复它。使用用户自行保存的 JSON 才能恢复。

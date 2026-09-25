@@ -1,4 +1,4 @@
-const CACHE_NAME = 'finance-compass-shell-v0.9.1';
+const CACHE_NAME = 'finance-compass-shell-v0.10.0';
 // Keep the complete rendering and local-database runtime available after a
 // successful first load. Do not add user data here: it stays in Drift's
 // browser storage, outside the HTTP cache.

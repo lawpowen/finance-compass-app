@@ -16,10 +16,16 @@ class AssetGoalsPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final activeRepository =
         ref.watch(financeRepositoryProvider).valueOrNull ?? repository;
-    final summaries = activeRepository.assetGoalSummaries();
-    final history = activeRepository.totalAssetHistory(includeCredit: false);
+    // Goals are measured at the end of today: future-dated actual
+    // transactions are not assets already held.
+    final cutoff = activeRepository.assetGoalCutoffDate();
+    final summaries = activeRepository.assetGoalSummaries(cutoffDate: cutoff);
+    final history = activeRepository.totalAssetHistory(
+      cutoffDate: cutoff,
+      includeCredit: false,
+    );
     final currentAssets = activeRepository.totalAssetsAt(
-      activeRepository.currentMonthCutoffDate(),
+      cutoff,
       includeCredit: false,
     );
 

@@ -1,5 +1,20 @@
 # 测试与质量
 
+## 2026-09-25 资产目标日期与报表手机布局复验
+
+- Claude CLI Opus 5.5 High 执行 `flutter test test/asset_goals_page_test.dart test/asset_goal_reached_date_test.dart`：13 项通过。覆盖真实跨越日、快照升值、期初余额日期未知、未来实际和预计交易排除，以及改写或删除账本后重算持久化日期。
+- `flutter test test/reports_v2_screen_test.dart --reporter compact`：8 项通过；其中 390×844 回归逐段检查六个非空区块、滚动可见性、金额不换行和读屏标签。另导出 `artifacts/qa/reports-v2-390.png` 长图并人工检查，无明显横向溢出或截断。
+- Claude CLI 执行全量 `flutter test --reporter compact`：156 项通过、2 项按设计跳过，退出码 0。`dart format --output=none --set-exit-if-changed lib test` 检查 140 文件、0 改动，退出码 0；`flutter analyze --no-fatal-infos --no-fatal-warnings` 为 0 error、2 项既有 warning、65 info，退出码 0。
+- 自动化布局与截图不能替代真机触控、系统读屏或不同字号验收；本分支仍未打包发布。
+
+## 2026-09-24 主题、报表与交易多选开发分支验证
+
+- `dart format --output=none --set-exit-if-changed lib test`：139 个文件，0 个需改动，退出码 0。
+- `flutter test test/appearance_carousel_test.dart`：2 项通过；`flutter test test/transactions_v2_navigation_test.dart`：4 项通过；`flutter test test/reports_v2_screen_test.dart test/interaction_wiring_test.dart`：16 项通过。定向测试由 Claude CLI 执行。
+- 移除旧页面后，`flutter test --reporter compact` 全量通过：144 项通过、2 项按设计跳过，退出码 0。Claude CLI 在完整测试过程中提前结束后台任务，且续跑的 SDK 命令被宿主自动审批拦截；因此最终完整测试及全仓分析由当前工作区直接运行。
+- `flutter analyze --no-fatal-infos --no-fatal-warnings`：退出码 0，0 error、2 warning、65 info。两项 warning 是既有未使用 `_referenceTransactions` 与 AI 集成测试局部变量；新增主题测试仍有两项 `containsSemantics` 弃用 info，不影响测试。
+- 本次自动化验证覆盖 390 逻辑像素宽度的交易多选与主题点击，以及报表的期间联动和现金流口径；报表长页面触控与读屏仍需目标设备人工复核。
+
 ## 自托管发布包容器验收
 
 - 必须在 Linux Docker 环境从公开发布 ZIP 开始测试，不得只验证源码目录或 Windows 本机解压结果。
@@ -31,16 +46,16 @@ Web 回归至少覆盖：浏览器 FilePicker bytes 导入预览/替换路径、
 - 数据库迁移测试：构造 v6 SQLite，逐级升级到 v9，验证余额、空信用卡/贷款/追踪日期字段、模板 ID、本地资料 ID，并确认旧信用卡单笔结算日期归一为发生日期而现金交易不变。
 - 数据可携测试：导出包含真实账户、分类、交易、模板及周期规则的 JSON v3，预览数量后导入到空数据库，并验证模板排序与规则启停状态不丢失；旧 v1/v2 信用卡 JSON 导入后以 `record_date` 作为账期发生日期，v3 则保留已编辑的 `transaction_date`。
 - Widget 测试：表单、报表比较卡和主要启动界面。
-- 外观交互测试：在 390×844 逻辑像素验证主题卡片可拖动、预览不会自动应用，并可切换总览/交易预览。
+- 外观交互测试（`appearance_carousel_test.dart`）：在 390×844 逻辑像素验证主题卡片可拖动、点击相邻卡片可选中并居中、预览不会自动应用，并可切换总览/交易预览。点击用例使用记录型 `AppSettingsController` 代替数据库写入，验证只有“设为当前主题”按钮会保存所选主题，并检查卡片的读屏语义。
 - 交互接线门禁：扫描 `lib/src/features/**`，拒绝 `_noop` 及空的点击、按钮、切换和选择回调；Widget 回归覆盖周期规则编辑/补生成、报表区间、预算生效月份和货币格式持久化。
 - 方向控件门禁：方向箭头、展开/折叠和下拉图标附近必须存在真实 `onTap`、`onPressed`、选择器、重排或语义按钮；账户统计截止 Widget 回归验证连续月份选择、月末金额变化、历史只读提示和返回本月，类别管理回归验证整行折叠与展开。
 - 交易与账期回归：验证跨月/月末账期边界、旧账期不混入、信用卡对信用卡转账只进入来源卡账单、未来月份导航、未来预计交易可见、交易编辑保留原 ID/录入时间、已还清账单不误报逾期，以及总览预测范围切换。
 - 交易计算口径回归：默认“已发生”必须同时从顶部汇总和列表排除 `planned`；选择“包含预计”后，实际与预计记录同时可见。“实际消费”排除转账；本月及未来月份的“实际现金”显示全月需准备现金，历史月份显示实际现金支出；“信用/贷款”使用当前信用负债并只叠加当月预计信用净变化。进入未来月份时使用相同合并范围，不得隐藏未来 `actual`。
-- 交易筛选与未来月供回归：选择账户后，列表及消费/现金/承诺顶部金额使用同一筛选集合；未来月份同时包含实际和预计时，结构化贷款转账按完整月供 `amount` 进入现金流出，不按本金或利息差额计算。
+- 交易多选筛选与未来月供回归（`transactions_v2_navigation_test.dart`）：账户、类型、类别各可选择多个值；组内 OR、组间 AND，转账目标账户可命中。取消保留原结果，应用后列表、实际消费与信用/贷款解释同步更新；“全部”清空可见条件，高级筛选按钮打开同一面板。全月“需准备现金”不随明细筛选缩小。未来月份同时包含实际和预计时，结构化贷款转账按完整月供 `amount` 进入现金流出，不按本金或利息差额计算。
 - 月度资金需求回归：已知普通现金流出与到期信用卡/贷款合并为单一总额；已有实际或预计还款必须同时进入现金流出和覆盖额，使总额保持不变而不重复计算。覆盖结构化月供与没有系统期号文案的普通贷款转账。Widget 回归验证未来月份的中间口径卡显示正确总额、独立大卡不存在，选中后解释区显示已知流出/尚未安排及紧凑到期说明，390×844 不得溢出。
-- 实际现金报表回归：现金收入/支出直接计入，信用消费在刷卡时排除，现金还卡和还贷款按整笔付款计入，现金间转账净额为零；未来现金投影与历史月度汇总复用同一规则。
+- 报表单页回归（`reports_v2_screen_test.dart`）：今年至今、最近 12 个月和全部时间切换同步更新净资产变化、实际现金流及支出分类；信用消费在刷卡时不计现金流出，现金还卡和还贷款按整笔付款计入，`planned` 排除；分类排行按交易发生口径排序并显示精确金额。验证无账户、无现金流、无分类和无成本时的空状态、零变化无正号，以及旧详细报表入口不再可达。390×844 满内容滚动测试另检查六个区块可见、金额不换行和读屏标签。未来现金投影与历史月度汇总继续复用实际现金规则。
 - 预算生效链回归：4 月 MYR 200 规则在 4–7 月保持有效，8 月新增 MYR 400 规则使用新 ID 并在 8 月及以后生效；旧规则不得被编辑器覆盖。
-- 资产目标回归：从账户页可进入目标管理；空状态可新增，保存后 provider 与页面即时出现真实目标，编辑/删除入口不是装饰控件；现金 MYR 1,000、投资 MYR 500、信用负债 MYR 800 的样本目标进度必须使用总资产 MYR 1,500，而不是净资产 MYR 700。
+- 资产目标回归：从账户页可进入目标管理；空状态可新增，保存后 provider 与页面即时出现真实目标，编辑/删除入口不是装饰控件；现金 MYR 1,000、投资 MYR 500、信用负债 MYR 800 的样本目标进度必须使用总资产 MYR 1,500，而不是净资产 MYR 700。`asset_goals_page_test.dart` 与 `asset_goal_reached_date_test.dart` 另外覆盖：缺省、月末和远期截止日都钳制到今天，明日实际收入与计划收入不计入当前资产、趋势末点和达成状态（含 `AssetService` 镜像与目标页显示）；上月 15 日中途达成与 20 日快照升值分别记为当天；期初余额已达标时不编造日期；把跨越交易改到明天、改小金额或删除后旧 `reachedAt` 被清除并持久化。
 - 信用账户还款回归：详情页只列出同币种现金账户，确认可编辑金额后生成现金到信用账户的实际转账，并同时刷新双方余额与实际现金流出。
 - 历史账单回归：验证结算日 25、还款日 14 时，4 月 29 日交易归入 5 月 25 日结算账单并对应 6 月 14 日还款；在 390×844 视口打开账单月份列表、选择往期、切换金额/时间线/明细，并确认其他账期交易不混入。
 - 原始账单与每月 1 日结算回归：验证已还款历史月份仍显示原始账单额；8 月 1 日结算显示为 7 月账单；7 月三笔 MYR 69.85、161.33、82.11 合计为 MYR 313.29，且下一期已使用额度不读取累计账户余额。旧导入消费明细缺失时，验证结算日至还款日的明确转入还款可作为原始账单额下限。
@@ -176,6 +191,15 @@ flutter build windows --debug
 - 打包：`package_selfhost.ps1 -SkipWebBuild` 输出到临时目录，ZIP 条目均为 `/` 分隔、无 sidecar，`webroot` 与 `build/web` 文件清单一致。
 - 测试：`web_delivery_contract_test.dart` 8 项通过；全量 `flutter test` 135 项通过、2 项按设计跳过；`dart format` 无需修改；`flutter analyze` 无 error，保留 106 项既有问题（3 项 warning、103 项 info，均不在本次修改文件中）。
 - 更正：2026-08-04 v0.9.0 记录中“输出不含 `gstatic.com`”并不准确——旧 PowerShell 检查对 `Get-Content -Raw` 多文件返回的数组调用 `.Contains()`，实际从未比对子字符串；`flutter.js` 始终包含 gstatic CanvasKit URL，`main.dart.js` 始终包含字体回退地址，同一检查在 shell/Docker 中会必然失败。
+
+## 2026-09-25 v0.10.0 发布前验证（尚未发布）
+
+- 源码：全量 `flutter test` 156 项通过、2 项按设计跳过、0 失败。`dart format --output=none --set-exit-if-changed lib test` 检查 140 个文件，0 改动。`flutter analyze --no-fatal-infos --no-fatal-warnings` 为 0 error、2 项既有 warning、65 info。
+- Android：versionName `0.10.0`、versionCode `44`，含 3 个 ABI，v2 签名校验通过；证书 SHA-256 与 v0.9.1 相同。
+- Windows：ProductVersion/FileVersion 为 `0.10.0+44`。Inno Setup 6.7.3 编译成功，便携 ZIP 共 23 个条目。
+- 自托管 Web：构建结果为 142 个文件，验证 36 项预缓存和 102 个回退字体。三份自托管 ZIP 各有 150 个条目，均含 `webroot/index.html` 与 `compose.yml`。
+- 发布文件：六项产物的 SHA-256 与 `SHA256SUMS.txt` 逐项一致；支持二维码的哈希与 v0.9.1 相同。
+- 未执行：Docker、浏览器离线与 CSP 回归、Windows 安装版或便携版实机打开、Android 真机安装，以及 GitHub 发布与直链回读。详见 [v0.10.0 发布前 QA](public-release-qa-v0.10.0-2026-09-25.md)。
 
 ## UI 质量
 

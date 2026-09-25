@@ -86,10 +86,11 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
         ? selectedCutoffMonth!
         : _currentMonthKey();
     final displayCutoff = _endOfMonth(effectiveCutoffMonth);
-    final goalSummaries =
-        repository.assetGoalSummaries(cutoffDate: displayCutoff);
+    // Goals for the current month stop at today, not the month end.
+    final goalCutoff = repository.assetGoalCutoffDate(displayCutoff);
+    final goalSummaries = repository.assetGoalSummaries(cutoffDate: goalCutoff);
     final goalHistory = repository.totalAssetHistory(
-      cutoffDate: displayCutoff,
+      cutoffDate: goalCutoff,
       includeCredit: false,
     );
 

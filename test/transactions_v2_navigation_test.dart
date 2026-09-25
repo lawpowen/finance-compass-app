@@ -113,18 +113,18 @@ void main() {
 
     expect(_selectedBasisValue(tester), '- MYR 400');
 
-    await tester.tap(find.byKey(const Key('transaction-filter-account')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('现金账户').last);
-    await tester.pumpAndSettle();
+    await _openFilter(tester, 'account');
+    await _tapFilterKey(tester, 'transaction-filter-option-account-cash');
+    await _tapFilterKey(tester, 'transaction-filter-apply');
     expect(_selectedBasisValue(tester), '- MYR 100');
     expect(find.text('支出 MYR 100'), findsOneWidget);
+    expect(_pillLabel('account', '现金账户'), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('transaction-filter-account')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('全部').last);
-    await tester.pumpAndSettle();
+    await _openFilter(tester, 'account');
+    await _tapFilterKey(tester, 'transaction-filter-clear');
+    await _tapFilterKey(tester, 'transaction-filter-apply');
     expect(_selectedBasisValue(tester), '- MYR 400');
+    expect(_pillLabel('account', '全部账户'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('basis-card-cash')));
     await tester.pumpAndSettle();
@@ -347,6 +347,235 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('编辑交易'), findsOneWidget);
   });
+
+  testWidgets('multi-select filters combine only after apply', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final database = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(database.close);
+    var repository = await FinanceRepository.load(database);
+    for (final account in const [
+      Account(
+        id: 'cash',
+        name: '现金账户',
+        accountType: AccountType.cash,
+        reportGroup: ReportGroup.cash,
+        currency: 'MYR',
+        currentBalance: 1000,
+      ),
+      Account(
+        id: 'bank',
+        name: '银行账户',
+        accountType: AccountType.bankSaving,
+        reportGroup: ReportGroup.cash,
+        currency: 'MYR',
+        currentBalance: 5000,
+      ),
+      Account(
+        id: 'credit',
+        name: '信用卡',
+        accountType: AccountType.creditCard,
+        reportGroup: ReportGroup.credit,
+        currency: 'MYR',
+        currentBalance: 0,
+        creditLimit: 5000,
+        statementDay: 25,
+        paymentDueDay: 14,
+      ),
+    ]) {
+      repository = await repository.addAccount(account);
+    }
+    for (final category in const [
+      Category(id: 'cat-food', name: '餐饮测试', type: CategoryType.expense),
+      Category(id: 'cat-travel', name: '旅行测试', type: CategoryType.expense),
+      Category(id: 'cat-salary', name: '工资测试', type: CategoryType.income),
+    ]) {
+      repository = await repository.addCategory(category);
+    }
+    final now = DateTime.now();
+    DateTime day(int value) => DateTime(now.year, now.month, value);
+    repository = await repository.addTransactions([
+      FinanceTransaction(
+        id: 'cash-food',
+        type: TransactionType.expense,
+        accountId: 'cash',
+        categoryId: 'cat-food',
+        amount: 100,
+        currency: 'MYR',
+        transactionDate: day(2),
+        merchant: '现金餐饮',
+      ),
+      FinanceTransaction(
+        id: 'bank-travel',
+        type: TransactionType.expense,
+        accountId: 'bank',
+        categoryId: 'cat-travel',
+        amount: 200,
+        currency: 'MYR',
+        transactionDate: day(2),
+        merchant: '银行旅行',
+      ),
+      FinanceTransaction(
+        id: 'credit-food',
+        type: TransactionType.expense,
+        accountId: 'credit',
+        categoryId: 'cat-food',
+        amount: 300,
+        currency: 'MYR',
+        transactionDate: day(3),
+        merchant: '信用卡餐饮',
+      ),
+      FinanceTransaction(
+        id: 'bank-salary',
+        type: TransactionType.income,
+        accountId: 'bank',
+        categoryId: 'cat-salary',
+        amount: 1000,
+        currency: 'MYR',
+        transactionDate: day(3),
+        merchant: '银行工资',
+      ),
+      FinanceTransaction(
+        id: 'bank-to-credit',
+        type: TransactionType.transfer,
+        accountId: 'bank',
+        toAccountId: 'credit',
+        amount: 150,
+        currency: 'MYR',
+        transactionDate: day(4),
+        merchant: '信用卡还款',
+      ),
+    ]);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          financeRepositoryProvider.overrideWith(
+            () => _TestRepositoryNotifier(repository),
+          ),
+        ],
+        child: MaterialApp(
+          theme: buildFinanceTheme(
+            AppThemeStyle.abyss,
+          ).copyWith(splashFactory: NoSplash.splashFactory),
+          home: Scaffold(body: TransactionsV2Screen(repository: repository)),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(_selectedBasisValue(tester), 'MYR 400');
+
+    const fundingNote = Key('monthly-funding-need-note');
+    await tester.tap(find.byKey(const Key('basis-card-cash')));
+    await tester.pumpAndSettle();
+    final unfilteredFunding = _selectedBasisValue(tester);
+    final unfilteredNote = tester.widget<Text>(find.byKey(fundingNote)).data;
+    await tester.tap(find.byKey(const Key('basis-card-consumption')));
+    await tester.pumpAndSettle();
+
+    // Cancel discards the draft selection.
+    await _openFilter(tester, 'account');
+    expect(find.text('筛选账户'), findsOneWidget);
+    await _tapFilterKey(tester, 'transaction-filter-option-account-cash');
+    await _tapFilterKey(tester, 'transaction-filter-option-account-bank');
+    await _tapFilterKey(tester, 'transaction-filter-cancel');
+    expect(find.text('信用卡餐饮'), findsOneWidget);
+    expect(_pillLabel('account', '全部账户'), findsOneWidget);
+    expect(_selectedBasisValue(tester), 'MYR 400');
+
+    // Two accounts: OR within the account dimension, applied only on Apply.
+    await _openFilter(tester, 'account');
+    await _tapFilterKey(tester, 'transaction-filter-option-account-cash');
+    await _tapFilterKey(tester, 'transaction-filter-option-account-bank');
+    expect(_selectedBasisValue(tester), 'MYR 400');
+    await _tapFilterKey(tester, 'transaction-filter-apply');
+    expect(find.text('现金餐饮'), findsOneWidget);
+    expect(find.text('银行旅行'), findsOneWidget);
+    expect(find.text('银行工资'), findsOneWidget);
+    expect(find.text('信用卡还款'), findsOneWidget);
+    expect(find.text('信用卡餐饮'), findsNothing);
+    expect(_pillLabel('account', '已选 2 个账户'), findsOneWidget);
+    expect(_selectedBasisValue(tester), 'MYR 700');
+    expect(find.text('支出 MYR 300'), findsOneWidget);
+
+    // Monthly funding need stays unfiltered.
+    await tester.tap(find.byKey(const Key('basis-card-cash')));
+    await tester.pumpAndSettle();
+    expect(_selectedBasisValue(tester), unfilteredFunding);
+    expect(tester.widget<Text>(find.byKey(fundingNote)).data, unfilteredNote);
+    await tester.tap(find.byKey(const Key('basis-card-consumption')));
+    await tester.pumpAndSettle();
+
+    // Two types: AND with the account dimension.
+    await _openFilter(tester, 'type');
+    await _tapFilterKey(tester, 'transaction-filter-option-type-expense');
+    await _tapFilterKey(tester, 'transaction-filter-option-type-transfer');
+    await _tapFilterKey(tester, 'transaction-filter-apply');
+    expect(find.text('现金餐饮'), findsOneWidget);
+    expect(find.text('银行旅行'), findsOneWidget);
+    expect(find.text('信用卡还款'), findsOneWidget);
+    expect(find.text('银行工资'), findsNothing);
+    expect(find.text('信用卡餐饮'), findsNothing);
+    expect(_pillLabel('type', '已选 2 种类型'), findsOneWidget);
+    expect(_selectedBasisValue(tester), '- MYR 300');
+
+    // Two categories: uncategorized transfer drops out.
+    await _openFilter(tester, 'category');
+    await _tapFilterKey(tester, 'transaction-filter-option-category-cat-food');
+    await _tapFilterKey(
+      tester,
+      'transaction-filter-option-category-cat-travel',
+    );
+    await _tapFilterKey(tester, 'transaction-filter-apply');
+    expect(find.text('现金餐饮'), findsOneWidget);
+    expect(find.text('银行旅行'), findsOneWidget);
+    expect(find.text('信用卡还款'), findsNothing);
+    expect(_pillLabel('category', '已选 2 个类别'), findsOneWidget);
+
+    // Advanced filter opens the integrated sheet instead of the legacy page.
+    await tester.tap(find.byTooltip('高级筛选'));
+    await tester.pumpAndSettle();
+    expect(find.text('筛选交易'), findsOneWidget);
+    expect(
+      tester
+          .widget<CheckboxListTile>(
+            find.byKey(const Key('transaction-filter-option-account-cash')),
+          )
+          .value,
+      isTrue,
+    );
+    expect(
+      find.byKey(const Key('transaction-filter-option-type-income')),
+      findsOneWidget,
+    );
+    await _tapFilterKey(tester, 'transaction-filter-clear');
+    await _tapFilterKey(tester, 'transaction-filter-apply');
+    expect(find.text('信用卡餐饮'), findsOneWidget);
+    expect(find.text('银行工资'), findsOneWidget);
+    expect(_pillLabel('account', '全部账户'), findsOneWidget);
+    expect(_pillLabel('type', '全部类型'), findsOneWidget);
+    expect(_pillLabel('category', '全部类别'), findsOneWidget);
+    expect(_selectedBasisValue(tester), 'MYR 400');
+
+    // A transfer matches when the selected account is its destination.
+    await _openFilter(tester, 'account');
+    await _tapFilterKey(tester, 'transaction-filter-option-account-credit');
+    await _tapFilterKey(tester, 'transaction-filter-apply');
+    expect(find.text('信用卡餐饮'), findsOneWidget);
+    expect(find.text('信用卡还款'), findsOneWidget);
+    expect(find.text('现金餐饮'), findsNothing);
+    expect(find.text('银行工资'), findsNothing);
+    expect(_pillLabel('account', '信用卡'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('basis-card-committed')));
+    await tester.pumpAndSettle();
+    expect(find.text('新增承诺 MYR 300'), findsOneWidget);
+    expect(find.text('偿还抵扣 MYR 150'), findsOneWidget);
+  });
 }
 
 String _selectedBasisValue(WidgetTester tester) {
@@ -354,6 +583,24 @@ String _selectedBasisValue(WidgetTester tester) {
       .widget<Text>(find.byKey(const Key('transaction-basis-selected-value')))
       .data!;
 }
+
+Future<void> _openFilter(WidgetTester tester, String dimension) async {
+  await tester.tap(find.byKey(Key('transaction-filter-$dimension')));
+  await tester.pumpAndSettle();
+}
+
+Future<void> _tapFilterKey(WidgetTester tester, String key) async {
+  final finder = find.byKey(Key(key));
+  await tester.ensureVisible(finder);
+  await tester.pumpAndSettle();
+  await tester.tap(finder);
+  await tester.pumpAndSettle();
+}
+
+Finder _pillLabel(String dimension, String label) => find.descendant(
+      of: find.byKey(Key('transaction-filter-$dimension')),
+      matching: find.text(label),
+    );
 
 class _TestRepositoryNotifier extends FinanceRepositoryNotifier {
   _TestRepositoryNotifier(this.repository);
