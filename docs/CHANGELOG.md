@@ -2,21 +2,22 @@
 
 ## 2026-09-25
 
-### Finance Compass v0.10.0 公开版发布准备（产物已构建，尚未发布）
+### Finance Compass v0.10.0 公开版发布
 
-- 行为：版本号改为 `0.10.0+44`，设置页“关于与支持”显示 `版本 0.10.0+44 · 本地优先的个人财务罗盘`。本版准备收录下面及 2026-09-24 的四项未发布改动：外观页主题卡片点击预览、报表单页改版、交易条件多选，以及资产目标截止到今天与真实首次达成日。README 与 `SELF_HOSTING.md` 的六个下载直链已改为 `v0.10.0` 资产名，六项发布产物与 `SHA256SUMS.txt` 已在本机 `artifacts/release/v0.10.0` 构建并核对，但源码**尚未提交到 GitHub，也未创建标签或发布 GitHub Release**，所以这些链接暂时无法下载。README 与 `SELF_HOSTING.md` 已注明这一点，并引导用户到 `/releases/latest` 获取已发布的 v0.9.1。
+- 行为：版本号改为 `0.10.0+44`，设置页“关于与支持”显示 `版本 0.10.0+44 · 本地优先的个人财务罗盘`。本版收录下面及 2026-09-24 的四项改动：外观页主题卡片点击预览、报表单页改版、交易条件多选，以及资产目标截止到今天与真实首次达成日。README 与 `SELF_HOSTING.md` 的六个下载直链指向 `v0.10.0` 资产名。已通过 [PR #7](https://github.com/lawpowen/finance-compass-app/pull/7) 合并到 `main`（合并提交 `786312cf4ebec2eb7427d932234adfd2d0f8a164`），annotated tag `v0.10.0` 指向该提交，[GitHub Release](https://github.com/lawpowen/finance-compass-app/releases/tag/v0.10.0) 已公开并成为 Latest；六条下载直链已无认证验证。发布后移除了 README 与 `SELF_HOSTING.md` 中“直链暂不可下载、请改用 v0.9.1”的临时提示。
 - 设计：`pubspec.yaml` 仍是版本来源，Android `versionName`/`versionCode` 为 `0.10.0` / `44`（已在构建产物中核对）。自托管 Service Worker 的 `CACHE_NAME` 由 `finance-compass-shell-v0.9.1` 改为 `finance-compass-shell-v0.10.0`，保证已安装的 PWA 换用新应用壳。两份 Compose 的本地镜像标签改为 `finance-compass-web:0.10.0`。`tool/package_selfhost.ps1` 默认 `-Version 0.10.0`，输出到 `artifacts/release/v0.10.0`。本次版本同步不改动应用逻辑。
-- 兼容性：版本同步本身不涉及 schema、迁移、JSON 备份格式、权限或应用 ID 变化；四项功能改动的兼容性见各自条目（旧 `report_section_order_v2` 值不再控制布局；已存储的资产目标 `reached_at` 在首次写入时会按新规则重算）。发布后 Android 将以更高的 versionCode `44` 和同一发布密钥覆盖升级；Windows 安装器沿用固定 `AppId` 原地升级。
-- 安全与运维：未改动签名配置、`android/key.properties`、发布密钥或用户数据。全量测试、Web 构建、六项产物构建与签名校验、`SHA256SUMS.txt` 已完成。按 `RELEASE_WORKFLOW.md`，仍须提交并通过 PR 合并、在 `main` 上打 `v0.10.0` 标签、创建 Release，并回读六条直链。回滚：发布前直接还原本次版本字段即可；发布后按回滚规则以更高补丁号修复。
-- 文档：更新 README（当前版本、六个直链、发布准备提示）、`SELF_HOSTING.md`（当前版本、三个直链、打包命令与 `CACHE_NAME` 示例）、`docs/README.md`、`SECURITY_AND_OPERATIONS.md`（Android 包版本）、`RELEASE_WORKFLOW.md`（当前版本与 APK 版本检查值）及本记录。产物构建后新增 [v0.10.0 发布前 QA](public-release-qa-v0.10.0-2026-09-25.md)，并同步 README、`docs/README.md`、`RELEASE_WORKFLOW.md`、`TESTING_AND_QUALITY.md` 中的发布状态。历史版本段落（README 中的 `0.9.0+42` 自托管说明、`SELF_HOSTING.md` 的 v0.9.0 字体问题、各版 QA 文档与既有变更记录）保持原样。
+- 兼容性：版本同步本身不涉及 schema、迁移、JSON 备份格式、权限或应用 ID 变化；四项功能改动的兼容性见各自条目（旧 `report_section_order_v2` 值不再控制布局；已存储的资产目标 `reached_at` 在首次写入时会按新规则重算）。Android 以更高的 versionCode `44` 和同一发布密钥覆盖升级；Windows 安装器沿用固定 `AppId` 原地升级。
+- 安全与运维：未改动签名配置、`android/key.properties`、发布密钥或用户数据。全量测试、Web 构建、六项产物构建与签名校验、`SHA256SUMS.txt` 已完成；七项附件已上传，GitHub 回读的 size 与 SHA-256 digest 与本机一致。回滚：版本已公开，不删除或覆盖 `v0.10.0` 资产，按 `RELEASE_WORKFLOW.md` 的回滚规则以更高补丁号修复。
+- 文档：更新 README（当前版本、六个直链、发布准备提示）、`SELF_HOSTING.md`（当前版本、三个直链、打包命令与 `CACHE_NAME` 示例）、`docs/README.md`、`SECURITY_AND_OPERATIONS.md`（Android 包版本）、`RELEASE_WORKFLOW.md`（当前版本与 APK 版本检查值）及本记录。产物构建后新增 [v0.10.0 发布 QA](public-release-qa-v0.10.0-2026-09-25.md)，并同步 README、`docs/README.md`、`RELEASE_WORKFLOW.md`、`TESTING_AND_QUALITY.md` 中的发布状态。正式发布后再次更新 QA（加入 PR、标签、Release、附件校验与直链回读）、README、`SELF_HOSTING.md`、`docs/README.md`、`RELEASE_WORKFLOW.md`、`TESTING_AND_QUALITY.md` 与本记录，把“发布准备中/尚未发布”改为已发布。历史版本段落（README 中的 `0.9.0+42` 自托管说明、`SELF_HOSTING.md` 的 v0.9.0 字体问题、各版 QA 文档与既有变更记录）保持原样。
 - 验证：全仓检索确认，列明文件中剩余的 `0.9.1` 引用都指向已发布版本或历史 QA。六个直链的资产名符合发布契约。使用 Flutter 3.44.1 执行 `dart format --output=none --set-exit-if-changed lib test`，结果为 140 个文件、0 改动，退出码 0。`flutter analyze --no-fatal-infos --no-fatal-warnings` 退出码 0，共 67 项问题：0 error、2 项既有 warning、65 info。`tool/package_selfhost.ps1` 经 PowerShell 解析无语法错误，`node --check web/service-worker.js` 通过。本机没有 Docker，未执行 `docker compose config`。本次未重新运行 `flutter test`，全量测试结果见下方资产目标条目。
   - 产物构建阶段：全量测试 156 项通过、2 项跳过、0 失败。格式检查 140 个文件，0 改动。静态分析 0 error、2 项既有 warning、65 info。
   - Android APK：versionName `0.10.0`、versionCode `44`，含 3 个 ABI，v2 签名校验通过，证书 SHA-256 与 v0.9.1 相同。
   - Windows：ProductVersion/FileVersion 为 `0.10.0+44`。Inno Setup 6.7.3 编译成功，便携 ZIP 共 23 个条目。
   - 自托管 Web：构建结果为 142 个文件，验证 36 项预缓存和 102 个回退字体。三份自托管 ZIP 各有 150 个条目，均含 `webroot/index.html` 与 `compose.yml`。
   - 支持二维码的 SHA-256 与上一版相同。`SHA256SUMS.txt` 六项回算一致。
-  - 文件名、大小和哈希见 [发布前 QA](public-release-qa-v0.10.0-2026-09-25.md)。
-- 限制：发布尚未完成。PR 合并、`v0.10.0` 标签、GitHub Release 与直链回读都未执行，六个 v0.10.0 直链在 Release 上传资产前无法下载。本轮未执行以下检查：
+  - 文件名、大小和哈希见 [发布 QA](public-release-qa-v0.10.0-2026-09-25.md)。
+  - 发布回读：合并提交 tree `ee4a41744dd3eb321396355771a0b41f6ed3108c` 与构建时源码 tree 相同；Release 非草稿、非预发布，`/releases/latest` 返回 `v0.10.0`；七个附件的 size 与 SHA-256 digest 与本机一致；README 六条直链无认证 HEAD 均返回 200，`Content-Length` 与本机一致。
+- 限制：发布与 GitHub 回读已完成，但以下检查在发布前后均未执行：
   - Docker 构建；
   - 浏览器离线与 CSP 回归；
   - Windows 安装版或便携版实机打开；

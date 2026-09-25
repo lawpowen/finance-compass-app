@@ -1,8 +1,8 @@
-# Finance Compass v0.10.0 发布前 QA（尚未发布）
+# Finance Compass v0.10.0 公开发布 QA
 
-验证日期：2026-09-25。版本：`0.10.0+44`。计划发布标签：`v0.10.0`。
+验证日期：2026-09-25。版本：`0.10.0+44`。发布标签：`v0.10.0`。
 
-> 状态：六项发布产物与 `SHA256SUMS.txt` 已在本机 `artifacts/release/v0.10.0` 构建完成。源码**尚未**提交到 GitHub、合并到 `main`，也**尚未**创建 `v0.10.0` 标签或 GitHub Release。README 与 [自托管指南](SELF_HOSTING.md) 中的六个 v0.10.0 直链暂时无法下载；已发布的最新版本仍是 [v0.9.1](public-release-qa-v0.9.1-2026-09-24.md)。
+> 状态：已公开发布。源码经 [PR #7](https://github.com/lawpowen/finance-compass-app/pull/7) 合并到 `main`；[v0.10.0 Release](https://github.com/lawpowen/finance-compass-app/releases/tag/v0.10.0) 为非草稿、非预发布，GitHub `releases/latest` 指向该版本。README 与 [自托管指南](SELF_HOSTING.md) 中的六个 v0.10.0 直链均可无认证下载，详见下文“GitHub 公开回读”。上一版本见 [v0.9.1 QA](public-release-qa-v0.9.1-2026-09-24.md)。
 
 ## 发布范围
 
@@ -45,19 +45,19 @@
 | `FinanceCompass-SelfHost-Windows-v0.10.0.zip` | 16,580,532 | `f6d3337d3bb1355aeff4f4dc730124fbcb166385b233fdb179ea43fb4dfb9993` |
 | `FinanceCompass-SelfHost-macOS-v0.10.0.zip` | 16,580,532 | `0e08b781cacfbeb6fd65fd74f2298a2b96c9c0b758141e91d1ccacfad1ed80cd` |
 
-## 尚未执行（发布前后待办）
+## GitHub 公开回读
 
-按 [发布流程](RELEASE_WORKFLOW.md) 仍需完成：
+以下步骤按 [发布流程](RELEASE_WORKFLOW.md) 完成：
 
-1. 提交源码与文档，通过 PR 合并到 `main`，并确认合并提交与构建时的源码树一致。
-2. 在确切的 `main` 合并提交上创建 `v0.10.0` 标签。
-3. 创建非草稿、非预发布的 GitHub Release，上传六个包和 `SHA256SUMS.txt`。
-4. 通过 GitHub 回读附件的大小和 SHA-256，确认 `/releases/latest` 指向 `v0.10.0`，并无认证检查 README 的六个直链。
-5. 发布完成后更新本文档、[变更记录](CHANGELOG.md)、README 与 [文档索引](README.md) 的发布状态。
+- [PR #7](https://github.com/lawpowen/finance-compass-app/pull/7) 已合并。`main` 合并提交为 `786312cf4ebec2eb7427d932234adfd2d0f8a164`，其 tree SHA `ee4a41744dd3eb321396355771a0b41f6ed3108c` 与构建产物时的源码 tree 完全相同，因此上表产物来自已合并的源码。
+- `v0.10.0` 是 annotated tag，peel 后指向上述合并提交。
+- [v0.10.0 Release](https://github.com/lawpowen/finance-compass-app/releases/tag/v0.10.0) 已公开，非草稿、非预发布；GitHub `/releases/latest` 返回 `v0.10.0`。
+- 附件共七个：六个包和 `SHA256SUMS.txt`。GitHub 回读的每项 size 与 SHA-256 digest 都与本机 `artifacts/release/v0.10.0` 中的文件一致。
+- README 的六条直接下载链接逐条发出无认证 HEAD 请求，均返回 200，`Content-Length` 与上表的本机文件大小一致。
 
 ## 已知限制
 
-- 本轮**未执行**以下检查，不能视为已通过：
+- 发布前后均**未执行**以下检查，不能视为已通过（发布后只做了 GitHub 元数据、附件摘要与直链回读，没有下载安装包到目标设备）：
   - Docker 构建与启动（本机没有 Docker）；
   - Edge 或其他浏览器对自托管 Web 的首次加载、离线重载和 CSP 回归；
   - 在交互桌面实际打开 Windows 安装版或便携版；

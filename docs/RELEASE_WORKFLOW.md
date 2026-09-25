@@ -17,7 +17,7 @@ Finance Compass 的公开 GitHub Release 固定提供：
 
 ## 版本与身份
 
-`pubspec.yaml` 是版本来源，格式为 `X.Y.Z+N`。公开 Git 标签使用 `vX.Y.Z`，Android `versionCode` 使用 `N`。当前版本为 `0.10.0+44` / `v0.10.0`（发布准备中：六项产物已在 `artifacts/release/v0.10.0` 构建并核对，尚未提交、打标签或创建 Release，见 [v0.10.0 发布前 QA](public-release-qa-v0.10.0-2026-09-25.md)；最近已发布版本为 `0.9.1+43` / `v0.9.1`）；首个公开原生版本为 `0.8.0+41` / `v0.8.0`。
+`pubspec.yaml` 是版本来源，格式为 `X.Y.Z+N`。公开 Git 标签使用 `vX.Y.Z`，Android `versionCode` 使用 `N`。当前版本为 `0.10.0+44` / `v0.10.0`（已于 2026-09-25 公开发布，标签指向 `main` 合并提交 `786312c`，见 [v0.10.0 公开发布 QA](public-release-qa-v0.10.0-2026-09-25.md)；上一版本为 `0.9.1+43` / `v0.9.1`）；首个公开原生版本为 `0.8.0+41` / `v0.8.0`。
 
 改版本时必须同步：`pubspec.yaml`；设置页“关于与支持”的版本文字（`lib/src/features/settings/settings_v2_screen.dart`）；`web/service-worker.js` 的 `CACHE_NAME`（缓存优先，不更换则已安装 PWA 会继续使用旧应用壳）；`deploy/selfhost/compose.yml` 与 `compose.runtime.yml` 的本地镜像标签；`tool/package_selfhost.ps1` 默认版本与输出目录；README 与 `SELF_HOSTING.md` 的当前版本和下载直链；`docs/README.md`、`SECURITY_AND_OPERATIONS.md` 的当前版本。明确描述历史版本的段落与旧版 QA 保持原样。
 

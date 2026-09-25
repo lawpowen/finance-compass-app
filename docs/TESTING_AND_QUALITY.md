@@ -192,14 +192,15 @@ flutter build windows --debug
 - 测试：`web_delivery_contract_test.dart` 8 项通过；全量 `flutter test` 135 项通过、2 项按设计跳过；`dart format` 无需修改；`flutter analyze` 无 error，保留 106 项既有问题（3 项 warning、103 项 info，均不在本次修改文件中）。
 - 更正：2026-08-04 v0.9.0 记录中“输出不含 `gstatic.com`”并不准确——旧 PowerShell 检查对 `Get-Content -Raw` 多文件返回的数组调用 `.Contains()`，实际从未比对子字符串；`flutter.js` 始终包含 gstatic CanvasKit URL，`main.dart.js` 始终包含字体回退地址，同一检查在 shell/Docker 中会必然失败。
 
-## 2026-09-25 v0.10.0 发布前验证（尚未发布）
+## 2026-09-25 v0.10.0 发布验证
 
 - 源码：全量 `flutter test` 156 项通过、2 项按设计跳过、0 失败。`dart format --output=none --set-exit-if-changed lib test` 检查 140 个文件，0 改动。`flutter analyze --no-fatal-infos --no-fatal-warnings` 为 0 error、2 项既有 warning、65 info。
 - Android：versionName `0.10.0`、versionCode `44`，含 3 个 ABI，v2 签名校验通过；证书 SHA-256 与 v0.9.1 相同。
 - Windows：ProductVersion/FileVersion 为 `0.10.0+44`。Inno Setup 6.7.3 编译成功，便携 ZIP 共 23 个条目。
 - 自托管 Web：构建结果为 142 个文件，验证 36 项预缓存和 102 个回退字体。三份自托管 ZIP 各有 150 个条目，均含 `webroot/index.html` 与 `compose.yml`。
 - 发布文件：六项产物的 SHA-256 与 `SHA256SUMS.txt` 逐项一致；支持二维码的哈希与 v0.9.1 相同。
-- 未执行：Docker、浏览器离线与 CSP 回归、Windows 安装版或便携版实机打开、Android 真机安装，以及 GitHub 发布与直链回读。详见 [v0.10.0 发布前 QA](public-release-qa-v0.10.0-2026-09-25.md)。
+- GitHub 回读：PR #7 合并提交的 tree 与构建时源码 tree 相同，`v0.10.0` 标签 peel 到该提交；Release 非草稿、非预发布且为 Latest。七个附件的 size 与 SHA-256 digest 与本机一致；README 六条直链无认证 HEAD 均为 200，`Content-Length` 与本机一致。
+- 未执行：Docker、浏览器离线与 CSP 回归、Windows 安装版或便携版实机打开、Android 真机安装，以及 iOS/Android 浏览器 HTTPS 安装。详见 [v0.10.0 公开发布 QA](public-release-qa-v0.10.0-2026-09-25.md)。
 
 ## UI 质量
 

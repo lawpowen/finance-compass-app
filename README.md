@@ -1,6 +1,6 @@
 # Finance Compass
 
-当前版本：`0.10.0+44`（发布准备中，安装包已在本机构建，尚未在 GitHub 发布；最近已发布版本为 `v0.9.1`）。工程文档索引见 [docs/README.md](docs/README.md)。
+当前版本：`0.10.0+44`（已在 GitHub 公开发布为 [`v0.10.0`](https://github.com/lawpowen/finance-compass-app/releases/tag/v0.10.0)）。工程文档索引见 [docs/README.md](docs/README.md)。
 
 完整中文需求与设计文档请看：[finance-app-design.md](finance-app-design.md)。
 
@@ -30,8 +30,6 @@ The Docker deployment defaults to localhost-only. Put HTTPS and access control i
 
 无需安装 Flutter 或其他开发工具，请按设备选择：
 
-> v0.10.0 仍在发布准备中：本页与自托管小节的六个 v0.10.0 直链要在 GitHub Release 上传资产后才能下载。在此之前请从 [全部版本](https://github.com/lawpowen/finance-compass-app/releases/latest) 获取已发布的 v0.9.1。
-
 ### Windows 10/11 x64
 
 **[下载 Windows 安装版（推荐）](https://github.com/lawpowen/finance-compass-app/releases/download/v0.10.0/FinanceCompass-Windows-x64-Setup-v0.10.0.exe)**
@@ -50,7 +48,7 @@ APK 使用 Finance Compass 独立发布密钥签名。首次侧载时，Android 
 
 ## Current Highlights
 
-> v0.10.0（发布准备中）新增主题卡片点击预览、报表单页分析、交易条件多选及资产目标达成日期修正；上方 v0.10.0 直链在正式发布后才会包含这些改动，已发布的 v0.9.1 包不含。
+> v0.10.0 新增主题卡片点击预览、报表单页分析、交易条件多选及资产目标达成日期修正；上方 v0.10.0 直链已包含这些改动，v0.9.1 及更早的包不含。
 
 - 全应用交互门禁：可见箭头和启用控件必须执行真实操作；周期规则、预算月份、报表区间、货币格式和应用内提醒均已接入，计划能力明确禁用。
 - 交易页顶部三种口径为“实际消费”“实际现金”“信用/贷款”；“实际现金”卡以“需准备现金”为副标题，把已知现金流出与尚未安排的到期信用卡/贷款合并，已安排还款不重复计算，不再额外占用独立大卡。未来月份的现金流出按现金账户整笔进出计算，贷款转账使用完整月供。
