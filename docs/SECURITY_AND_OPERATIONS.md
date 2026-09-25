@@ -26,7 +26,7 @@
 
 ## Google Play 与身份计划
 
-Android 包版本为 `0.9.1+43`。正式版应用 ID 为 `com.financecompass.app`，使用本机独立发布密钥；Gradle 在缺少 `android/key.properties` 时拒绝 Release 构建，不允许静默退回 Debug 签名。密钥和密码文件被 Git 忽略，必须离线备份。内部测试 Debug 版继续使用 `com.financecompass.app.debug` 和独立数据目录，避免覆盖正式版。Google 登录、Google Play 隐私政策和数据安全表仍属于上架前工作；公开 GitHub 侧载不代表已经上架 Google Play。
+Android 包版本为 `0.10.0+44`。正式版应用 ID 为 `com.financecompass.app`，使用本机独立发布密钥；Gradle 在缺少 `android/key.properties` 时拒绝 Release 构建，不允许静默退回 Debug 签名。密钥和密码文件被 Git 忽略，必须离线备份。内部测试 Debug 版继续使用 `com.financecompass.app.debug` 和独立数据目录，避免覆盖正式版。Google 登录、Google Play 隐私政策和数据安全表仍属于上架前工作；公开 GitHub 侧载不代表已经上架 Google Play。
 
 周期规则保存后只在本地生成未来预计交易，不改变账户实际余额。贷款的全期预计交易必须由用户在提示框或详情页明确触发，并在选择同币种还款账户及确认期数和金额后批量写入完整月供；记录实际还款时替换对应期次的预计月供。打开贷款详情会自动把本应用旧版生成的 `planned` 本金/利息组合合并为一笔月供，不改写实际历史记录，也不改写中途建账以前的月份。该流程不新增网络、后台任务或系统权限。
 

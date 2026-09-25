@@ -13,7 +13,6 @@ import '../shared/finance_action_menu_button.dart';
 import 'transaction_automation_pages.dart';
 import 'transaction_composer_page.dart';
 import 'transaction_form_dialog.dart';
-import 'transactions_screen.dart';
 
 enum _TransactionBasis {
   consumption,
@@ -21,7 +20,7 @@ enum _TransactionBasis {
   committed,
 }
 
-const _allFilterValue = '__all__';
+enum _FilterDimension { account, type, category }
 
 class TransactionsV2Screen extends ConsumerStatefulWidget {
   const TransactionsV2Screen({super.key, required this.repository});
@@ -36,9 +35,7 @@ class TransactionsV2Screen extends ConsumerStatefulWidget {
 class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
   int monthOffset = 0;
   bool includePlanned = false;
-  TransactionType? typeFilter;
-  String? accountFilter;
-  String? categoryFilter;
+  _TransactionFilters filters = const _TransactionFilters();
   _TransactionBasis selectedBasis = _TransactionBasis.consumption;
   final Set<String> selectedTransactionIds = {};
   bool isDeleting = false;
@@ -61,18 +58,7 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
         .toList()
       ..sort((a, b) => b.transactionDate.compareTo(a.transactionDate));
     final allForMonth = realForMonth;
-    bool matchesActiveFilters(FinanceTransaction item) {
-      final matchesAccount = accountFilter == null ||
-          item.accountId == accountFilter ||
-          item.toAccountId == accountFilter;
-      final matchesCategory =
-          categoryFilter == null || item.categoryId == categoryFilter;
-      return matchesAccount &&
-          matchesCategory &&
-          (typeFilter == null || item.type == typeFilter);
-    }
-
-    final filteredForMonth = allForMonth.where(matchesActiveFilters).toList();
+    final filteredForMonth = allForMonth.where(filters.matches).toList();
     final visible = filteredForMonth
         .where((item) =>
             includePlanned || item.status != TransactionStatus.planned)
@@ -136,15 +122,8 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
                       _HeaderAction(
                         icon: Icons.filter_alt_outlined,
                         tooltip: '高级筛选',
-                        onPressed: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => Scaffold(
-                              appBar: AppBar(title: const Text('高级筛选')),
-                              body: TransactionsScreen(repository: repository),
-                            ),
-                          ),
-                        ),
+                        onPressed: () =>
+                            _openFilterSheet(_FilterDimension.values.toSet()),
                       ),
                     ],
             ),
@@ -226,27 +205,38 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
                   _QuickFilterPill(
                     key: const Key('transaction-filter-account'),
                     icon: Icons.account_balance_wallet_outlined,
-                    label: accountFilter == null
-                        ? '全部账户'
-                        : repository.accountName(accountFilter!),
-                    selected: accountFilter != null,
-                    onTap: _pickAccountFilter,
+                    label: _selectionLabel(
+                      filters.accountIds,
+                      allLabel: '全部账户',
+                      unit: '个账户',
+                      nameOf: repository.accountName,
+                    ),
+                    selected: filters.accountIds.isNotEmpty,
+                    onTap: () => _openFilterSheet({_FilterDimension.account}),
                   ),
                   _QuickFilterPill(
                     key: const Key('transaction-filter-type'),
                     icon: Icons.list_alt_rounded,
-                    label: typeFilter == null ? '全部类型' : _typeName(typeFilter!),
-                    selected: typeFilter != null,
-                    onTap: _pickTypeFilter,
+                    label: _selectionLabel(
+                      filters.types,
+                      allLabel: '全部类型',
+                      unit: '种类型',
+                      nameOf: _typeName,
+                    ),
+                    selected: filters.types.isNotEmpty,
+                    onTap: () => _openFilterSheet({_FilterDimension.type}),
                   ),
                   _QuickFilterPill(
                     key: const Key('transaction-filter-category'),
                     icon: Icons.sell_outlined,
-                    label: categoryFilter == null
-                        ? '全部类别'
-                        : repository.categoryName(categoryFilter!),
-                    selected: categoryFilter != null,
-                    onTap: _pickCategoryFilter,
+                    label: _selectionLabel(
+                      filters.categoryIds,
+                      allLabel: '全部类别',
+                      unit: '个类别',
+                      nameOf: repository.categoryName,
+                    ),
+                    selected: filters.categoryIds.isNotEmpty,
+                    onTap: () => _openFilterSheet({_FilterDimension.category}),
                   ),
                   _CompactSearchButton(onTap: _openSearch),
                 ],
@@ -369,7 +359,8 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
         final currentCommitted = repository.accounts
             .where((account) =>
                 account.reportGroup == ReportGroup.credit &&
-                (accountFilter == null || account.id == accountFilter))
+                (filters.accountIds.isEmpty ||
+                    filters.accountIds.contains(account.id)))
             .fold<double>(0, (sum, account) {
           final balance = account.accountType == AccountType.creditCard
               ? repository.convertToBase(
@@ -725,92 +716,47 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
     );
   }
 
-  Future<void> _pickAccountFilter() async {
-    final value = await _showFilterSheet(
-      title: '筛选账户',
-      values: {
-        for (final account in repository.accounts) account.id: account.name,
-      },
-      selectedValue: accountFilter,
-    );
-    if (!mounted || value == null) return;
-    setState(() {
-      selectedTransactionIds.clear();
-      accountFilter = value == _allFilterValue ? null : value;
-    });
-  }
-
-  Future<void> _pickTypeFilter() async {
-    final value = await _showFilterSheet(
-      title: '筛选类型',
-      values: {
-        for (final type in TransactionType.values) type.name: _typeName(type),
-      },
-      selectedValue: typeFilter?.name,
-    );
-    if (!mounted || value == null) return;
-    setState(() {
-      selectedTransactionIds.clear();
-      typeFilter = value == _allFilterValue
-          ? null
-          : TransactionType.values.firstWhere((type) => type.name == value);
-    });
-  }
-
-  Future<void> _pickCategoryFilter() async {
-    final value = await _showFilterSheet(
-      title: '筛选类别',
-      values: {
-        for (final category in repository.categories)
-          category.id: category.name,
-      },
-      selectedValue: categoryFilter,
-    );
-    if (!mounted || value == null) return;
-    setState(() {
-      selectedTransactionIds.clear();
-      categoryFilter = value == _allFilterValue ? null : value;
-    });
-  }
-
-  Future<String?> _showFilterSheet({
-    required String title,
-    required Map<String, String> values,
-    required String? selectedValue,
-  }) {
-    return showModalBottomSheet<String>(
+  Future<void> _openFilterSheet(Set<_FilterDimension> dimensions) async {
+    final title = dimensions.length == 1
+        ? switch (dimensions.first) {
+            _FilterDimension.account => '筛选账户',
+            _FilterDimension.type => '筛选类型',
+            _FilterDimension.category => '筛选类别',
+          }
+        : '筛选交易';
+    final result = await showModalBottomSheet<_TransactionFilters>(
       context: context,
       showDragHandle: true,
-      builder: (sheetContext) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
-          children: [
-            ListTile(
-              title: Text(title),
-              trailing: selectedValue == null
-                  ? const Icon(Icons.check_rounded)
-                  : null,
-            ),
-            ListTile(
-              title: const Text('全部'),
-              trailing: selectedValue == null
-                  ? const Icon(Icons.check_rounded)
-                  : null,
-              onTap: () => Navigator.pop(sheetContext, _allFilterValue),
-            ),
-            for (final entry in values.entries)
-              ListTile(
-                title: Text(entry.value),
-                trailing: selectedValue == entry.key
-                    ? const Icon(Icons.check_rounded)
-                    : null,
-                onTap: () => Navigator.pop(sheetContext, entry.key),
-              ),
-          ],
-        ),
+      isScrollControlled: true,
+      builder: (_) => _TransactionFilterSheet(
+        title: title,
+        dimensions: dimensions,
+        initial: filters,
+        accounts: {
+          for (final account in repository.accounts) account.id: account.name,
+        },
+        categories: {
+          for (final category in repository.categories)
+            category.id: category.name,
+        },
       ),
     );
+    if (!mounted || result == null) return;
+    setState(() {
+      selectedTransactionIds.clear();
+      filters = result;
+    });
+  }
+
+  String _selectionLabel<T>(
+    Set<T> values, {
+    required String allLabel,
+    required String unit,
+    required String Function(T value) nameOf,
+  }) {
+    if (values.isEmpty) return allLabel;
+    if (values.length == 1) return nameOf(values.first);
+    return '已选 ${values.length} $unit';
   }
 
   void _changeMonth(int delta) {
@@ -1053,6 +999,207 @@ class _HeaderAction extends StatelessWidget {
           icon: Icon(icon, size: 19, color: color),
         ),
       );
+}
+
+@immutable
+class _TransactionFilters {
+  const _TransactionFilters({
+    this.accountIds = const {},
+    this.types = const {},
+    this.categoryIds = const {},
+  });
+
+  /// 空集合表示“全部”；同一维度内为 OR，不同维度之间为 AND。
+  /// 转账的来源账户或目标账户任一命中即视为命中账户筛选。
+  final Set<String> accountIds;
+  final Set<TransactionType> types;
+  final Set<String> categoryIds;
+
+  bool matches(FinanceTransaction item) {
+    final matchesAccount = accountIds.isEmpty ||
+        accountIds.contains(item.accountId) ||
+        (item.toAccountId != null && accountIds.contains(item.toAccountId));
+    final matchesType = types.isEmpty || types.contains(item.type);
+    final matchesCategory = categoryIds.isEmpty ||
+        (item.categoryId != null && categoryIds.contains(item.categoryId));
+    return matchesAccount && matchesType && matchesCategory;
+  }
+}
+
+class _TransactionFilterSheet extends StatefulWidget {
+  const _TransactionFilterSheet({
+    required this.title,
+    required this.dimensions,
+    required this.initial,
+    required this.accounts,
+    required this.categories,
+  });
+
+  final String title;
+  final Set<_FilterDimension> dimensions;
+  final _TransactionFilters initial;
+  final Map<String, String> accounts;
+  final Map<String, String> categories;
+
+  @override
+  State<_TransactionFilterSheet> createState() =>
+      _TransactionFilterSheetState();
+}
+
+class _TransactionFilterSheetState extends State<_TransactionFilterSheet> {
+  late final Set<String> accountIds = {...widget.initial.accountIds};
+  late final Set<TransactionType> types = {...widget.initial.types};
+  late final Set<String> categoryIds = {...widget.initial.categoryIds};
+
+  void _clearVisibleDimensions() {
+    setState(() {
+      if (widget.dimensions.contains(_FilterDimension.account)) {
+        accountIds.clear();
+      }
+      if (widget.dimensions.contains(_FilterDimension.type)) types.clear();
+      if (widget.dimensions.contains(_FilterDimension.category)) {
+        categoryIds.clear();
+      }
+    });
+  }
+
+  void _apply() {
+    Navigator.pop(
+      context,
+      _TransactionFilters(
+        accountIds: Set.unmodifiable(accountIds),
+        types: Set.unmodifiable(types),
+        categoryIds: Set.unmodifiable(categoryIds),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    return SafeArea(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * .8,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 4),
+              child: Text(widget.title, style: textTheme.titleMedium),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+              child: Text(
+                '同一项内满足任一选项即可，不同项需同时满足；未勾选表示全部。',
+                style: textTheme.bodySmall,
+              ),
+            ),
+            Flexible(
+              child: ListView(
+                shrinkWrap: true,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                children: [
+                  if (widget.dimensions.contains(_FilterDimension.account))
+                    ..._section(
+                      title: '账户',
+                      keyPrefix: 'account',
+                      options: widget.accounts,
+                      selected: accountIds,
+                      keyOf: (id) => id,
+                    ),
+                  if (widget.dimensions.contains(_FilterDimension.type))
+                    ..._section(
+                      title: '类型',
+                      keyPrefix: 'type',
+                      options: {
+                        for (final type in TransactionType.values)
+                          type: _typeName(type),
+                      },
+                      selected: types,
+                      keyOf: (type) => type.name,
+                    ),
+                  if (widget.dimensions.contains(_FilterDimension.category))
+                    ..._section(
+                      title: '类别',
+                      keyPrefix: 'category',
+                      options: widget.categories,
+                      selected: categoryIds,
+                      keyOf: (id) => id,
+                    ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+              child: Row(
+                children: [
+                  TextButton(
+                    key: const Key('transaction-filter-cancel'),
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('取消'),
+                  ),
+                  const Spacer(),
+                  TextButton(
+                    key: const Key('transaction-filter-clear'),
+                    onPressed: _clearVisibleDimensions,
+                    child: const Text('全部'),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton(
+                    key: const Key('transaction-filter-apply'),
+                    onPressed: _apply,
+                    child: const Text('应用'),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _section<T>({
+    required String title,
+    required String keyPrefix,
+    required Map<T, String> options,
+    required Set<T> selected,
+    required String Function(T value) keyOf,
+  }) {
+    return [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 2),
+        child: Text(
+          selected.isEmpty ? '$title · 全部' : '$title · 已选 ${selected.length}',
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
+      ),
+      if (options.isEmpty)
+        const Padding(
+          padding: EdgeInsets.fromLTRB(12, 4, 12, 8),
+          child: Text('暂无可选项'),
+        ),
+      for (final entry in options.entries)
+        CheckboxListTile(
+          key: Key('transaction-filter-option-$keyPrefix-${keyOf(entry.key)}'),
+          value: selected.contains(entry.key),
+          dense: true,
+          controlAffinity: ListTileControlAffinity.leading,
+          title: Text(entry.value),
+          onChanged: (checked) => setState(() {
+            if (checked == true) {
+              selected.add(entry.key);
+            } else {
+              selected.remove(entry.key);
+            }
+          }),
+        ),
+    ];
+  }
 }
 
 class _BasisSummary {

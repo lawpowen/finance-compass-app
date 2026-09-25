@@ -270,7 +270,7 @@ class FinanceRepository {
     );
     await database.setMetaValue(_exchangeRatesMetaKey, jsonEncode(normalized));
     await database.setMetaValue(_currencyPriorityMetaKey, jsonEncode(ordered));
-    return refresh();
+    return _refreshWithGoalSync();
   }
 
   List<TransactionTemplate> get transactionTemplates {
@@ -404,10 +404,24 @@ class FinanceRepository {
     }).toList();
   }
 
+  /// Cutoff for asset-goal figures: [requested] (default: now), but never
+  /// later than the end of today, so future-dated actual transactions and
+  /// snapshots are not counted as assets already held.
+  DateTime assetGoalCutoffDate([DateTime? requested]) {
+    final now = DateTime.now();
+    final endOfToday = DateTime(now.year, now.month, now.day, 23, 59, 59, 999);
+    if (requested == null || requested.isAfter(endOfToday)) {
+      return endOfToday;
+    }
+    return requested;
+  }
+
+  /// Goal progress measured at [assetGoalCutoffDate] of [cutoffDate]: an
+  /// omitted or future cutoff is clamped to the end of today.
   List<AssetGoalProgressSummary> assetGoalSummaries({
     DateTime? cutoffDate,
   }) {
-    final targetCutoff = cutoffDate ?? currentMonthCutoffDate();
+    final targetCutoff = assetGoalCutoffDate(cutoffDate);
     final history = totalAssetHistory(
       cutoffDate: targetCutoff,
       includeCredit: false,
@@ -416,19 +430,13 @@ class FinanceRepository {
       targetCutoff,
       includeCredit: false,
     );
-    final summaries = assetGoals.map((goal) {
-      AssetGoalHistoryPoint? reachedPoint;
-      for (final point in history) {
-        if (point.totalAssets >= goal.targetAmount) {
-          reachedPoint = point;
-          break;
-        }
-      }
-
+    final goals = assetGoals;
+    final reachedDates = _assetGoalReachedDates(goals, upTo: targetCutoff);
+    final summaries = goals.map((goal) {
       return AssetGoalProgressSummary(
         goal: goal,
         currentAssets: currentAssets,
-        reachedAt: reachedPoint?.date ?? goal.reachedAt,
+        reachedAt: reachedDates[goal.id],
         history: history,
       );
     }).toList();
@@ -445,6 +453,73 @@ class FinanceRepository {
       return left.goal.targetAmount.compareTo(right.goal.targetAmount);
     });
     return summaries;
+  }
+
+  /// First day each goal's non-credit total assets, measured at the end of
+  /// that day, reached its target.
+  ///
+  /// Only days carrying an actual (non-planned) transaction or a snapshot of a
+  /// non-credit account, dated no later than [upTo] (already clamped to today
+  /// by [assetGoalCutoffDate]), are checked: balances only change on those
+  /// days. A goal already met before the earliest such day has no verifiable
+  /// date and maps to null, as does a goal never met by [upTo]. Stored
+  /// [AssetGoal.reachedAt] values are ignored.
+  Map<String, DateTime?> _assetGoalReachedDates(
+    List<AssetGoal> goals, {
+    required DateTime upTo,
+  }) {
+    final reached = <String, DateTime?>{
+      for (final goal in goals) goal.id: null
+    };
+    if (goals.isEmpty) {
+      return reached;
+    }
+    final assetAccountIds = {
+      for (final account in _accounts)
+        if (account.reportGroup != ReportGroup.credit) account.id,
+    };
+    DateTime dayOf(DateTime date) => DateTime(date.year, date.month, date.day);
+    final eventDays = <DateTime>{
+      for (final transaction in _transactions)
+        if (transaction.affectsBalance &&
+            !transaction.transactionDate.isAfter(upTo) &&
+            (assetAccountIds.contains(transaction.accountId) ||
+                assetAccountIds.contains(transaction.toAccountId)))
+          dayOf(transaction.transactionDate),
+      for (final snapshot in _snapshots)
+        if (!snapshot.snapshotDate.isAfter(upTo) &&
+            assetAccountIds.contains(snapshot.accountId))
+          dayOf(snapshot.snapshotDate),
+    }.toList()
+      ..sort();
+    if (eventDays.isEmpty) {
+      return reached;
+    }
+
+    final openingAssets = totalAssetsAt(
+      eventDays.first.subtract(const Duration(microseconds: 1)),
+      includeCredit: false,
+    );
+    final pending =
+        goals.where((goal) => openingAssets < goal.targetAmount).toList();
+    for (final day in eventDays) {
+      if (pending.isEmpty) {
+        break;
+      }
+      final endOfDay = DateTime(day.year, day.month, day.day, 23, 59, 59, 999);
+      final dayAssets = totalAssetsAt(
+        endOfDay.isAfter(upTo) ? upTo : endOfDay,
+        includeCredit: false,
+      );
+      pending.removeWhere((goal) {
+        if (dayAssets < goal.targetAmount) {
+          return false;
+        }
+        reached[goal.id] = day;
+        return true;
+      });
+    }
+    return reached;
   }
 
   double expenseTotalForCategory(String categoryId, String monthKey) {
@@ -1680,7 +1755,7 @@ class FinanceRepository {
       return null;
     }
     await database.deleteMetaValue(_accountReconciliationKey(accountId));
-    return refresh();
+    return _refreshWithGoalSync();
   }
 
   Future<FinanceRepository> clearAllData() async {
@@ -2408,7 +2483,7 @@ class FinanceRepository {
         for (final entry in metaPayload.entries) entry.key: '${entry.value}',
       },
     );
-    return refresh();
+    return _refreshWithGoalSync();
   }
 
   Future<ImportPreview> previewImportJson(String path) async {
@@ -2702,16 +2777,13 @@ class FinanceRepository {
       await database.deleteMetaValue('asset_goal_reached_at');
       return;
     }
-    final syncedGoals = assetGoalSummaries(cutoffDate: currentMonthCutoffDate())
+    // Recomputed from the current ledger; a date that no longer holds is
+    // cleared rather than kept.
+    final syncedGoals = assetGoalSummaries()
         .map(
           (summary) => summary.goal.copyWith(
-            reachedAt: summary.reachedAt == null
-                ? null
-                : DateTime(
-                    summary.reachedAt!.year,
-                    summary.reachedAt!.month,
-                    summary.reachedAt!.day,
-                  ),
+            reachedAt: summary.reachedAt,
+            clearReachedAt: summary.reachedAt == null,
           ),
         )
         .toList();

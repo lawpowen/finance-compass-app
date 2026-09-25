@@ -765,6 +765,8 @@ class _AppearancePageState extends State<AppearancePage> {
   late AppThemeStyle _previewStyle;
   late int mode;
   int preview = 0;
+  int? _pageAnimationTarget;
+  int _pageAnimationGeneration = 0;
 
   @override
   void initState() {
@@ -783,26 +785,47 @@ class _AppearancePageState extends State<AppearancePage> {
     super.dispose();
   }
 
+  void _setPreviewStyle(AppThemeStyle style) {
+    _previewStyle = style;
+    mode = _isDarkTheme(style) ? 2 : 1;
+  }
+
   void _previewTheme(AppThemeStyle style, {bool animate = true}) {
     final index = AppThemeStyle.values.indexOf(style);
-    setState(() {
-      _previewStyle = style;
-      mode = _isDarkTheme(style) ? 2 : 1;
+    setState(() => _setPreviewStyle(style));
+    if (!animate || !_themePageController.hasClients) return;
+    final generation = ++_pageAnimationGeneration;
+    _pageAnimationTarget = index;
+    _themePageController
+        .animateToPage(
+      index,
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeOutCubic,
+    )
+        .whenComplete(() {
+      if (!mounted || generation != _pageAnimationGeneration) return;
+      _pageAnimationTarget = null;
+      if (!_themePageController.hasClients) return;
+      final settled = _themePageController.page?.round();
+      if (settled != null && settled != index) {
+        setState(() => _setPreviewStyle(AppThemeStyle.values[settled]));
+      }
     });
-    if (animate && _themePageController.hasClients) {
-      _themePageController.animateToPage(
-        index,
-        duration: const Duration(milliseconds: 320),
-        curve: Curves.easeOutCubic,
-      );
-    }
+  }
+
+  void _handlePageChanged(int index) {
+    final target = _pageAnimationTarget;
+    if (target != null && index != target) return;
+    setState(() => _setPreviewStyle(AppThemeStyle.values[index]));
   }
 
   Future<void> _applyPreviewTheme() async {
-    await widget.settingsController.setThemeStyle(_previewStyle);
+    final style = _previewStyle;
+    await widget.settingsController.setThemeStyle(style);
     if (!mounted) return;
+    setState(() {});
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('已应用「${_themeLabel(_previewStyle)}」主题')),
+      SnackBar(content: Text('已应用「${_themeLabel(style)}」主题')),
     );
   }
 
@@ -870,10 +893,7 @@ class _AppearancePageState extends State<AppearancePage> {
           child: PageView.builder(
             controller: _themePageController,
             itemCount: AppThemeStyle.values.length,
-            onPageChanged: (index) => setState(() {
-              _previewStyle = AppThemeStyle.values[index];
-              mode = _isDarkTheme(_previewStyle) ? 2 : 1;
-            }),
+            onPageChanged: _handlePageChanged,
             itemBuilder: (context, index) {
               final style = AppThemeStyle.values[index];
               return AnimatedPadding(
@@ -885,9 +905,11 @@ class _AppearancePageState extends State<AppearancePage> {
                   index == selectedIndex ? 2 : 12,
                 ),
                 child: _ThemePreviewCard(
+                  key: ValueKey('theme-preview-${style.name}'),
                   style: style,
                   previewIndex: preview,
                   selected: index == selectedIndex,
+                  onTap: () => _previewTheme(style),
                 ),
               );
             },
@@ -976,20 +998,23 @@ class _AppearancePageState extends State<AppearancePage> {
 
 class _ThemePreviewCard extends StatelessWidget {
   const _ThemePreviewCard({
+    super.key,
     required this.style,
     required this.previewIndex,
     required this.selected,
+    required this.onTap,
   });
 
   final AppThemeStyle style;
   final int previewIndex;
   final bool selected;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final palette = paletteForStyle(style);
     final borderColor = selected ? palette.seed : palette.border;
-    return DecoratedBox(
+    final card = DecoratedBox(
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [
@@ -1023,6 +1048,21 @@ class _ThemePreviewCard extends StatelessWidget {
                 : _ThemeTransactionsPreview(palette: palette),
           ),
         ),
+      ),
+    );
+    return Semantics(
+      container: true,
+      button: true,
+      selected: selected,
+      label: '${_themeLabel(style)}主题预览',
+      hint: selected ? null : '点击预览，不会立即应用',
+      onTap: onTap,
+      excludeSemantics: true,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        excludeFromSemantics: true,
+        onTap: onTap,
+        child: card,
       ),
     );
   }

@@ -337,10 +337,13 @@ class AssetService {
   }
 
   /// 各资产目标的进度摘要。
+  ///
+  /// 截止日为 [cutoffDate]（缺省为今天），且不晚于今天 23:59:59.999：
+  /// 未来日期的实际交易和快照不计入当前资产、历史与达标判断。
   List<AssetGoalProgressSummary> assetGoalSummaries({
     DateTime? cutoffDate,
   }) {
-    final targetCutoff = cutoffDate ?? _currentMonthCutoffDate();
+    final targetCutoff = _assetGoalCutoffDate(cutoffDate);
     final history = totalAssetHistory(
       cutoffDate: targetCutoff,
       includeCredit: false,
@@ -349,19 +352,13 @@ class AssetService {
       targetCutoff,
       includeCredit: false,
     );
-    final summaries = assetGoals.map((goal) {
-      AssetGoalHistoryPoint? reachedPoint;
-      for (final point in history) {
-        if (point.totalAssets >= goal.targetAmount) {
-          reachedPoint = point;
-          break;
-        }
-      }
-
+    final goals = assetGoals;
+    final reachedDates = _assetGoalReachedDates(goals, upTo: targetCutoff);
+    final summaries = goals.map((goal) {
       return AssetGoalProgressSummary(
         goal: goal,
         currentAssets: currentAssets,
-        reachedAt: reachedPoint?.date ?? goal.reachedAt,
+        reachedAt: reachedDates[goal.id],
         history: history,
       );
     }).toList();
@@ -430,20 +427,15 @@ class AssetService {
       await database.deleteMetaValue('asset_goal_reached_at');
       return;
     }
-    final syncedGoals =
-        assetGoalSummaries(cutoffDate: _currentMonthCutoffDate())
-            .map(
-              (summary) => summary.goal.copyWith(
-                reachedAt: summary.reachedAt == null
-                    ? null
-                    : DateTime(
-                        summary.reachedAt!.year,
-                        summary.reachedAt!.month,
-                        summary.reachedAt!.day,
-                      ),
-              ),
-            )
-            .toList();
+    // 按当前账本重新计算；已失效的旧日期会被清除而不是保留。
+    final syncedGoals = assetGoalSummaries()
+        .map(
+          (summary) => summary.goal.copyWith(
+            reachedAt: summary.reachedAt,
+            clearReachedAt: summary.reachedAt == null,
+          ),
+        )
+        .toList();
     await _saveAssetGoals(syncedGoals);
     await database.deleteMetaValue('asset_goal_amount');
     await database.deleteMetaValue('asset_goal_reached_at');
@@ -456,6 +448,80 @@ class AssetService {
   DateTime _currentMonthCutoffDate() {
     final now = DateTime.now();
     return DateTime(now.year, now.month + 1, 0, 23, 59, 59, 999);
+  }
+
+  /// 资产目标截止日：[requested]（缺省为现在），但不晚于今天日终。
+  DateTime _assetGoalCutoffDate([DateTime? requested]) {
+    final now = DateTime.now();
+    final endOfToday = DateTime(now.year, now.month, now.day, 23, 59, 59, 999);
+    if (requested == null || requested.isAfter(endOfToday)) {
+      return endOfToday;
+    }
+    return requested;
+  }
+
+  /// 各目标首次在某日日终（非 credit 总资产）达到目标金额的日期。
+  ///
+  /// 只检查不晚于 [upTo]（已由 [_assetGoalCutoffDate] 钳制到今天）的非计划
+  /// 交易日和快照日（余额只在这些日期变化）。
+  /// 最早事件日之前已达标的目标没有可验证日期，返回 null；尚未达标也返回 null。
+  /// 不读取已存储的 [AssetGoal.reachedAt]。
+  Map<String, DateTime?> _assetGoalReachedDates(
+    List<AssetGoal> goals, {
+    required DateTime upTo,
+  }) {
+    final reached = <String, DateTime?>{
+      for (final goal in goals) goal.id: null
+    };
+    if (goals.isEmpty) {
+      return reached;
+    }
+    final assetAccountIds = {
+      for (final account in _accounts)
+        if (account.reportGroup != ReportGroup.credit) account.id,
+    };
+    DateTime dayOf(DateTime date) => DateTime(date.year, date.month, date.day);
+    final eventDays = <DateTime>{
+      for (final transaction in _transactions)
+        if (transaction.affectsBalance &&
+            !transaction.transactionDate.isAfter(upTo) &&
+            (assetAccountIds.contains(transaction.accountId) ||
+                assetAccountIds.contains(transaction.toAccountId)))
+          dayOf(transaction.transactionDate),
+      for (final snapshot in _snapshots)
+        if (!snapshot.snapshotDate.isAfter(upTo) &&
+            assetAccountIds.contains(snapshot.accountId))
+          dayOf(snapshot.snapshotDate),
+    }.toList()
+      ..sort();
+    if (eventDays.isEmpty) {
+      return reached;
+    }
+
+    final openingAssets = _totalAssetsAt(
+      eventDays.first.subtract(const Duration(microseconds: 1)),
+      includeCredit: false,
+    );
+    final pending =
+        goals.where((goal) => openingAssets < goal.targetAmount).toList();
+    for (final day in eventDays) {
+      if (pending.isEmpty) {
+        break;
+      }
+      final endOfDay = DateTime(day.year, day.month, day.day, 23, 59, 59, 999);
+      final dayAssets = _totalAssetsAt(
+        endOfDay.isAfter(upTo) ? upTo : endOfDay,
+        includeCredit: false,
+      );
+      pending.removeWhere((goal) {
+        if (dayAssets < goal.targetAmount) {
+          return false;
+        }
+        reached[goal.id] = day;
+        return true;
+      });
+    }
+    return reached;
   }
 
   double _totalAssetsAt(DateTime date, {bool includeCredit = true}) {

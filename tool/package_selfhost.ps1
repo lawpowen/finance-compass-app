@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
-  [string]$Version = '0.9.1',
-  [string]$OutputDirectory = 'artifacts/release/v0.9.1',
+  [string]$Version = '0.10.0',
+  [string]$OutputDirectory = 'artifacts/release/v0.10.0',
   [string]$Flutter = 'flutter',
   [string]$Dart = 'dart',
   [switch]$SkipWebBuild

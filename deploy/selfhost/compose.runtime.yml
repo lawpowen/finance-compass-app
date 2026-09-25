@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: finance-compass-web:0.9.1
+    image: finance-compass-web:0.10.0
     restart: unless-stopped
     ports:
       - "127.0.0.1:8080:8080"

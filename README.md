@@ -1,6 +1,6 @@
 # Finance Compass
 
-当前版本：`0.9.1+43`。工程文档索引见 [docs/README.md](docs/README.md)。
+当前版本：`0.10.0+44`（发布准备中，安装包已在本机构建，尚未在 GitHub 发布；最近已发布版本为 `v0.9.1`）。工程文档索引见 [docs/README.md](docs/README.md)。
 
 完整中文需求与设计文档请看：[finance-app-design.md](finance-app-design.md)。
 
@@ -20,9 +20,9 @@ This project is already beyond a simple MVP skeleton. It includes local persiste
 
 The Docker deployment defaults to localhost-only. Put HTTPS and access control in your own reverse proxy before exposing it beyond the host. See [self-hosted Web/PWA guide](docs/SELF_HOSTING.md) for Ubuntu, Windows and macOS install scripts, PWA limits, backup and rollback.
 
-- [Ubuntu 自托管包 v0.9.1](https://github.com/lawpowen/finance-compass-app/releases/download/v0.9.1/FinanceCompass-SelfHost-Ubuntu-v0.9.1.zip)
-- [Windows 自托管包 v0.9.1](https://github.com/lawpowen/finance-compass-app/releases/download/v0.9.1/FinanceCompass-SelfHost-Windows-v0.9.1.zip)
-- [macOS 自托管包 v0.9.1](https://github.com/lawpowen/finance-compass-app/releases/download/v0.9.1/FinanceCompass-SelfHost-macOS-v0.9.1.zip)
+- [Ubuntu 自托管包 v0.10.0](https://github.com/lawpowen/finance-compass-app/releases/download/v0.10.0/FinanceCompass-SelfHost-Ubuntu-v0.10.0.zip)
+- [Windows 自托管包 v0.10.0](https://github.com/lawpowen/finance-compass-app/releases/download/v0.10.0/FinanceCompass-SelfHost-Windows-v0.10.0.zip)
+- [macOS 自托管包 v0.10.0](https://github.com/lawpowen/finance-compass-app/releases/download/v0.10.0/FinanceCompass-SelfHost-macOS-v0.10.0.zip)
 
 三个自托管包都需要 Docker Engine/Desktop；它们不是原生 `.deb`、`.msi` 或 `.dmg`。解压后按 `SELF_HOSTING.md` 启动，并在对外访问前配置 HTTPS 和认证。
 
@@ -30,23 +30,27 @@ The Docker deployment defaults to localhost-only. Put HTTPS and access control i
 
 无需安装 Flutter 或其他开发工具，请按设备选择：
 
+> v0.10.0 仍在发布准备中：本页与自托管小节的六个 v0.10.0 直链要在 GitHub Release 上传资产后才能下载。在此之前请从 [全部版本](https://github.com/lawpowen/finance-compass-app/releases/latest) 获取已发布的 v0.9.1。
+
 ### Windows 10/11 x64
 
-**[下载 Windows 安装版（推荐）](https://github.com/lawpowen/finance-compass-app/releases/download/v0.9.1/FinanceCompass-Windows-x64-Setup-v0.9.1.exe)**
+**[下载 Windows 安装版（推荐）](https://github.com/lawpowen/finance-compass-app/releases/download/v0.10.0/FinanceCompass-Windows-x64-Setup-v0.10.0.exe)**
 
 安装包目前没有商业 Authenticode 代码签名，Windows 可能显示“未知发布者”或 SmartScreen 提示。请确认文件来自本仓库，并可使用发布页提供的 SHA-256 校验值核对。
 
-不想安装时，可使用 **[Windows 便携版 ZIP](https://github.com/lawpowen/finance-compass-app/releases/download/v0.9.1/FinanceCompass-Windows-x64-Portable-v0.9.1.zip)**。必须完整解压后运行 `FinanceCompass.exe`，不能只复制单个 EXE。
+不想安装时，可使用 **[Windows 便携版 ZIP](https://github.com/lawpowen/finance-compass-app/releases/download/v0.10.0/FinanceCompass-Windows-x64-Portable-v0.10.0.zip)**。必须完整解压后运行 `FinanceCompass.exe`，不能只复制单个 EXE。
 
 ### Android
 
-**[下载 Android APK](https://github.com/lawpowen/finance-compass-app/releases/download/v0.9.1/FinanceCompass-Android-v0.9.1.apk)**
+**[下载 Android APK](https://github.com/lawpowen/finance-compass-app/releases/download/v0.10.0/FinanceCompass-Android-v0.10.0.apk)**
 
 APK 使用 Finance Compass 独立发布密钥签名。首次侧载时，Android 可能要求允许浏览器或文件管理器“安装未知应用”。
 
 还可以进入 **[全部版本和校验文件](https://github.com/lawpowen/finance-compass-app/releases/latest)**。GitHub 自动显示的 `Source code` 压缩包不是普通用户安装包。
 
 ## Current Highlights
+
+> v0.10.0（发布准备中）新增主题卡片点击预览、报表单页分析、交易条件多选及资产目标达成日期修正；上方 v0.10.0 直链在正式发布后才会包含这些改动，已发布的 v0.9.1 包不含。
 
 - 全应用交互门禁：可见箭头和启用控件必须执行真实操作；周期规则、预算月份、报表区间、货币格式和应用内提醒均已接入，计划能力明确禁用。
 - 交易页顶部三种口径为“实际消费”“实际现金”“信用/贷款”；“实际现金”卡以“需准备现金”为副标题，把已知现金流出与尚未安排的到期信用卡/贷款合并，已安排还款不重复计算，不再额外占用独立大卡。未来月份的现金流出按现金账户整笔进出计算，贷款转账使用完整月供。

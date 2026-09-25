@@ -53,7 +53,7 @@ Google 登录接口尚未实现。未来接口必须将远程身份绑定到 `lo
 
 `FinanceRepository.cashFlowNetBetween(startInclusive, endInclusive)` 按完整日历窗口返回现金账户的实际净变动，包含已记录的未来实际交易和预计交易；信用卡消费在现金还款前不计入，现金转入贷款或信用账户按转出全额计入。不包含投资/退休等非现金分组的直接收支。结束日期包含当天 23:59:59.999。该接口只读取交易快照，不写数据库。
 
-`FinanceRepository.totalAssetHistory({cutoffDate, includeCredit})` 默认保留包含信用负债的净资产历史，供报表使用；资产目标传入 `includeCredit: false`。`assetGoalSummaries` 固定使用不含 `ReportGroup.credit` 的总资产口径，避免调用方误把贷款或信用卡负债扣入目标进度。
+`FinanceRepository.totalAssetHistory({cutoffDate, includeCredit})` 默认保留包含信用负债的净资产历史，供报表使用；资产目标传入 `includeCredit: false`。`assetGoalSummaries` 固定使用不含 `ReportGroup.credit` 的总资产口径，避免调用方误把贷款或信用卡负债扣入目标进度。`assetGoalSummaries({cutoffDate})` 的截止日由 `FinanceRepository.assetGoalCutoffDate([requested])` 决定：缺省或未来日期一律钳制为今天 23:59:59.999，过去日期原样使用；调用方若要另行计算同口径的当前总资产或趋势，应先调用 `assetGoalCutoffDate` 再传给 `totalAssetsAt` / `totalAssetHistory`。返回的 `reachedAt` 为按日终资产重算的首次达成日（仅日期部分），无法确认时为 `null`。
 
 `FinanceRepository.actualCashFlowSummaryForMonth(monthKey, includePlanned, accountId, type, categoryId)` 与复数月份版本 `actualCashFlowSummaryForMonths` 返回 `CashFlowSummary(inflow, outflow)`。它们只计算 `ReportGroup.cash` 的真实增减，筛选参数先选择交易集合再计算现金两端；默认排除 `planned`。`actualCashOutflowByCategoryForMonths` 将无类别的还款/转账流出放入 `uncategorizedCashOutflowKey`，`actualCashOutflowByAccountForMonth` 只返回现金来源账户。报表和历史平均使用这些接口；预算消费仍使用消费支出接口。
 

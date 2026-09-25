@@ -1,7 +1,7 @@
 name: finance_app
 description: Personal finance tracker MVP for cross-platform use.
 publish_to: "none"
-version: 0.9.1+43
+version: 0.10.0+44
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
