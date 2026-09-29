@@ -4,11 +4,13 @@
 
 Finance Compass `0.10.1+45` 可构建为自托管的 Flutter Web 应用。自托管服务器只分发 HTML、JavaScript、静态资源、`sqlite3.wasm` 与 Drift Worker；**没有后端 API、用户账户、服务端 SQLite、服务端备份或跨设备同步**。因此它适合让 iPhone、iPad、Android 和桌面浏览器访问同一私有网址，但不是云同步服务。
 
-公开发布包（v0.10.1 待构建发布，以下直链在 GitHub Release 上传资产后才可下载；此前请使用 [已发布版本](https://github.com/lawpowen/finance-compass-app/releases/latest) v0.10.0，校验值见 Release 中的 `SHA256SUMS.txt`）：
+公开发布包（[v0.10.1](https://github.com/lawpowen/finance-compass-app/releases/tag/v0.10.1) 已于 2026-09-29 公开发布，校验值见 Release 中的 `SHA256SUMS.txt` 与 [v0.10.1 公开发布 QA](public-release-qa-v0.10.1-2026-09-29.md)）：
 
 - [Ubuntu v0.10.1](https://github.com/lawpowen/finance-compass-app/releases/download/v0.10.1/FinanceCompass-SelfHost-Ubuntu-v0.10.1.zip)
 - [Windows v0.10.1](https://github.com/lawpowen/finance-compass-app/releases/download/v0.10.1/FinanceCompass-SelfHost-Windows-v0.10.1.zip)
 - [macOS v0.10.1](https://github.com/lawpowen/finance-compass-app/releases/download/v0.10.1/FinanceCompass-SelfHost-macOS-v0.10.1.zip)
+
+v0.10.1 包内附带的本指南是构建时快照，当时版本尚未发布，因此仍写着“v0.10.1 待构建发布、直链上传后才可下载”；GitHub 上的当前指南反映公开发布状态。两者的启动方法和版本（`0.10.1`）相同，发布状态以 GitHub 当前指南为准。
 
 账本由 Drift WASM SQLite 保存在访问该网址的浏览器 profile 内。现代浏览器优先使用 OPFS，较旧/Safari 能力受限时可回退 IndexedDB。每一个“设备 + 浏览器 + 网站 origin”是一个独立账本：换设备、换浏览器或改变域名/端口都不会带来数据；清除该网站数据、无痕模式回收或浏览器存储被系统清理时可能丢失。使用前及每次重要录入后都应从“导入与导出”下载完整 JSON。
 
