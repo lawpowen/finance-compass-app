@@ -17,7 +17,7 @@ Finance Compass 的公开 GitHub Release 固定提供：
 
 ## 版本与身份
 
-`pubspec.yaml` 是版本来源，格式为 `X.Y.Z+N`。公开 Git 标签使用 `vX.Y.Z`，Android `versionCode` 使用 `N`。当前版本为 `0.10.1+45` / `v0.10.1`（待构建发布：源码版本号已同步，产物、标签与 GitHub Release 尚未创建，见 [v0.10.1 发布准备 QA](public-release-qa-v0.10.1-2026-09-29.md)）；已发布的最新版本为 `0.10.0+44` / `v0.10.0`（2026-09-25 公开发布，标签指向 `main` 合并提交 `786312c`，见 [v0.10.0 公开发布 QA](public-release-qa-v0.10.0-2026-09-25.md)；再上一版本为 `0.9.1+43` / `v0.9.1`）；首个公开原生版本为 `0.8.0+41` / `v0.8.0`。
+`pubspec.yaml` 是版本来源，格式为 `X.Y.Z+N`。公开 Git 标签使用 `vX.Y.Z`，Android `versionCode` 使用 `N`。当前版本为 `0.10.1+45` / `v0.10.1`，也是已发布的最新版本（2026-09-29 公开发布，经 PR #9 合并，标签指向 `main` 合并提交 `4c1166b`，见 [v0.10.1 公开发布 QA](public-release-qa-v0.10.1-2026-09-29.md)）；上一版本为 `0.10.0+44` / `v0.10.0`（2026-09-25 公开发布，标签指向 `main` 合并提交 `786312c`，见 [v0.10.0 公开发布 QA](public-release-qa-v0.10.0-2026-09-25.md)；再上一版本为 `0.9.1+43` / `v0.9.1`）；首个公开原生版本为 `0.8.0+41` / `v0.8.0`。
 
 改版本时必须同步：`pubspec.yaml`；设置页“关于与支持”的版本文字（`lib/src/features/settings/settings_v2_screen.dart`）；`web/service-worker.js` 的 `CACHE_NAME`（缓存优先，不更换则已安装 PWA 会继续使用旧应用壳）；`deploy/selfhost/compose.yml` 与 `compose.runtime.yml` 的本地镜像标签；`tool/package_selfhost.ps1` 默认版本与输出目录；README 与 `SELF_HOSTING.md` 的当前版本和下载直链；`docs/README.md`、`SECURITY_AND_OPERATIONS.md` 的当前版本。明确描述历史版本的段落与旧版 QA 保持原样。
 
@@ -77,6 +77,7 @@ Web 发布前还必须验证 `tool/sqlite3_wasm.lock`：当前 `pubspec.lock` �
 3. 创建非草稿、非预发布 GitHub Release，上传六个二进制产物（Android、Windows 两个、自托管三个）和 `SHA256SUMS.txt`。
 4. 通过 GitHub 元数据重新读取文件名和大小，并确认 `/releases/latest` 可公开访问。
 5. README 使用该版本的稳定直链；后续版本必须同步更新链接。
+6. 自托管 ZIP 内附带的 `SELF_HOSTING.md` 是构建时快照；若构建时文档仍带“待构建发布”提示，发布后只更新仓库文档，不重建或替换已上传资产，并在该版 QA 中注明（v0.10.1 即属此情况）。
 
 ## 自愿支持二维码
 

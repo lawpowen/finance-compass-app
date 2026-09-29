@@ -219,6 +219,7 @@ flutter build windows --debug
 - 格式与分析：`dart format --output=none --set-exit-if-changed lib test` 检查 141 个文件、0 改动；`flutter analyze --no-fatal-infos --no-fatal-warnings` 退出码 0，共 67 项，均为既有问题（0 error、2 warning、65 info），与 v0.10.0 基线相同，且无一位于本次修改文件。
 - 证据：日志保存在本机 `artifacts/qa/credit-debt-2026-09-29-*.log`（`artifacts/` 已被 `.gitignore` 排除，不随仓库提交）。
 - 未执行：Windows/Android 实机或截图对照、发布构建。
+- 后续：标题保留验证时的“未发布”状态；本修复已随 v0.10.1 公开发布，见下文“v0.10.1 公开发布验证”。
 
 ## 2026-09-29 信用卡复审跟进验证（未发布）
 
@@ -228,6 +229,7 @@ flutter build windows --debug
 - 格式与分析：`dart format --output=none --set-exit-if-changed lib test` 检查 142 个文件、0 改动；`flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings` 退出码 0，67 项均为既有问题（0 error、2 warning、65 info），无一位于本次修改文件。
 - 证据：本机 `artifacts/qa/credit-debt-2026-09-29-followup-{item4-old-function-red,items1235-reverted-red}.log`，以及主审终轮 `artifacts/qa/credit-debt-2026-09-29-final-{targeted,negative-control,related-tests,full-test,format,analyze}.log`（不随仓库提交）。
 - 未执行：实机或截图对照、发布构建。
+- 后续：标题保留验证时的“未发布”状态；本修复已随 v0.10.1 公开发布，见下文“v0.10.1 公开发布验证”。
 
 ## 2026-09-29 v0.10.1 发布准备源码检查（待构建发布）
 
@@ -238,6 +240,19 @@ flutter build windows --debug
 - 文档：相对链接检查无失效目标；`git diff --check` 无空白错误。
 - 证据：本机 `artifacts/qa/release-v0.10.1-{toolchain,format,analyze,test,hashes-before,hashes-after}.log`（不随仓库提交）。
 - 未执行：Android/Windows/自托管发布构建、签名与版本核对、SHA-256、实机回归与 GitHub 发布回读，待填项见 [v0.10.1 发布准备 QA](public-release-qa-v0.10.1-2026-09-29.md)。
+- 后续：本节为发布准备阶段记录，标题保留当时状态；构建、发布与回读结果见下一节。
+
+## 2026-09-29 v0.10.1 公开发布验证
+
+- 发布状态：上面两轮信用卡修复与版本同步已随 v0.10.1 公开发布。[PR #9](https://github.com/lawpowen/finance-compass-app/pull/9) 合并提交 `4c1166b6e3f69fe6bfb4fecfbdeb7d82ed152b66` 的 tree `f59b26aafa0534a31e2280e36282c9d14d96f916` 与构建时源码 tree 相同；annotated tag `v0.10.1` peel 到该提交；Release 非草稿、非预发布且为 Latest。
+- Android：`apksigner` v2 校验通过；`com.financecompass.app`、versionName `0.10.1`、versionCode `45`，含 `arm64-v8a`、`armeabi-v7a`、`x86_64`；证书 SHA-256 与 v0.10.0 相同。构建日志有既有 Kotlin Gradle Plugin 未来兼容警告，不影响本次构建。
+- Windows：ProductVersion/FileVersion 为 `0.10.1+45`。Inno Setup 6.7.3 编译成功，便携 ZIP 共 23 个条目；安装器来自同一 Release 目录，未拆包检查。
+- 自托管 Web：构建结果为 142 个文件，验证 36 项预缓存和 102 个回退字体；`sqlite3.wasm` 锁定校验通过。三份自托管 ZIP 各 150 个条目、无反斜杠条目，`version.json`、`CACHE_NAME` 与 Compose 镜像标签均为 0.10.1。
+- 私人文件与二维码：APK 与四份 ZIP 按文件名筛查无 `key.properties`、JKS/keystore、SQLite/`.db` 或 backup 文件；包内支持二维码 SHA-256 均为 `2B2413CD…DAD8780B`，本次人工确认收款人为 `LAW PO WEN`。
+- 发布文件：`SHA256SUMS.txt` 六项重新核验一致；GitHub 回读七个附件的 size 与 SHA-256 digest 与本机一致，七条公开无认证 HEAD 均返回 200 且 `Content-Length` 一致。
+- 发布后文档更新：只做文档内容检查、相对链接检查与 `git diff --check`，未重新运行 Flutter 测试（源码与构建时相同）。
+- 证据：本机 `artifacts/qa/release-v0.10.1-{apk,windows,installer,web}.log`、`release-v0.10.1-{source,assets,public}.json` 与 `verify-v0.10.1.ps1`（不随仓库提交）。
+- 未执行：Windows 安装版或便携版交互启动与“关于与支持”页核对、Android 真机覆盖升级、Docker 构建与启动、浏览器离线与 CSP 回归、iOS/Android 浏览器 HTTPS 安装。详见 [v0.10.1 公开发布 QA](public-release-qa-v0.10.1-2026-09-29.md)。
 
 ## UI 质量
 

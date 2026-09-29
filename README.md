@@ -1,6 +1,6 @@
 # Finance Compass
 
-当前版本：`0.10.1+45`（待构建发布，尚未在 GitHub 发布；最近已发布版本为 [`v0.10.0`](https://github.com/lawpowen/finance-compass-app/releases/tag/v0.10.0)）。工程文档索引见 [docs/README.md](docs/README.md)。
+当前版本：`0.10.1+45`（[`v0.10.1`](https://github.com/lawpowen/finance-compass-app/releases/tag/v0.10.1) 已于 2026-09-29 在 GitHub 公开发布，发布核验与已知限制见 [v0.10.1 公开发布 QA](docs/public-release-qa-v0.10.1-2026-09-29.md)）。工程文档索引见 [docs/README.md](docs/README.md)。
 
 完整中文需求与设计文档请看：[finance-app-design.md](finance-app-design.md)。
 
@@ -48,7 +48,7 @@ APK 使用 Finance Compass 独立发布密钥签名。首次侧载时，Android 
 
 ## Current Highlights
 
-> v0.10.1（待构建发布）修正信用卡当前欠款与负债总额（计入已确定的远期分期，溢缴卡不再显示为欠款）、净资产加回溢缴款、历史账期与原始账单口径、信用卡余额与还款金额输入校验，以及“本期已还清”时的提前还款入口。上方 v0.10.1 直链在正式发布后才可下载；此前请从 [全部版本](https://github.com/lawpowen/finance-compass-app/releases/latest) 使用 v0.10.0，它不含这些修复。
+> v0.10.1 修正信用卡当前欠款与负债总额（计入已确定的远期分期，溢缴卡不再显示为欠款）、净资产加回溢缴款、历史账期与原始账单口径、信用卡余额与还款金额输入校验，以及“本期已还清”时的提前还款入口，v0.10.0 及更早的包不含这些修复。
 >
 > v0.10.0 新增主题卡片点击预览、报表单页分析、交易条件多选及资产目标达成日期修正，v0.9.1 及更早的包不含。
 
