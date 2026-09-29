@@ -17,7 +17,7 @@ Finance Compass 的公开 GitHub Release 固定提供：
 
 ## 版本与身份
 
-`pubspec.yaml` 是版本来源，格式为 `X.Y.Z+N`。公开 Git 标签使用 `vX.Y.Z`，Android `versionCode` 使用 `N`。当前版本为 `0.10.0+44` / `v0.10.0`（已于 2026-09-25 公开发布，标签指向 `main` 合并提交 `786312c`，见 [v0.10.0 公开发布 QA](public-release-qa-v0.10.0-2026-09-25.md)；上一版本为 `0.9.1+43` / `v0.9.1`）；首个公开原生版本为 `0.8.0+41` / `v0.8.0`。
+`pubspec.yaml` 是版本来源，格式为 `X.Y.Z+N`。公开 Git 标签使用 `vX.Y.Z`，Android `versionCode` 使用 `N`。当前版本为 `0.10.1+45` / `v0.10.1`（待构建发布：源码版本号已同步，产物、标签与 GitHub Release 尚未创建，见 [v0.10.1 发布准备 QA](public-release-qa-v0.10.1-2026-09-29.md)）；已发布的最新版本为 `0.10.0+44` / `v0.10.0`（2026-09-25 公开发布，标签指向 `main` 合并提交 `786312c`，见 [v0.10.0 公开发布 QA](public-release-qa-v0.10.0-2026-09-25.md)；再上一版本为 `0.9.1+43` / `v0.9.1`）；首个公开原生版本为 `0.8.0+41` / `v0.8.0`。
 
 改版本时必须同步：`pubspec.yaml`；设置页“关于与支持”的版本文字（`lib/src/features/settings/settings_v2_screen.dart`）；`web/service-worker.js` 的 `CACHE_NAME`（缓存优先，不更换则已安装 PWA 会继续使用旧应用壳）；`deploy/selfhost/compose.yml` 与 `compose.runtime.yml` 的本地镜像标签；`tool/package_selfhost.ps1` 默认版本与输出目录；README 与 `SELF_HOSTING.md` 的当前版本和下载直链；`docs/README.md`、`SECURITY_AND_OPERATIONS.md` 的当前版本。明确描述历史版本的段落与旧版 QA 保持原样。
 
@@ -64,7 +64,7 @@ Web 发布前还必须验证 `tool/sqlite3_wasm.lock`：当前 `pubspec.lock` �
 上传前必须：
 
 1. 确认 APK、安装器和 ZIP 均为本次提交的新构建且非空。
-2. 使用 `apksigner verify --verbose --print-certs` 验证 APK 签名；确认包名 `com.financecompass.app`、版本名与 versionCode 分别等于 `pubspec.yaml` 的 `X.Y.Z` 与 `N`（本次为 `0.10.0` / `44`），以及 ARM64/目标 ABI。
+2. 使用 `apksigner verify --verbose --print-certs` 验证 APK 签名；确认包名 `com.financecompass.app`、版本名与 versionCode 分别等于 `pubspec.yaml` 的 `X.Y.Z` 与 `N`（本次为 `0.10.1` / `45`），以及 ARM64/目标 ABI。
 3. 确认 Windows EXE 的产品名、文件名和版本；实际启动安装版或便携版并打开关于与支持页。
 4. 确认 ZIP 含 `FinanceCompass.exe`、`flutter_windows.dll`、插件 DLL、`data/flutter_assets` 和支持二维码资源。
 5. 生成 `SHA256SUMS.txt`，覆盖六个二进制产物（Android APK、Windows 安装器与便携 ZIP、三个自托管 runtime ZIP），重新计算六项哈希并逐项比对。

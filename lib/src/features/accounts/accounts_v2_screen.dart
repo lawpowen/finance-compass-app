@@ -62,7 +62,10 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
     final creditLiability = creditAccounts.fold<double>(0, (sum, account) {
       return sum +
           repository.convertToBase(
-            repository.accountBalanceAt(account.id, cutoffDate).abs(),
+            repository.creditCardOutstandingBalance(
+              account.id,
+              cutoffDate: isHistorical ? cutoffDate : null,
+            ),
             account.currency,
           );
     });
@@ -75,8 +78,20 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
             account.currency,
           ),
     );
+    // Overpaid cards are clamped out of creditLiability; add the credit back so
+    // net assets keep it without treating it as cash or a goal asset.
+    final creditCardCredit = creditAccounts.fold<double>(0, (sum, account) {
+      return sum +
+          repository.convertToBase(
+            repository.creditCardCreditBalance(
+              account.id,
+              cutoffDate: isHistorical ? cutoffDate : null,
+            ),
+            account.currency,
+          );
+    });
     final liabilities = creditLiability + loanLiability;
-    final netAssets = totalAssets - liabilities;
+    final netAssets = totalAssets - liabilities + creditCardCredit;
     final visibleAccounts = _accountsForGroup(repository, selectedGroup);
 
     return ListView(
@@ -743,15 +758,17 @@ class _AccountRow extends StatelessWidget {
     final scopedTransactions = repository.transactions.where(
       (item) => !item.transactionDate.isAfter(cutoffDate),
     );
+    final creditDebt = account.accountType == AccountType.creditCard
+        ? repository.creditCardOutstandingBalance(
+            account.id,
+            cutoffDate: isHistorical ? cutoffDate : null,
+          )
+        : null;
     final billing = account.accountType == AccountType.creditCard
-        ? calculateCreditCardBilling(
-            account: account,
-            transactions: scopedTransactions,
+        ? repository.creditCardBillingSummary(
+            account.id,
+            cutoffDate: isHistorical ? cutoffDate : null,
             now: now,
-            balanceAtCutoff: repository.accountBalanceAt(
-              account.id,
-              now,
-            ),
           )
         : null;
     final cardDisplay = billing == null
@@ -765,17 +782,17 @@ class _AccountRow extends StatelessWidget {
                 now: now,
               ),
               now: now,
+              committedOutstanding: creditDebt,
             ),
             billing,
           );
-    final amount = billing == null
-        ? repository
+    final amount = creditDebt ??
+        repository
             .accountBalanceAt(
               account.id,
               cutoffDate,
             )
-            .abs()
-        : repository.accountBalanceAt(account.id, cutoffDate).abs();
+            .abs();
     final subtitle = billing == null
         ? [
             account.institution,

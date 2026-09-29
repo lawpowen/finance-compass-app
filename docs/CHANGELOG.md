@@ -1,5 +1,34 @@
 # 变更记录
 
+## 2026-09-29
+
+### Finance Compass v0.10.1 发布准备（待构建发布）
+
+- 行为：版本号改为 `0.10.1+45`，设置页“关于与支持”显示 `版本 0.10.1+45 · 本地优先的个人财务罗盘`。本版收录下面两条 2026-09-29 信用卡修复（此前均未发布）：当前欠款与负债总额口径、当天账期、净资产加回溢缴、历史精确截止、历史原始账单、信用卡余额与还款金额输入校验，以及“本期已还清”时的提前还款入口。README 与 `SELF_HOSTING.md` 的六个下载直链改指 `v0.10.1` 资产名，并注明在 GitHub Release 上传资产前无法下载、此前请使用已发布的 v0.10.0。**尚未**构建发布产物，**尚未**提交、合并、打标签或创建 GitHub Release；v0.10.0 仍是已发布的最新版本。
+- 设计：`pubspec.yaml` 仍是版本来源，Android `versionName`/`versionCode` 应为 `0.10.1` / `45`（待构建后核对）。`web/service-worker.js` 的 `CACHE_NAME` 由 `finance-compass-shell-v0.10.0` 改为 `finance-compass-shell-v0.10.1`，使已安装的 PWA 换用新应用壳；`deploy/selfhost/compose.yml` 与 `compose.runtime.yml` 的本地镜像标签改为 `finance-compass-web:0.10.1`；`tool/package_selfhost.ps1` 默认 `-Version 0.10.1`，输出到 `artifacts/release/v0.10.1`。版本同步本身不改动应用逻辑；数据库 schema、迁移、JSON 备份格式、应用 ID 与权限均不变。
+- 安全与运维：未改动签名配置、`android/key.properties`、发布密钥或用户数据；`pubspec.lock` 与 `analysis_options.yaml` 保持不变。发布前仍须按 [发布流程](RELEASE_WORKFLOW.md) 完成构建、签名与版本核对、私人文件检查、支持二维码核对和 `SHA256SUMS.txt`。回滚：版本尚未公开，发布前还原本条列出的版本文字即可；发布后按回滚规则以更高补丁号修复，不覆盖已上传资产。
+- 文档：新增 [v0.10.1 发布准备 QA](public-release-qa-v0.10.1-2026-09-29.md)（含待填构建核验项）；更新根目录 `README.md`、`docs/README.md`、`SELF_HOSTING.md`、`SECURITY_AND_OPERATIONS.md`、`RELEASE_WORKFLOW.md`、`TESTING_AND_QUALITY.md` 与本记录。描述历史版本的段落和旧版 QA 保持原样。
+- 验证：Flutter 3.44.1 / Dart 3.12.1（绝对路径 `C:\Users\pwlaw\tools\flutter\bin`）。`dart format --output=none --set-exit-if-changed lib test` 检查 142 个文件、0 改动；`flutter analyze --no-fatal-infos --no-fatal-warnings` 退出码 0，67 项均为既有问题（0 error、2 warning、65 info）；`flutter test` 176 项通过、2 项按设计跳过、0 失败；`pubspec.lock` 与 `analysis_options.yaml` 前后哈希一致。文档相对链接与 `git diff --check` 已检查。详见 [测试与质量](TESTING_AND_QUALITY.md#2026-09-29-v0101-发布准备源码检查待构建发布)。
+- 限制：Android、Windows、自托管 Web 构建与签名核对、SHA-256、实机回归和 GitHub 发布回读均未执行，待构建发布时填入 QA。信用卡修复本身的限制见下面两条。
+
+### 信用卡复审跟进：净资产溢缴、历史截止、原始账单与输入校验（未发布）
+
+- 行为：（1）账户页“净资产”加回信用卡溢缴贷方余额：本月取 `currentBalance` 正数部分，历史月份取月末截止余额正数部分；“负债”“负债总额”与行金额仍为 `max(-余额, 0)`，溢缴款不计入总资产、现金或资产目标。溢缴 80、欠款 470 时负债 470、净资产 −390（此前为 −470）。（2）信用卡账户设置的余额字段改名“信用卡余额”并常显“欠款填负数，溢缴款填正数”，按原符号读写、不自动翻转旧余额，拒绝 `NaN`/`Infinity`。（3）历史统计月份的信用卡账期摘要改为在精确截止时刻读取余额，截止后同日消费不再进入历史欠款与本期账单；实时视图仍取日终。（4）历史账单月份的原始账单额在该期存在来源流水（消费、转出、退款、调整，含净 0）时取净额，超额还款不再抬高账单（消费 100、还款 150 由 150 改为 100，全额退款的月份为 0）；只有完全缺少来源流水的旧导入月份才以结算日至还款日的还款为凭据，并兼容同币种旧版 `toAmount=0`。（5）信用卡“记录还款”金额只接受有限正数，`NaN`/`Infinity` 不再写入转账。（6）主审终轮：无来源流水时的还款凭据回退结果下限为 0，负数转账（还款撤销）不再产生负原账单（还款 100、撤销 150 由 −50 改为 0）。（7）主审终轮：信用卡详情“本期已还清”而仅更远账期有已确定分期时，按钮由可点击的“无需还款”改为“提前还款”，还款对话框默认金额由 0.00 改为当前欠款；主金额仍为“本期账单”0、状态仍为“本期已还清”。
+- 设计：`FinanceRepository` 新增只读 `creditCardCreditBalance(accountId, {cutoffDate})`；`creditCardBillingSummary` 历史分支的 `balanceAtCutoff` 改读 `cutoffDate` 本身；`calculateCreditCardOriginalStatementAmount` 签名不变，改为“覆盖值 → 来源流水净额 → 还款凭据（`transferInAmount`）”三级优先级，不再取较大值；`AccountFormDialog` 新增有限数字校验并为该字段设置 `Key('credit-card-balance-field')`；还款对话框校验加入 `isFinite`；还款凭据回退改为 `clamp(0, ∞)`；`_creditCardDisplayCopy` 的 `paidThisCycle` 分支文案改按 `currentDebt > 0.005` 判断，`CreditCardDetailScreen` 在展示金额不大于 0.005 时把 `creditCardOutstandingBalance` 作为建议还款金额传给 `_addRepayment`。数据模型、schema 与接口签名之外的调用方均不变。
+- 安全与运维：不修改数据库余额、交易、`app_meta` 覆盖值、schema、迁移或备份格式，不批量翻转任何信用卡余额；无依赖、配置、权限变化，`pubspec.lock`、`pubspec.yaml`、`analysis_options.yaml` 与版本号未改。回滚：还原 `finance_repository.dart`、`credit_card_billing.dart`、`accounts_v2_screen.dart`、`account_form_dialog.dart`、`credit_card_detail_screen.dart` 的本次改动即可，数据无需处理。已经因旧校验写入的 `NaN`/`Infinity` 还款（若存在）不会被自动清理。
+- 文档：更新 `SYSTEM_REQUIREMENTS.md`、`ARCHITECTURE.md`、`MODULE_DESIGN.md`、`DATA_DESIGN.md`、`INTERFACES.md`、`UI_REFERENCE.md`、`INTERACTION_AUDIT.md`、`TESTING_AND_QUALITY.md`、`TRACEABILITY.md`、根目录 `design-qa.md` 与本记录。`SECURITY_AND_OPERATIONS.md` 不涉及信用卡口径或输入校验约定，未改动。
+- 验证：新增 16 项回归（净资产 2、精确截止 1、原始账单 7、账户表单 4、还款 2）；相关 7 个文件 47 项通过，全量 `flutter test --no-pub` 176 项通过、2 项按设计跳过；旧原始账单函数下“消费 100 还 150”报 `Expected: <100> Actual: <150.0>`，撤销其余修复核心行时另有 6 项新用例失败；主审终轮两项修复撤销后，新用例分别报 `Expected: <0> Actual: <-50.0>`、找到“无需还款”，仅撤销默认金额回退时报 `Expected: 300.00 Actual: 0.00`。`dart format` 142 个文件 0 改动，`flutter analyze` 退出码 0、67 项既有问题。详见 [测试与质量](TESTING_AND_QUALITY.md#2026-09-29-信用卡复审跟进验证未发布)。
+- 限制：账户页信用卡行仍只把溢缴显示为 0，没有单独的“溢缴/可用贷方余额”展示；净资产加回只在 `AccountsV2Screen` 实现；报表净资产经 `totalAssetsAt` 累加有符号余额，溢缴本来就是正贡献，本次未改。`AccountFormDialog` 的信用额度、贷款金额等其他数字字段仍使用原有校验（未单独拒绝 `Infinity`）。本轮未做实机或截图对照。
+
+### 信用卡“当前欠款”与账期边界修复（未发布）
+
+- 行为：账户页信用卡行的“当前欠款”和信用分组“负债总额”改为与详情额度使用相同的承诺负债口径，计入下月以后已确定的 `actual`/`settled` 分期，继续排除 `planned`。此前读取本月末余额的绝对值，会遗漏远期分期，并把溢缴卡的贷方余额显示成欠款、计入负债。溢缴卡现显示 0。历史统计月份仍按月末截止余额计算，同样不低于 0。截至今天的账期计算改用今天日终余额，今天较晚时刻的消费不再让“本期应还”被少算。只有远期已确定分期的卡显示“尚未出账”（详情主金额为“当前欠款”），不再显示“暂无欠款”。本期已还清时，“提前还款”按同一欠款值启用。
+- 设计：`FinanceRepository` 新增只读接口 `creditCardOutstandingBalance(accountId, {cutoffDate})` 和 `creditCardBillingSummary(accountId, {cutoffDate, now})`，`resolveCreditCardDisplayState` 新增可选参数 `committedOutstanding`，未传时行为不变。`AccountsV2Screen` 与 `CreditCardDetailScreen` 改用这两个入口，不再各自拼装余额与截止时间。`calculateCreditCardBilling`、账期边界、`creditCardPaymentReminders`、`AccountService` 镜像与贷款负债口径均未改变。
+- 安全与运维：无 schema、迁移、JSON 备份格式、权限、配置或依赖变化，`pubspec.lock` 与 `analysis_options.yaml` 保持 HEAD 内容。修复只改变派生显示值，不写入或修正任何余额与交易。回滚时还原上述四个源码文件即可，数据无需处理。
+- 文档：更新 `SYSTEM_REQUIREMENTS.md`、`ARCHITECTURE.md`、`MODULE_DESIGN.md`、`DATA_DESIGN.md`、`INTERFACES.md`、`UI_REFERENCE.md`、`INTERACTION_AUDIT.md`、`TESTING_AND_QUALITY.md`、`TRACEABILITY.md`、根目录 `design-qa.md` 与本记录。`SECURITY_AND_OPERATIONS.md` 不含信用卡口径，也不受本次影响，因此未改动。
+- 验证：使用 Flutter 3.44.1 / Dart 3.12.1（绝对路径 `C:\Users\pwlaw\tools\flutter\bin`），`pub get` 前后 lock 哈希一致。新增 `test/credit_card_outstanding_test.dart` 4 项，定向 26 项通过。全量 `flutter test --no-pub` 160 项通过、2 项按设计跳过。新 Widget 用例在未修复的 HEAD 上失败。`dart format --output=none --set-exit-if-changed lib test` 检查 141 个文件、0 改动；`flutter analyze --no-fatal-infos --no-fatal-warnings` 退出码 0，67 项均为既有问题（0 error、2 warning、65 info）。详见 [测试与质量](TESTING_AND_QUALITY.md#2026-09-29-信用卡当前欠款修复验证未发布)。
+- 限制：溢缴贷方余额目前只显示为 0，尚无“可用贷方余额”展示；“下期已使用额度”仍只计下一账期，远期分期只体现在当前欠款与额度使用中。多币种卡的“负债总额”仍按当前汇率折算。账户行内部 `_AccountCardDisplay.amount` 未显示在界面上，本次未调整。本轮未做原生实机或截图对照。
+
 ## 2026-09-25
 
 ### Finance Compass v0.10.0 公开版发布

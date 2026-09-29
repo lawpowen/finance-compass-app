@@ -68,19 +68,16 @@ class _CreditCardDetailScreenState
       paymentDueDay: paymentDay,
       now: now,
     );
-    final summary = calculateCreditCardBilling(
-      account: liveAccount,
-      transactions: scopedTransactions,
+    final summary = liveRepository.creditCardBillingSummary(
+      liveAccount.id,
+      cutoffDate: isHistoricalCutoff ? now : null,
       now: now,
-      balanceAtCutoff: liveRepository.accountBalanceAt(
-        liveAccount.id,
-        now,
-      ),
     );
     final limit = liveAccount.creditLimit ?? 10000;
-    final usageAmount = isHistoricalCutoff
-        ? liveRepository.accountBalanceAt(liveAccount.id, now).abs()
-        : liveRepository.creditCardCommittedOutstandingBalance(liveAccount.id);
+    final usageAmount = liveRepository.creditCardOutstandingBalance(
+      liveAccount.id,
+      cutoffDate: isHistoricalCutoff ? now : null,
+    );
     final usage = (usageAmount / limit).clamp(0, 1).toDouble();
     final isSelectedStatement = selectedHistoricalStatementDate != null;
     final period = isSelectedStatement
@@ -117,6 +114,7 @@ class _CreditCardDetailScreenState
         now: now,
       ),
       now: now,
+      committedOutstanding: usageAmount,
     );
     final display = isSelectedStatement
         ? _selectedStatementDisplay(
@@ -133,7 +131,12 @@ class _CreditCardDetailScreenState
             ),
             isFuture: isFutureStatement,
           )
-        : _creditCardDisplayCopy(displayState, summary, now);
+        : _creditCardDisplayCopy(
+            displayState,
+            summary,
+            now,
+            currentDebt: usageAmount,
+          );
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -232,7 +235,11 @@ class _CreditCardDetailScreenState
                                     context,
                                     liveRepository,
                                     liveAccount,
-                                    display.amount,
+                                    // A cleared cycle may still carry debt
+                                    // billed in later cycles; suggest it.
+                                    display.amount > 0.005
+                                        ? display.amount
+                                        : usageAmount,
                                   )
                               : null,
                         ),
@@ -708,7 +715,8 @@ class _CreditCardDetailScreenState
             key: const Key('credit-card-repayment-confirm'),
             onPressed: () {
               final value = double.tryParse(amountController.text.trim());
-              if (value == null || value <= 0) {
+              // tryParse accepts "NaN"/"Infinity"; only finite positives pass.
+              if (value == null || !value.isFinite || value <= 0) {
                 ScaffoldMessenger.of(dialogContext).showSnackBar(
                   const SnackBar(content: Text('请输入大于 0 的还款金额。')),
                 );
@@ -1129,19 +1137,20 @@ _CreditCardDisplayCopy _selectedStatementDisplay(
 _CreditCardDisplayCopy _creditCardDisplayCopy(
   CreditCardDisplayState state,
   CreditCardBillingSummary summary,
-  DateTime now,
-) {
+  DateTime now, {
+  required double currentDebt,
+}) {
   switch (state) {
     case CreditCardDisplayState.profileIncomplete:
       return _CreditCardDisplayCopy(
         amountLabel: '当前欠款（估算）',
-        amount: summary.outstandingBalance,
+        amount: currentDebt,
         statusLabel: '请设置账期',
         dueStatusLabel: '账期待设置',
         paymentActionLabel: '记录还款',
         color: FinanceColors.compassOrange,
         dueNeedsAttention: true,
-        canRepay: summary.outstandingBalance > 0.005,
+        canRepay: currentDebt > 0.005,
       );
     case CreditCardDisplayState.overdue:
       return _CreditCardDisplayCopy(
@@ -1182,15 +1191,17 @@ _CreditCardDisplayCopy _creditCardDisplayCopy(
         amount: summary.unbilledBalance,
         statusLabel: '本期已还清',
         dueStatusLabel: '本期已还清',
-        paymentActionLabel: summary.unbilledBalance > 0 ? '提前还款' : '无需还款',
+        paymentActionLabel: currentDebt > 0.005 ? '提前还款' : '无需还款',
         color: FinanceColors.compassTeal,
         dueNeedsAttention: false,
-        canRepay: summary.outstandingBalance > 0.005,
+        canRepay: currentDebt > 0.005,
       );
     case CreditCardDisplayState.unbilledOnly:
+      // Committed debt can sit beyond the next cycle; show it rather than 0.
+      final hasNextCycleUsage = summary.unbilledBalance > 0.005;
       return _CreditCardDisplayCopy(
-        amountLabel: '下期已使用额度',
-        amount: summary.unbilledBalance,
+        amountLabel: hasNextCycleUsage ? '下期已使用额度' : '当前欠款',
+        amount: hasNextCycleUsage ? summary.unbilledBalance : currentDebt,
         statusLabel: '尚未出账',
         dueStatusLabel: '本期无需还款',
         paymentActionLabel: '提前还款',

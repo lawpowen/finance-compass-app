@@ -70,6 +70,15 @@ Web 回归至少覆盖：浏览器 FilePicker bytes 导入预览/替换路径、
   - 快照之后读取：1 月 10 日快照 1000、1 月 20 日收入 100、2 月收入 50 时，1 月 31 日为 1100、1 月 15 日为 1000（不是 950）；含转账的序列逐日核对，追溯终值与余额一致；`AccountService` 结果与 Repository 一致。
   - 首张快照之前：1 月底为 1050 / 0 / 0，而非 1200 / 900；`AssetService` 与 `AccountService` 镜像一致。
 - 状态与时间口径回归：验证 EPF/退休账户默认余额与流入只到当前月、未来 `actual` 不提前进入普通账户默认现状、`planned` 不进入实际余额；信用卡账单不读取未来交易，但当前欠款和额度使用包含未来 `actual`、排除未来 `planned`；预测从今天余额起算并只累计一次未来实际/预计交易。
+- 信用卡当前欠款回归（`credit_card_outstanding_test.dart`，7 项，其中 3 项为复审跟进新增，见下一条）：固定参考时间 2026-07-20 10:00、结算日 15 日时，`creditCardOutstandingBalance` 实时为 195（含两期后分期、排除预计 200），截至 7 月 20 日日终为 140，溢缴 80 的卡实时与历史均为 0；`creditCardBillingSummary` 把当天 18:30 的 40 计入欠款与未出账，本期账单保持 100，而不是被少算为 60；历史截止 7 月 31 日时下期只含 40。状态判定在仅有远期已确定欠款时返回 `unbilledOnly`。390×2400 账户页 Widget 验证信用分组“负债总额”470、含分期卡 350、远期分期卡 120、溢缴卡不显示 80 且只有溢缴卡显示“暂无欠款”；该 Widget 用例在未修复代码上失败（找不到“负债总额  MYR 470.00”）。
+- 信用卡复审跟进回归（16 项，含主审终轮 2 项）：
+  - 净资产（`credit_card_outstanding_test.dart`）：`creditCardCreditBalance` 对溢缴卡实时为 30、7 月 31 日截止为 80，对欠款卡为 0；上一 Widget 用例追加断言溢缴 80、欠款 470 时净资产为“- MYR 390.00”；新增历史月份 Widget 用例验证本月 −440（溢缴已降为 30）、切换上月后 −390，负债仍为 470。
+  - 历史精确截止（同文件）：7 月 20 日 10:00 消费 20、18:00 消费 40，截止 09:00 时欠款/本期/下期为 100/100/0，截止 12:00 时为 120/100/20，18:00 消费不进入历史欠款或账单。
+  - 原始账单（`credit_card_billing_test.dart` 的 original statement amount 组，7 项）：消费 100、结算后还款 150 为 100；消费 100、全额退款 100、还款 100 为 0；转出 60、调整 20 为 40；无来源流水时回退还款 184.52 且空列表为 0；旧版同币种 `toAmount=0` 还款回退为 120；无来源流水、还款 100 后以负转账撤销 150 时为 0（主审终轮）；覆盖值优先（130、90，负值下限 0）。既有 3 月 184.52、7 月 313.29、UOB 2104.56 与覆盖 212.32 用例保持通过。
+  - 账户设置表单（`account_form_credit_balance_test.dart`，4 项）：标签“信用卡余额”与说明文字可见、旧标签不存在、打开时显示 `-250.00`；未修改保存 −250/+80 保持原符号；编辑为 `-300.5`/`45` 后保存保持符号；`NaN`/`Infinity`/`-Infinity` 显示“请输入有效金额”且不返回账户。
+  - 还款金额（`credit_card_statement_history_test.dart`）：`NaN`/`Infinity`/`-Infinity` 均提示且对话框保持打开，账本仍只有 1 笔消费、卡余额 −500。
+  - 本期已还清的提前还款（同文件，主审终轮）：本期消费 100 已还 100，下期之后连续 3 个账期各有 100 的 `actual` 分期（下一账期为空）；390×844 下主金额标签为“本期账单”、无“下期已使用额度”，状态“本期已还清”，按钮为“提前还款”且可点击、不出现“无需还款”；选择现金账户后金额框默认 `300.00`，取消后交易仍为 5 笔、当前欠款仍为 300。
+  - 失效验证：旧版原始账单函数运行新组时 4 项失败，其中“消费 100 还 150”报 `Expected: <100> Actual: <150.0>`；临时撤销其余四项修复的核心行后，净资产（2）、精确截止、表单标签、表单非有限值与还款非有限值共 6 项失败；两项表单保号用例在旧代码上也通过（旧实现本就不翻转符号），属于防止将来误加翻转的守护用例；随后按备份逐字节恢复（`cmp` 一致）。主审终轮：临时撤销两项修复后，负转账用例报 `Expected: <0> Actual: <-50.0>`，提前还款用例找到“无需还款”；仅撤销默认金额回退时报 `Expected: 300.00 Actual: 0.00`；随后从备份恢复。
 - 交易批量删除回归：在 390×844 视口长按第一笔、点击追加第二笔、确认删除，验证两行立即消失、成功提示出现且账户余额恢复；数据库层另以一个有效 ID 和一个失效 ID 验证整批回滚。
 - 交易编辑删除与有符号金额回归：编辑页滚动至删除入口后分别验证取消与确认；确认结果只包含待删除 ID。金额用例覆盖 `0.00` 与负数保存，并在 Repository 层验证零金额无余额影响、负支出/负转账的代数方向及删除后的余额完全恢复。
 - 同/跨币种转账回归：表单显示双金额；同币种自动相等、转入栏只读且保存 `toAmount=NULL`。跨币种按 Repository 当前汇率自动填值，允许覆盖后将该值写入目标余额；旧快速模板遗留的非零同币种转账 `toAmount=0` 必须按来源金额计入目标账户。应用打开与 JSON 导入会归一字段，并只为 `actual`/`settled` 补回目标余额。
@@ -201,6 +210,34 @@ flutter build windows --debug
 - 发布文件：六项产物的 SHA-256 与 `SHA256SUMS.txt` 逐项一致；支持二维码的哈希与 v0.9.1 相同。
 - GitHub 回读：PR #7 合并提交的 tree 与构建时源码 tree 相同，`v0.10.0` 标签 peel 到该提交；Release 非草稿、非预发布且为 Latest。七个附件的 size 与 SHA-256 digest 与本机一致；README 六条直链无认证 HEAD 均为 200，`Content-Length` 与本机一致。
 - 未执行：Docker、浏览器离线与 CSP 回归、Windows 安装版或便携版实机打开、Android 真机安装，以及 iOS/Android 浏览器 HTTPS 安装。详见 [v0.10.0 公开发布 QA](public-release-qa-v0.10.0-2026-09-25.md)。
+
+## 2026-09-29 信用卡当前欠款修复验证（未发布）
+
+- 工具链：通过 Windows PowerShell 以绝对路径调用 `C:\Users\pwlaw\tools\flutter\bin\flutter.bat` / `dart.bat`，版本为 Flutter 3.44.1、Dart 3.12.1。`flutter pub get` 前后 `pubspec.lock` 的 SHA-256 相同（`9E53C573…AED7BD7EB`），`git diff` 为空；测试与分析均使用 `--no-pub`。
+- 测试：新增用例与信用卡/账户截止相关的 5 个测试文件共 26 项通过；全量 `flutter test --no-pub` 160 项通过、2 项按设计跳过（`visual_qa_capture_test.dart`）、0 失败。
+- 修复前对照：在 HEAD（`e1c2ed6`）的临时 worktree 中单独运行新 Widget 用例，按预期失败；该 worktree 已删除。
+- 格式与分析：`dart format --output=none --set-exit-if-changed lib test` 检查 141 个文件、0 改动；`flutter analyze --no-fatal-infos --no-fatal-warnings` 退出码 0，共 67 项，均为既有问题（0 error、2 warning、65 info），与 v0.10.0 基线相同，且无一位于本次修改文件。
+- 证据：日志保存在本机 `artifacts/qa/credit-debt-2026-09-29-*.log`（`artifacts/` 已被 `.gitignore` 排除，不随仓库提交）。
+- 未执行：Windows/Android 实机或截图对照、发布构建。
+
+## 2026-09-29 信用卡复审跟进验证（未发布）
+
+- 工具链：同上，通过 Windows PowerShell 以绝对路径调用 Flutter 3.44.1 / Dart 3.12.1；未运行 `pub get`，`pubspec.lock` SHA-256 仍为 `9E53C573…AED7BD7EB`，`pubspec.lock`、`pubspec.yaml`、`analysis_options.yaml` 无改动。
+- 测试：相关 7 个文件（`credit_card_billing_test`、`credit_card_outstanding_test`、`account_form_credit_balance_test`、`credit_card_statement_history_test`、`transaction_scope_test`、`account_cutoff_interaction_test`、`loan_detail_screen_test`）共 47 项通过；全量 `flutter test --no-pub` 176 项通过、2 项按设计跳过、0 失败（较上一轮 160 项新增 16 项，其中 2 项为主审终轮新增）。以上为主审终轮修复后的最终结果，取代此前 45/174 的临时数量。
+- 修复前对照：见上文“信用卡复审跟进回归”的失效验证；旧函数红灯日志单独保存。
+- 格式与分析：`dart format --output=none --set-exit-if-changed lib test` 检查 142 个文件、0 改动；`flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings` 退出码 0，67 项均为既有问题（0 error、2 warning、65 info），无一位于本次修改文件。
+- 证据：本机 `artifacts/qa/credit-debt-2026-09-29-followup-{item4-old-function-red,items1235-reverted-red}.log`，以及主审终轮 `artifacts/qa/credit-debt-2026-09-29-final-{targeted,negative-control,related-tests,full-test,format,analyze}.log`（不随仓库提交）。
+- 未执行：实机或截图对照、发布构建。
+
+## 2026-09-29 v0.10.1 发布准备源码检查（待构建发布）
+
+- 范围：版本号同步为 `0.10.1+45`，并收录上面两轮信用卡修复；未改其他应用逻辑。
+- 工具链：Windows PowerShell 以绝对路径调用 Flutter 3.44.1 / Dart 3.12.1；`pubspec.lock`（`9E53C573…AED7BD7EB`）与 `analysis_options.yaml` 在检查前后 SHA-256 相同。
+- 格式与分析：`dart format --output=none --set-exit-if-changed lib test` 检查 142 个文件、0 改动；`flutter analyze --no-fatal-infos --no-fatal-warnings` 退出码 0，67 项均为既有问题（0 error、2 warning、65 info）。
+- 测试：全量 `flutter test` 176 项通过、2 项按设计跳过、0 失败。
+- 文档：相对链接检查无失效目标；`git diff --check` 无空白错误。
+- 证据：本机 `artifacts/qa/release-v0.10.1-{toolchain,format,analyze,test,hashes-before,hashes-after}.log`（不随仓库提交）。
+- 未执行：Android/Windows/自托管发布构建、签名与版本核对、SHA-256、实机回归与 GitHub 发布回读，待填项见 [v0.10.1 发布准备 QA](public-release-qa-v0.10.1-2026-09-29.md)。
 
 ## UI 质量
 

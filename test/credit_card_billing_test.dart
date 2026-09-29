@@ -561,4 +561,116 @@ void main() {
     );
     expect(summary.unbilledBalance, closeTo(313.29, 0.001));
   });
+
+  group('original statement amount', () {
+    // Cycle 2026-05-26..06-25, statement 06-25, due 07-14.
+    final june = calculateCreditCardBillingPeriodForStatement(
+      statementDay: 25,
+      paymentDueDay: 14,
+      statementDate: DateTime(2026, 6, 25),
+    );
+    FinanceTransaction record(
+      String id,
+      TransactionType type,
+      double amount,
+      DateTime date,
+    ) =>
+        FinanceTransaction(
+          id: id,
+          type: type,
+          accountId: 'card',
+          amount: amount,
+          currency: 'MYR',
+          transactionDate: date,
+        );
+    FinanceTransaction repayment(double amount, {double? toAmount}) =>
+        FinanceTransaction(
+          id: 'repay_$amount',
+          type: TransactionType.transfer,
+          accountId: 'bank',
+          toAccountId: 'card',
+          amount: amount,
+          toAmount: toAmount,
+          currency: 'MYR',
+          toCurrency: 'MYR',
+          transactionDate: DateTime(2026, 7, 5),
+        );
+    double original(
+      List<FinanceTransaction> transactions, {
+      double? override,
+    }) =>
+        calculateCreditCardOriginalStatementAmount(
+          accountId: 'card',
+          transactions: transactions,
+          period: june,
+          statementAmountOverride: override,
+        );
+
+    test('an overpayment after the cut does not inflate the statement', () {
+      final transactions = [
+        record('spend', TransactionType.expense, 100, DateTime(2026, 6, 10)),
+        repayment(150),
+      ];
+
+      expect(original(transactions), 100);
+    });
+
+    test('a fully refunded cycle stays at zero despite a repayment', () {
+      final transactions = [
+        record('spend', TransactionType.expense, 100, DateTime(2026, 6, 10)),
+        record('refund', TransactionType.income, 100, DateTime(2026, 6, 12)),
+        repayment(100),
+      ];
+
+      expect(original(transactions), 0);
+    });
+
+    test('transfer out and adjustment are source records', () {
+      final transactions = [
+        record('out', TransactionType.transfer, 60, DateTime(2026, 6, 1)),
+        record('credit', TransactionType.adjustment, 20, DateTime(2026, 6, 2)),
+        repayment(90),
+      ];
+
+      expect(original(transactions), 40);
+    });
+
+    test('a cycle without source records falls back to its repayment', () {
+      final transactions = [
+        record('earlier', TransactionType.expense, 70, DateTime(2026, 5, 20)),
+        record('later', TransactionType.expense, 30, DateTime(2026, 6, 30)),
+        repayment(184.52),
+      ];
+
+      expect(original(transactions), closeTo(184.52, 0.001));
+      expect(original(const []), 0);
+    });
+
+    test('fallback reads legacy same-currency zero toAmount as the amount', () {
+      expect(original([repayment(120, toAmount: 0)]), 120);
+    });
+
+    test('fallback clamps a reversed repayment at zero', () {
+      // No source record; repay 100 then reverse 150 via a negative transfer.
+      final transactions = [repayment(100), repayment(-150)];
+
+      expect(original(transactions), 0);
+    });
+
+    test('a manual override wins over transactions and fallback', () {
+      expect(
+        original(
+          [
+            record(
+                'spend', TransactionType.expense, 100, DateTime(2026, 6, 10)),
+            repayment(150),
+          ],
+          override: 130,
+        ),
+        130,
+      );
+      expect(original([repayment(150)], override: 90), 90);
+      expect(original(const [], override: -5), 0);
+    });
+  });
 }
