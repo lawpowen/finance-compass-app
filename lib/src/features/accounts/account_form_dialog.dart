@@ -294,15 +294,27 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                       validator: _positiveNumberRequired,
                     ),
                   ),
+                  // Stored signed as-is: negative is debt, positive is an
+                  // overpayment. Existing balances are never flipped.
                   _AccountEditorRow(
                     icon: Icons.account_balance_wallet_outlined,
-                    label: '当前欠款',
+                    label: '信用卡余额',
                     child: _InlineTextEditor(
+                      fieldKey: const Key('credit-card-balance-field'),
                       controller: currentBalanceController,
                       prefixText: '$currency ',
-                      keyboardType:
-                          const TextInputType.numberWithOptions(decimal: true),
-                      validator: _numberRequired,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                        signed: true,
+                      ),
+                      validator: _finiteNumberRequired,
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      '欠款填负数，溢缴款填正数',
+                      style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ),
                   const SizedBox(height: 16),
@@ -611,6 +623,12 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
       (value == null || value.trim().isEmpty) ? '必填' : null;
   String? _numberRequired(String? value) =>
       double.tryParse(value ?? '') == null ? '请输入数字' : null;
+
+  /// double.tryParse accepts "NaN" and "Infinity"; a card balance must not.
+  String? _finiteNumberRequired(String? value) {
+    final parsed = double.tryParse(value ?? '');
+    return parsed == null || !parsed.isFinite ? '请输入有效金额' : null;
+  }
 
   String? _positiveNumberRequired(String? value) {
     final parsed = double.tryParse(value ?? '');

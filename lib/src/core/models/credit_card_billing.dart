@@ -29,10 +29,15 @@ enum CreditCardDisplayState {
   overdue,
 }
 
+/// [committedOutstanding] is the card's current debt including committed
+/// future records. When it is positive but nothing falls in the billed or next
+/// cycle (for example an instalment two statements ahead), the card is shown as
+/// not yet billed instead of having no balance.
 CreditCardDisplayState resolveCreditCardDisplayState({
   required CreditCardBillingSummary summary,
   required bool hasBilledActivity,
   DateTime? now,
+  double? committedOutstanding,
 }) {
   if (summary.isEstimated) {
     return CreditCardDisplayState.profileIncomplete;
@@ -48,7 +53,8 @@ CreditCardDisplayState resolveCreditCardDisplayState({
   if (hasBilledActivity) {
     return CreditCardDisplayState.paidThisCycle;
   }
-  if (summary.unbilledBalance > epsilon) {
+  if (summary.unbilledBalance > epsilon ||
+      (committedOutstanding ?? 0) > epsilon) {
     return CreditCardDisplayState.unbilledOnly;
   }
   return CreditCardDisplayState.noBalance;
@@ -264,10 +270,14 @@ double calculateCreditCardStatementAmount({
 
 /// Returns the original amount printed for a statement cycle.
 ///
-/// The transaction sum is the primary source. For imported histories where
-/// older purchase rows are incomplete, a repayment posted between statement
-/// cut and due date is retained as evidence of the paid statement amount. A
-/// later repayment therefore never turns a historical statement into zero.
+/// A manual override wins. Otherwise, when the cycle has any source record on
+/// the card (charge, transfer out, refund or adjustment — even if they net to
+/// zero) the cycle's net transaction amount is the statement, so an
+/// overpayment after the cut never inflates it. Only when the cycle has no
+/// source record at all, as in imported histories missing older purchases, a
+/// repayment posted between statement cut and due date is used as evidence of
+/// the paid statement amount, so such a statement never shows as zero. The
+/// fallback nets reversals (negative transfers) and is clamped at zero.
 double calculateCreditCardOriginalStatementAmount({
   required String accountId,
   required Iterable<FinanceTransaction> transactions,
@@ -277,11 +287,19 @@ double calculateCreditCardOriginalStatementAmount({
   if (statementAmountOverride != null) {
     return statementAmountOverride.clamp(0, double.infinity).toDouble();
   }
-  final transactionAmount = calculateCreditCardStatementAmount(
-    accountId: accountId,
-    transactions: transactions,
-    period: period,
+  final hasSourceRecords = transactions.any(
+    (transaction) =>
+        transaction.affectsBalance &&
+        transaction.accountId == accountId &&
+        period.containsBilled(transaction.transactionDate),
   );
+  if (hasSourceRecords) {
+    return calculateCreditCardStatementAmount(
+      accountId: accountId,
+      transactions: transactions,
+      period: period,
+    );
+  }
   var repayments = 0.0;
   for (final transaction in transactions) {
     final transactionDate = _dateOnly(transaction.transactionDate);
@@ -292,9 +310,10 @@ double calculateCreditCardOriginalStatementAmount({
         transactionDate.isAfter(period.dueDate)) {
       continue;
     }
-    repayments += transaction.toAmount ?? transaction.amount;
+    repayments += transaction.transferInAmount;
   }
-  return transactionAmount > repayments ? transactionAmount : repayments;
+  // A negative transfer reverses a repayment; the statement is never negative.
+  return repayments.clamp(0, double.infinity).toDouble();
 }
 
 CreditCardBillingSummary calculateCreditCardBilling({

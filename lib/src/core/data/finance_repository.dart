@@ -611,6 +611,82 @@ class FinanceRepository {
     return (-account.currentBalance).clamp(0, double.infinity).toDouble();
   }
 
+  /// Debt shown as a card's "当前欠款" and counted in credit liabilities.
+  ///
+  /// Live views omit [cutoffDate] and receive the committed balance. Historical
+  /// views pass their cutoff and receive the balance at that moment. A positive
+  /// (overpaid) card balance is a credit, not debt, so the result is never
+  /// negative.
+  double creditCardOutstandingBalance(String accountId,
+      {DateTime? cutoffDate}) {
+    if (cutoffDate == null) {
+      return creditCardCommittedOutstandingBalance(accountId);
+    }
+    final account = _accounts.firstWhere((item) => item.id == accountId);
+    if (account.accountType != AccountType.creditCard) {
+      throw ArgumentError.value(accountId, 'accountId', 'Not a credit card');
+    }
+    return (-accountBalanceAt(accountId, cutoffDate))
+        .clamp(0, double.infinity)
+        .toDouble();
+  }
+
+  /// Overpaid (positive) card balance, the counterpart of
+  /// [creditCardOutstandingBalance].
+  ///
+  /// It is not debt, cash or a goal asset, but it is still the user's money,
+  /// so net assets add it back after credit liabilities are clamped to zero.
+  /// Live views omit [cutoffDate] and read [Account.currentBalance];
+  /// historical views read the balance at the cutoff.
+  double creditCardCreditBalance(String accountId, {DateTime? cutoffDate}) {
+    final account = _accounts.firstWhere((item) => item.id == accountId);
+    if (account.accountType != AccountType.creditCard) {
+      throw ArgumentError.value(accountId, 'accountId', 'Not a credit card');
+    }
+    final balance = cutoffDate == null
+        ? account.currentBalance
+        : accountBalanceAt(accountId, cutoffDate);
+    return balance.clamp(0, double.infinity).toDouble();
+  }
+
+  /// Billing summary shared by the account list and the card detail page.
+  ///
+  /// Live views omit [cutoffDate]: the whole ledger is used so committed
+  /// next-cycle records count, and the balance is read at the end of the
+  /// reference day because billing buckets compare whole dates. Historical
+  /// views pass their cutoff: records after it are ignored and the balance is
+  /// read at exactly the same moment, so a later record on the cutoff day
+  /// cannot leak into the historical debt.
+  CreditCardBillingSummary creditCardBillingSummary(
+    String accountId, {
+    DateTime? cutoffDate,
+    DateTime? now,
+  }) {
+    final account = _accounts.firstWhere((item) => item.id == accountId);
+    final reference = cutoffDate ?? now ?? DateTime.now();
+    return calculateCreditCardBilling(
+      account: account,
+      transactions: cutoffDate == null
+          ? _transactions
+          : _transactions
+              .where((item) => !item.transactionDate.isAfter(cutoffDate)),
+      now: reference,
+      balanceAtCutoff: accountBalanceAt(
+        accountId,
+        cutoffDate ??
+            DateTime(
+              reference.year,
+              reference.month,
+              reference.day,
+              23,
+              59,
+              59,
+              999,
+            ),
+      ),
+    );
+  }
+
   /// Remaining balance at a statement close, including carried balance,
   /// actual charges, refunds and repayments posted on or before that day.
   double creditCardStatementBalance(
