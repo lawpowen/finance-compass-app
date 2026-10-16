@@ -24,3 +24,19 @@
 - [变更记录](CHANGELOG.md)
 
 维护规则见项目根目录的 `AGENTS.md`。修改数据模型、页面流程、业务规则、接口或配置时，必须在同一变更中更新对应文档。
+
+## 本地工作目录与清理
+
+2026-10-11 整理了历史过程文件。源码、工程文档、签名配置、用户原始附件和正式发布包保留；删除旧调试包、重复解压目录、构建中间文件、未被文档引用的对比截图、旧启动日志与 PR/提示词草稿。根目录旧 `app-arm64-v8a-release.apk` 已移除，发布包按版本保存在 `artifacts/release/`。
+
+| 路径 | 用途 | 保留与清理规则 |
+| --- | --- | --- |
+| `lib/`、`test/`、`tool/`、各平台目录、`assets/`、`deploy/`、`packaging/`、`docs/` | 源码、测试、构建配置、部署脚本与工程文档 | 保留在现有目录，不作为过程文件清理 |
+| `artifacts/release/<version>/` | 正式安装包、自托管包、校验文件与发布说明 | 保留已有正式版本；v0.10.0 与 v0.10.1 的发布说明已集中到对应版本目录的 `RELEASE_NOTES.md` |
+| `artifacts/backups/2026-07/` | 从旧 Android 包目录及 `build/release/` 移出的 11 份 JSON/SQLite 数据文件 | 按原文件名保留；迁移前后 SHA-256 一致，不因目录曾叫 build/artifacts 就删除数据 |
+| `artifacts/analysis/` | 已保存的财务口径分析 Notebook | 从根目录 `analysis/` 移入，内容未改 |
+| `artifacts/qa/`、`artifacts/design-qa/`、`artifacts/audit/`、`artifacts/interaction-audit/`、`artifacts/ui-reference/` | 发布与测试证据、用户确认的视觉基线 | 保留文档引用的日志、核验结果和截图；只清理已完成任务的 PR/提示词草稿 |
+| `artifacts/tools/` | 本地 Inno Setup 工具 | 保留；`artifacts/` 下重复下载的安装器已清理 |
+| `.codex-remote-attachments/`、`.agents/`、`.codex/`、`.dart_tool/`、Android 签名文件 | 原始输入、Agent 配置、依赖缓存与发布密钥 | 本次保留，不列入旧过程文件删除范围 |
+
+`artifacts/` 中的本地数据不随 Git 提交；整理到一个目录不等于完成异地备份。`build/`、`outputs/`、`work/`、`tmp/` 与根目录生成的 `app-*-release.apk` 被 Git 忽略。清理构建目录前必须先检查是否混入 JSON 备份、数据库快照等用户数据。本次已清空 `build/`，下次构建将重新生成中间产物。
