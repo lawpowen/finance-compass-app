@@ -97,3 +97,5 @@ Google 登录接口尚未实现。未来接口必须将远程身份绑定到 `lo
 ## Android 通知读取接口
 
 新增 MethodChannel finance_compass/notification_bookkeeping，包含配置/权限、来源应用列表、队列获取与 ACK、available 事件。入口为设置 → 通知记账；非 Android 隐藏。人工确认复用交易表单 notificationDraft，只生成单笔实际交易。ready 握手可在连接失败后重试；available 在消费或刷新过程中到达会触发后续队列读取。既有方法名不变；configure 的 bindings 项可附加 reviewOnly 布尔值（缺省 false），仅收集模式可使用空 marker。参数、系统权限与错误语义见 [Android 通知记账](ANDROID_NOTIFICATION_BOOKKEEPING.md)。
+
+`notificationSourceFor(String? packageName)` 返回 `NotificationSourceProfile?`，仅精确匹配 `reviewOnlyNotificationSources`，未知、相似或退役包名返回 null。档案提供 institution、appName、packageName、reviewReason；银行清单位于 malaysiaBankNotificationSources。解析器的 sourcePackage 参数和原生调用协议不变。设置页在已安装列表中优先显示目录应用并统一名称；展开目录仅展示范围，不执行安装或绑定。

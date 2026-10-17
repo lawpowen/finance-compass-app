@@ -108,3 +108,7 @@ Android 在用户授权并绑定来源后接收新通知，明确交易自动入
 ### TNG eWallet 接入边界
 
 TNG 来源允许在没有通知样本和账户片段时绑定并开始接收，所有通知必须人工确认后才能记账；默认模式不得因命中通用模板而绕过。可预填字段必须标明候选性质，不能把教学收据或应用内示意当作已验证的 Android 自动模板。其他来源的 reviewOnly 绑定遵循同样的不自动写账规则。
+
+### 马来西亚银行来源兼容（build 49）
+
+首批 Maybank、CIMB、Public Bank、RHB、Hong Leong、AmBank、Bank Islam、Bank Rakyat、BSN、Affin，当前 App 与包名见 [适配调查](MALAYSIA_BANK_NOTIFICATION_RESEARCH.md)。仅在精确包名匹配时套用目录策略；这 10 家银行全部支持无样本来源绑定、待确认及人工入账，不宣称已支持银行专用自动模板。旧绑定即使 reviewOnly=false 也必须待确认，不改写历史交易；多账户、多金额不猜测，用户保存前核对。界面目录和已安装选择器必须区分，不能因目录存在而自动安装或绑定。

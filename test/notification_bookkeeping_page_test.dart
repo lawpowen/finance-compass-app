@@ -6,7 +6,7 @@ import 'package:finance_app/src/core/database/app_database.dart'
 import 'package:finance_app/src/core/models/account.dart';
 import 'package:finance_app/src/core/notifications/notification_bookkeeper.dart';
 import 'package:finance_app/src/core/notifications/notification_bridge.dart';
-import 'package:finance_app/src/core/notifications/notification_parser.dart';
+import 'package:finance_app/src/core/notifications/notification_sources.dart';
 import 'package:finance_app/src/core/providers/database_provider.dart';
 import 'package:finance_app/src/core/providers/repository_provider.dart';
 import 'package:finance_app/src/core/settings/app_theme_style.dart';
@@ -24,6 +24,7 @@ void main() {
   late ProviderContainer container;
   late Map<String, dynamic> config;
   late List<String> queue;
+  late List<Map<String, String>> installedApps;
   var failAck = false;
   setUp(() async {
     db = AppDatabase.forTesting(NativeDatabase.memory());
@@ -50,6 +51,10 @@ void main() {
       ]
     };
     queue = [];
+    installedApps = [
+      {'package': 'other.bank', 'label': '另一个银行'},
+      {'package': tngEwalletPackage, 'label': 'TNG eWallet'},
+    ];
     failAck = false;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(NotificationBridge.channel, (call) async {
@@ -72,10 +77,7 @@ void main() {
               (s) => (jsonDecode(s) as Map)['id'] == call.arguments);
           return null;
         case 'apps':
-          return [
-            {'package': 'other.bank', 'label': '另一个银行'},
-            {'package': tngEwalletPackage, 'label': 'TNG eWallet'},
-          ];
+          return installedApps;
         case 'ready':
           return null;
       }
@@ -100,7 +102,9 @@ void main() {
       };
 
   Future<void> open(WidgetTester tester,
-      {Size size = const Size(375, 812), double scale = 1}) async {
+      {Size size = const Size(375, 812),
+      double scale = 1,
+      AppThemeStyle theme = AppThemeStyle.abyss}) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -109,7 +113,7 @@ void main() {
     await tester.pumpWidget(UncontrolledProviderScope(
         container: container,
         child: MaterialApp(
-            theme: buildFinanceTheme(AppThemeStyle.abyss),
+            theme: buildFinanceTheme(theme),
             builder: (context, child) => MediaQuery(
                 data: MediaQuery.of(context).copyWith(
                     textScaler: TextScaler.linear(scale),
@@ -218,35 +222,132 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  for (final size in [
-    const Size(375, 812),
-    const Size(812, 375),
-    const Size(1024, 768)
-  ]) {
-    androidTestWidgets('settings fits $size with large text and reduced motion',
+  for (final source in malaysiaBankNotificationSources) {
+    androidTestWidgets(
+        '${source.appName} binds without a sample with review locked',
         (tester) async {
-      await open(tester, size: size, scale: 2);
-      expect(find.text('通知记账'), findsOneWidget);
-      await tester.scrollUntilVisible(find.text('绑定通知来源与账户'), 200,
-          scrollable: find
-              .descendant(
-                  of: find.byType(ListView).first,
-                  matching: find.byType(Scrollable))
-              .first);
+      // Only installed apps may appear; localized labels resolve by package.
+      installedApps = [
+        {'package': source.packageName, 'label': '本机银行应用名称'},
+      ];
+      await open(tester);
       await tester.ensureVisible(find.text('绑定通知来源与账户'));
-      await tester.pumpAndSettle();
       await tester.tap(find.text('绑定通知来源与账户'));
       await tester.pumpAndSettle();
       await tester.tap(find.byType(DropdownButtonFormField<String>).first);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('TNG eWallet').last);
+      expect(find.text('TNG eWallet'), findsNothing);
+      await tester.tap(find.text(source.appName).last);
       await tester.pumpAndSettle();
       expect(find.text('通知中的账户识别片段（可选）'), findsOneWidget);
-      expect(tester.takeException(), isNull);
-      await tester.tap(find.text('取消'));
+      final toggle = tester.widget<SwitchListTile>(
+          find.widgetWithText(SwitchListTile, '仅收集到待确认'));
+      expect(toggle.value, isTrue);
+      expect(toggle.onChanged, isNull);
+      await tester.tap(find.byType(DropdownButtonFormField<String>).last);
       await tester.pumpAndSettle();
+      await tester.tap(find.text('测试银行 · MYR').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('保存绑定'));
+      await tester.pumpAndSettle();
+      final binding = (config['bindings'] as List).last as Map;
+      expect(binding['package'], source.packageName);
+      expect(binding['label'], source.appName);
+      expect(binding['accountId'], 'bank');
+      expect(binding['marker'], isEmpty);
+      expect(binding['reviewOnly'], isTrue);
+      expect(tester.takeException(), isNull);
     });
   }
+
+  androidTestWidgets('old bank bindings display effective review policy',
+      (tester) async {
+    final source = malaysiaBankNotificationSources.first;
+    config['bindings'] = [
+      ...config['bindings'] as List,
+      {
+        'package': source.packageName,
+        'label': '旧显示名称',
+        'accountId': 'bank',
+        'accountName': '测试银行',
+        'marker': 'Card: **1234',
+        'reviewOnly': false,
+      }
+    ];
+    await open(tester);
+    await tester.scrollUntilVisible(find.text(source.appName), 200,
+        scrollable: find
+            .descendant(
+                of: find.byType(ListView).first,
+                matching: find.byType(Scrollable))
+            .first);
+    final tile = find.ancestor(
+        of: find.text(source.appName), matching: find.byType(ListTile));
+    expect(find.descendant(of: tile, matching: find.textContaining('仅收集到待确认')),
+        findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final theme in [AppThemeStyle.abyss, AppThemeStyle.sky]) {
+    for (final size in [
+      const Size(375, 812),
+      const Size(812, 375),
+      const Size(1024, 768)
+    ]) {
+      androidTestWidgets(
+          'settings fits $size in $theme with large text and reduced motion',
+          (tester) async {
+        final source = malaysiaBankNotificationSources
+            .firstWhere((s) => s.institution == 'Hong Leong Bank');
+        installedApps = [
+          {'package': source.packageName, 'label': source.appName}
+        ];
+        await open(tester, size: size, scale: 2, theme: theme);
+        expect(find.text('通知记账'), findsOneWidget);
+        await tester.scrollUntilVisible(find.text('绑定通知来源与账户'), 200,
+            scrollable: find
+                .descendant(
+                    of: find.byType(ListView).first,
+                    matching: find.byType(Scrollable))
+                .first);
+        await tester.ensureVisible(find.text('绑定通知来源与账户'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('绑定通知来源与账户'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byType(DropdownButtonFormField<String>).first);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text(source.appName).last);
+        await tester.pumpAndSettle();
+        expect(find.text('通知中的账户识别片段（可选）'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        await tester.tap(find.text('取消'));
+        await tester.pumpAndSettle();
+      });
+    }
+  }
+
+  androidTestWidgets('source catalog expands without offering uninstalled apps',
+      (tester) async {
+    installedApps = [];
+    await open(tester);
+    await tester.scrollUntilVisible(find.text('银行与钱包接入范围'), 200,
+        scrollable: find
+            .descendant(
+                of: find.byType(ListView).first,
+                matching: find.byType(Scrollable))
+            .first);
+    await tester.tap(find.text('银行与钱包接入范围'));
+    await tester.pumpAndSettle();
+    for (final source in reviewOnlyNotificationSources) {
+      expect(find.text(source.institution), findsOneWidget);
+    }
+    await tester.ensureVisible(find.text('绑定通知来源与账户'));
+    await tester.tap(find.text('绑定通知来源与账户'));
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.textContaining('未找到可绑定的应用'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
   androidTestWidgets(
       'TNG can be bound without a sample and always requires review',

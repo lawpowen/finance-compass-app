@@ -159,3 +159,5 @@ flowchart TD
 ## 通知记账数据（schema 仍为 9）
 
 app_meta 的 notification_record_v1_<eventId> 保存通知与处理凭据；交易 ID 为 notification_<eventId>。状态与交易/余额同事务提交，撤销保留防重记录。完整 JSON 包含这些元数据，来源绑定和原生队列不随 JSON 迁移。SharedPreferences 绑定新增可选 reviewOnly 布尔值，缺省 false；true 时允许空 marker，仅在唯一绑定下预选确认表单账户，永不自动入账。无需 schema 迁移。导入历史备份前须关闭接收并处理队列。字段、状态及恢复限制见 [Android 通知记账](ANDROID_NOTIFICATION_BOOKKEEPING.md)。
+
+银行扩展 build 49 只增加静态来源目录，不增加持久字段或迁移。来源策略优先于旧绑定 reviewOnly 缺省/false，强制待确认；新建银行绑定保存 reviewOnly=true，空 marker 仍只在唯一匹配时预选账户。已有 posted/confirmed/ignored/undone 记录不重新处理。降级到 build 48 前应暂停通知接收，因为旧版本没有这 10 家银行的强制待确认策略。

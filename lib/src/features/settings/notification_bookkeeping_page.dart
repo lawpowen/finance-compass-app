@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/models/transaction.dart';
 import '../../core/notifications/notification_bridge.dart';
-import '../../core/notifications/notification_parser.dart';
+import '../../core/notifications/notification_sources.dart';
 import '../../core/providers/repository_provider.dart';
 import '../transactions/transaction_form_dialog.dart';
 
@@ -98,7 +98,8 @@ class _NotificationBookkeepingPageState
           const Text(
               '只处理你选择的应用。通知正文在本机识别，不发送给 AI；完整 JSON 备份会包含通知记录。请先绑定账户，再授权并开启。'),
           const SizedBox(height: 8),
-          const Text('TNG eWallet 可先绑定账户，无需通知样本。目前其通知均需逐笔确认，确认前不会改变余额。'),
+          const Text(
+              '已接入 10 家马来西亚银行及 TNG eWallet，可先绑定账户，无需通知样本。目前这些来源均需逐笔确认，确认前不会改变余额。'),
           const SizedBox(height: 16),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
@@ -130,9 +131,12 @@ class _NotificationBookkeepingPageState
           for (var index = 0; index < bridge.bindings.length; index++)
             Card(
                 child: ListTile(
-              title: Text('${bridge.bindings[index]['label']}'),
+              title: Text(notificationSourceFor(
+                          bridge.bindings[index]['package'] as String?)
+                      ?.appName ??
+                  '${bridge.bindings[index]['label']}'),
               subtitle: Text('${bridge.bindings[index]['accountName']}\n'
-                  '${bridge.bindings[index]['reviewOnly'] == true || bridge.bindings[index]['package'] == tngEwalletPackage ? '仅收集到待确认' : '符合规则时自动入账'}'
+                  '${bridge.bindings[index]['reviewOnly'] == true || notificationSourceFor(bridge.bindings[index]['package'] as String?) != null ? '仅收集到待确认' : '符合规则时自动入账'}'
                   '${(bridge.bindings[index]['marker'] as String? ?? '').isEmpty ? '' : '\n包含：${bridge.bindings[index]['marker']}'}'),
               trailing: IconButton(
                   tooltip: '移除来源绑定',
@@ -147,6 +151,23 @@ class _NotificationBookkeepingPageState
                                 active: updated.isEmpty ? false : null);
                           })),
             )),
+          ExpansionTile(
+            tilePadding: EdgeInsets.zero,
+            title: const Text('银行与钱包接入范围'),
+            subtitle: const Text('10 家银行 + TNG eWallet · 均需确认'),
+            children: [
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Text('下列为已接入来源。绑定时仅列出本机已安装的应用；未验证的交易格式不会自动入账。'),
+              ),
+              for (final source in reviewOnlyNotificationSources)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(source.institution),
+                  subtitle: Text('${source.appName}\n仅收集到待确认'),
+                ),
+            ],
+          ),
           const SizedBox(height: 16),
           const Text('自动入账条件', style: TextStyle(fontWeight: FontWeight.bold)),
           const Text(
@@ -195,7 +216,7 @@ class _NotificationBookkeepingPageState
                         style: Theme.of(context).textTheme.titleMedium),
                     const SizedBox(height: 8),
                     Text(
-                        '${item['package']} · ${date.toString().substring(0, 16)}'),
+                        '${notificationSourceFor(item['package'] as String?)?.appName ?? item['package']} · ${date.toString().substring(0, 16)}'),
                     if (state == 'pending')
                       Padding(
                           padding: const EdgeInsets.symmetric(vertical: 8),
@@ -204,7 +225,8 @@ class _NotificationBookkeepingPageState
                         tilePadding: EdgeInsets.zero,
                         title: const Text('查看原始通知'),
                         children: [
-                          SelectableText('${item['title']}\n${item['text']}')
+                          SelectableText(
+                              '${item['package']}\n${item['title']}\n${item['text']}')
                         ]),
                     if (state == 'pending')
                       Wrap(spacing: 8, runSpacing: 8, children: [
@@ -234,7 +256,20 @@ class _NotificationBookkeepingPageState
   }
 
   Future<void> _addBinding(NotificationBridge bridge) async {
-    final apps = await bridge.apps();
+    final apps = (await bridge.apps()).map((app) {
+      final source = notificationSourceFor(app['package'] as String?);
+      return <String, dynamic>{
+        ...app,
+        if (source != null) 'label': source.appName,
+      };
+    }).toList()
+      ..sort((a, b) {
+        final aKnown = notificationSourceFor(a['package'] as String?) != null;
+        final bKnown = notificationSourceFor(b['package'] as String?) != null;
+        if (aKnown != bKnown) return aKnown ? -1 : 1;
+        return (a['label'] as String).compareTo(b['label'] as String);
+      });
+    if (apps.isEmpty) throw StateError('未找到可绑定的应用，请先安装银行或钱包 App');
     final repository = await ref.read(financeRepositoryProvider.future);
     final accounts = repository.accounts.where((a) => a.isActive).toList();
     if (accounts.isEmpty) throw StateError('请先创建一个账户');
@@ -269,7 +304,8 @@ class _NotificationBookkeepingPageState
                                   .toList(),
                               onChanged: (value) => setDialogState(() {
                                     package = value;
-                                    reviewOnly = value == tngEwalletPackage;
+                                    reviewOnly =
+                                        notificationSourceFor(value) != null;
                                   }),
                               validator: (v) => v == null ? '请选择来源应用' : null),
                           const SizedBox(height: 16),
@@ -289,11 +325,12 @@ class _NotificationBookkeepingPageState
                           SwitchListTile(
                               contentPadding: EdgeInsets.zero,
                               title: const Text('仅收集到待确认'),
-                              subtitle: Text(package == tngEwalletPackage
-                                  ? 'TNG eWallet 目前需逐笔确认；无需填写账户片段'
+                              subtitle: Text(notificationSourceFor(package) !=
+                                      null
+                                  ? '${notificationSourceFor(package)!.appName} 目前需逐笔确认；无需填写账户片段'
                                   : '没有通知样本时可先开启；确认前不改变余额'),
                               value: reviewOnly,
-                              onChanged: package == tngEwalletPackage
+                              onChanged: notificationSourceFor(package) != null
                                   ? null
                                   : (value) =>
                                       setDialogState(() => reviewOnly = value)),

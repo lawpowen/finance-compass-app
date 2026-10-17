@@ -65,3 +65,5 @@ Repository 对信用卡提供两条明确分离的读取路径：账单、未出
 ## Android 通知记账引擎
 
 新增通知监听服务、私有持久队列及共享 FlutterEngine。MainActivity 与服务复用同一 Dart 主入口和账本连接；MethodChannel 串行消费，账本写入事务提交后才 ACK。通知记录使用 app_meta，账本 schema 不变。模块与运行图见 [Android 通知记账](ANDROID_NOTIFICATION_BOOKKEEPING.md)。
+
+通知来源身份集中在 `core/notifications/notification_sources.dart`，由解析器和设置页共同读取，避免界面显示待确认而业务层仍自动写账。目录为静态纯数据，仅做精确包名查询；新增的 10 家银行与 TNG 均先进入待确认，现有 Android 监听/队列、MethodChannel、Drift schema、后台恢复和其他来源严格通用句式不变。没有新增依赖、网络请求或系统权限。

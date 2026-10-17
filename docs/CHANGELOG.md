@@ -2,6 +2,15 @@
 
 ## 2026-10-17
 
+### 马来西亚 10 家银行通知来源接入（0.11.0-dev+49）
+
+- 行为：接入 Maybank、CIMB、Public Bank、RHB、Hong Leong、AmBank、Bank Islam、Bank Rakyat、BSN、Affin 的当前 Android 零售 App；来源可无通知样本绑定，全部进入待确认，人工确认前不改变余额。设置页新增可折叠范围目录，已安装选择器优先显示目录内 App，并使用统一名称。
+- 设计：新增 notification_sources.dart 集中维护 10 家银行 + TNG 的精确包名；解析器与页面共用目录，旧绑定 reviewOnly 缺省/false 也不能绕过待确认。银行通知只保留唯一金额/币种候选，不猜测收支方向、商户或交易编号；TNG 工资草稿与目录外通用严格规则不变。
+- 安全与运维：账本 schema 9、配置字段、监听权限、原生队列和后台恢复均不变，无迁移或新依赖；不联网解析、不上传样本、不触发银行授权。不改写已处理历史，降级前暂停接收；Debug build 49 可与正式版并存。GitHub 开发前快照与此前开发提交保留，不更新公开稳定版。
+- 文档：新增 MALAYSIA_BANK_NOTIFICATION_RESEARCH；同步 README、design-qa、docs/README、ANDROID_NOTIFICATION_BOOKKEEPING、SYSTEM_REQUIREMENTS、ARCHITECTURE、MODULE_DESIGN、DATA_DESIGN、INTERFACES、SECURITY_AND_OPERATIONS、TESTING_AND_QUALITY、TRACEABILITY、UI_REFERENCE、INTERACTION_AUDIT 与本记录。
+- 验证：银行、TNG、后台桥接、原有通知、交易表单与交互联合回归 103 项通过，相关静态分析无诊断；深浅主题、375px 小屏/横屏/平板、两倍字号及减弱动画布局通过。Android Debug APK 构建成功并核对包名 com.financecompass.app.debug、versionCode 49；Markdown 本地链接与 diff 空白检查通过。证据在 artifacts/qa/notification-bookkeeping-2026-10-17/banks-*.log。
+- 限制：官方资料只能确认应用身份与通知类别，10 家均未取得可安全自动入账的完整 Android 交易载荷。合成测试不证明银行真机推送兼容；授权/后台回收、隐藏正文、各语言版本和真实交易核对仍待验收。既有报表小屏测试问题与 Kotlin Gradle Plugin 未来兼容警告未在本任务修改。
+
 ### TNG eWallet 待确认接入与官方样本调查（0.11.0-dev+48）
 
 - 行为：选择 TNG eWallet 后固定为仅收集到待确认，可在没有通知样本和账户识别片段时完成绑定。其他来源可主动选择仅收集；通知在用户确认前不改变余额。官方工资收款示意可预填金额、收入方向和付款方，仍需逐笔核对。

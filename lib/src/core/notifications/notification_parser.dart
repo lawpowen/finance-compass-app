@@ -1,8 +1,7 @@
 import '../models/transaction.dart';
+import 'notification_sources.dart';
 
-// Verified against the developer's Google Play listing; see
-// docs/TNG_NOTIFICATION_RESEARCH.md for the template evidence boundary.
-const tngEwalletPackage = 'my.com.tngdigital.ewallet';
+export 'notification_sources.dart' show tngEwalletPackage;
 
 class NotificationMatch {
   const NotificationMatch(
@@ -35,6 +34,7 @@ NotificationMatch parsePaymentNotification(String text,
   final currency = single?[1]?.toUpperCase().replaceAll('RM', 'MYR');
   NotificationMatch uncertain(String reason) =>
       NotificationMatch(amount: amount, currency: currency, reason: reason);
+  final source = notificationSourceFor(sourcePackage);
   if (sourcePackage == tngEwalletPackage) {
     // The official payroll handbook supplies this phrase, but not a verified
     // Android title/text payload or transaction ID. Use it only as a draft.
@@ -51,7 +51,13 @@ NotificationMatch parsePaymentNotification(String text,
         currency: currency,
         type: validPayroll ? TransactionType.income : null,
         merchant: validPayroll ? payroll[1]?.trim() : null,
-        reason: 'TNG eWallet 通知格式尚未完成验证，请核对后记账');
+        reason: source!.reviewReason);
+  }
+  if (source != null) {
+    // Official app identity alone does not validate its notification format.
+    // Keep even generic-looking success messages pending, including when a
+    // binding saved by an older version has reviewOnly=false or no such field.
+    return uncertain(source.reviewReason);
   }
   if (RegExp(
           r'\b(otp|tac|verification|verify|failed|declined|pending|refund|reversal|reversed|transfer|repayment|due|request|authorization|authorisation|preauth|cashback|reward)\b|验证码|退款|转账|还款|预授权|失败|待处理',
