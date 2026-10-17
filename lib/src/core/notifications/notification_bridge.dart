@@ -35,24 +35,23 @@ class NotificationBridge extends ChangeNotifier with WidgetsBindingObserver {
   List<Map<String, dynamic>> bindings = [];
   List<Map<String, dynamic>> items = [];
   bool _started = false;
+  bool _ready = false;
+  bool _disposed = false;
+  bool _drainRequested = false;
+  bool _reloadNeeded = false;
   Future<void>? _draining;
   Timer? _retry;
 
   Future<void> start() async {
-    if (!supported || _started) return;
-    _started = true;
-    WidgetsBinding.instance.addObserver(this);
-    channel.setMethodCallHandler((call) async {
-      if (call.method == 'available') await drain();
-    });
-    try {
-      await refresh();
-      await channel.invokeMethod<void>('ready');
-      await drain();
-    } catch (_) {
-      error = '通知服务连接失败，请重新打开应用';
-      notifyListeners();
+    if (!supported || _disposed) return;
+    if (!_started) {
+      _started = true;
+      WidgetsBinding.instance.addObserver(this);
+      channel.setMethodCallHandler((call) async {
+        if (call.method == 'available') await drain();
+      });
     }
+    await drain();
   }
 
   @override
@@ -61,19 +60,43 @@ class NotificationBridge extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> refresh() async {
+    if (_disposed) return;
     if (supported) {
-      final raw = await channel.invokeMethod<String>('config');
-      final config = jsonDecode(raw ?? '{}') as Map;
-      enabled = config['enabled'] == true;
-      bindings = (config['bindings'] as List? ?? [])
-          .map((b) => Map<String, dynamic>.from(b as Map))
-          .toList();
-      permission = await channel.invokeMethod<bool>('permission') ?? false;
+      final config = await _readConfiguration();
+      if (_disposed) return;
+      enabled = config.enabled;
+      bindings = config.bindings;
+      permission = config.permission;
       captureFailed =
           await channel.invokeMethod<bool>('captureFailed') ?? false;
     }
+    if (_disposed) return;
     items = await bookkeeper.records();
-    notifyListeners();
+    _notify();
+  }
+
+  Future<
+      ({
+        bool enabled,
+        bool permission,
+        List<Map<String, dynamic>> bindings,
+        Object? version
+      })> _readConfiguration() async {
+    final raw = await channel.invokeMethod<String>('config');
+    final config = jsonDecode(raw ?? '{}') as Map;
+    final authorized = await channel.invokeMethod<bool>('permission') ?? false;
+    return (
+      enabled: config['enabled'] == true,
+      permission: authorized,
+      bindings: (config['bindings'] as List? ?? [])
+          .map((b) => Map<String, dynamic>.from(b as Map))
+          .toList(),
+      version: config['version'],
+    );
+  }
+
+  void _notify() {
+    if (!_disposed) notifyListeners();
   }
 
   Future<void> configure(
@@ -94,55 +117,83 @@ class NotificationBridge extends ChangeNotifier with WidgetsBindingObserver {
     return result.map((a) => Map<String, dynamic>.from(a as Map)).toList();
   }
 
-  Future<void> drain() =>
-      _draining ??= _drain().whenComplete(() => _draining = null);
+  Future<void> drain() {
+    if (!supported || _disposed) return Future.value();
+    // A wake while publishing the last batch must trigger another queue read.
+    _drainRequested = true;
+    return _draining ??= Future<void>.microtask(_drain).whenComplete(() {
+      _draining = null;
+      _notify();
+    });
+  }
 
   Future<void> _drain() async {
-    if (!supported) return;
     busy = true;
-    notifyListeners();
-    var changed = false;
+    _notify();
+    _retry?.cancel();
+    var failed = false;
     try {
-      await refresh();
-      while (true) {
-        final pending =
-            await channel.invokeMethod<List<dynamic>>('pending') ?? [];
-        if (pending.isEmpty) break;
-        for (final raw in pending) {
-          // Re-read device settings before each event: pause/rebinding must
-          // apply even while a backlog is being drained.
-          final config =
-              jsonDecode(await channel.invokeMethod<String>('config') ?? '{}')
-                  as Map;
-          enabled = config['enabled'] == true;
-          bindings = (config['bindings'] as List? ?? [])
-              .map((b) => Map<String, dynamic>.from(b as Map))
-              .toList();
-          final event =
-              Map<String, dynamic>.from(jsonDecode(raw as String) as Map);
-          event['configurationChanged'] =
-              event['configVersion'] != config['version'];
-          await bookkeeper.ingest(event, bindings,
-              enabled: enabled && permission);
-          changed = true;
-          await channel.invokeMethod<void>('ack', event['id']);
+      do {
+        _drainRequested = false;
+        try {
+          // Ready belongs to the retryable connection, not just startup.
+          if (_started && !_ready && !_disposed) {
+            await channel.invokeMethod<void>('ready');
+            _ready = true;
+          }
+          await refresh();
+          await _consumeQueue();
+        } catch (_) {
+          failed = true;
         }
+
+        // ACK and UI publication have independent failure paths. Retain the
+        // dirty flag even when the native queue has already been emptied.
+        try {
+          if (_reloadNeeded && !_disposed) {
+            await onChanged();
+            _reloadNeeded = false;
+          }
+        } catch (_) {
+          failed = true;
+        }
+        try {
+          await refresh();
+        } catch (_) {
+          failed = true;
+        }
+      } while (_drainRequested && !failed && !_disposed);
+      error = failed ? '通知同步暂未完成，已保存的记录会保留；30 秒后自动重试，也可点击重试' : null;
+      if (failed && !_disposed) {
+        _retry = Timer(const Duration(seconds: 30), () => unawaited(drain()));
       }
-      error = null;
-      _retry?.cancel();
-    } catch (_) {
-      error = '通知处理失败，原通知队列已保留；可点击重试';
-      _retry?.cancel();
-      _retry = Timer(const Duration(seconds: 30), () => unawaited(drain()));
     } finally {
-      if (changed) await onChanged();
-      try {
-        await refresh();
-      } catch (_) {
-        error ??= '读取通知记录失败，请重试';
-      }
       busy = false;
-      notifyListeners();
+    }
+  }
+
+  Future<void> _consumeQueue() async {
+    while (!_disposed) {
+      final pending =
+          await channel.invokeMethod<List<dynamic>>('pending') ?? [];
+      if (pending.isEmpty) return;
+      for (final raw in pending) {
+        if (_disposed) return;
+        // Re-read both settings and system authorization before every event.
+        final config = await _readConfiguration();
+        if (_disposed) return;
+        final event =
+            Map<String, dynamic>.from(jsonDecode(raw as String) as Map);
+        event['configurationChanged'] =
+            event['configVersion'] != config.version;
+        // Keep this event's settings together: a concurrent screen refresh
+        // must not replace its account bindings with another configuration.
+        await bookkeeper.ingest(event, config.bindings,
+            enabled: config.enabled && config.permission);
+        _reloadNeeded = true;
+        if (_disposed) return;
+        await channel.invokeMethod<void>('ack', event['id']);
+      }
     }
   }
 
@@ -154,6 +205,7 @@ class NotificationBridge extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _disposed = true;
     _retry?.cancel();
     if (_started) {
       WidgetsBinding.instance.removeObserver(this);

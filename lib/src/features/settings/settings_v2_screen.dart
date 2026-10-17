@@ -257,7 +257,7 @@ class FinanceCompassAboutPage extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 6),
-              const Text('版本 0.11.0-dev+46 · Android 通知记账开发版'),
+              const Text('版本 0.11.0-dev+47 · Android 通知记账开发版'),
               const SizedBox(height: 12),
               const Card(
                 child: ListTile(

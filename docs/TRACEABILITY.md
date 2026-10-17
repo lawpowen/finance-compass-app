@@ -37,4 +37,4 @@
 | --- | --- |
 | Android NotificationCapture.kt、MainActivity.kt、AndroidManifest.xml | ARCHITECTURE、INTERFACES、SECURITY_AND_OPERATIONS、ANDROID_NOTIFICATION_BOOKKEEPING |
 | lib/src/core/notifications | DATA_DESIGN、MODULE_DESIGN、SYSTEM_REQUIREMENTS、ANDROID_NOTIFICATION_BOOKKEEPING |
-| 通知设置页、交易表单 notificationDraft、通知测试 | TESTING_AND_QUALITY、ANDROID_NOTIFICATION_BOOKKEEPING、CHANGELOG |
+| 通知设置页、交易表单 notificationDraft、notification_bookkeeping_test.dart、notification_bookkeeping_page_test.dart、notification_bridge_test.dart | TESTING_AND_QUALITY、ANDROID_NOTIFICATION_BOOKKEEPING、CHANGELOG |

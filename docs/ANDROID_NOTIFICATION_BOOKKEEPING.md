@@ -1,4 +1,4 @@
-# Android 通知记账（0.11.0-dev）
+# Android 通知记账（0.11.0-dev+47）
 
 本功能为开发版。APK 编译与自动化测试不等于银行实机验收；没有真实银行通知样本时，不承诺任何银行或钱包的识别率。公开稳定版仍为 v0.10.1。
 
@@ -45,7 +45,7 @@ flowchart TD
 - `android/app/src/main/kotlin/com/financecompass/app/NotificationCapture.kt`：`PaymentNotificationListener`、`NotificationQueue`、`FinanceEngine`。Activity 与服务复用同一 FlutterEngine，避免两个 Dart 引擎持有独立账本连接。后台收到通知可启动引擎执行相同主入口，不自动打开 Activity。
 - `lib/src/core/notifications/notification_parser.dart`：纯解析器，返回候选字段与人工确认原因。
 - `notification_bookkeeper.dart`：接收、防重、确认、忽略、撤销；复用 AppDatabase 入账和反向余额操作，不另算一套余额。
-- `notification_bridge.dart`：串行消费、提交后 ACK、失败后 30 秒及恢复前台重试、刷新 Riverpod。每个事件重新读取当前配置；接收后配置版本变化则待确认。
+- `notification_bridge.dart`：串行消费、提交后 ACK、失败后 30 秒及恢复前台重试、刷新 Riverpod。每个事件重新读取当前配置与系统授权，并在该事件内使用独立快照，页面并发刷新不会替换正在处理事件的账户；已开始处理的事件按该次快照完成，设置变更影响后续读取。接收后配置版本变化或授权被撤销则待确认。连接握手失败也进入重试；消费与刷新期间收到 available 会补做一次队列读取。
 - `lib/src/features/settings/notification_bookkeeping_page.dart`：来源设置、待确认、已处理。确认复用 TransactionFormDialog 的 `notificationDraft` 模式，保留通知日期并禁止生成多个月记录。
 
 ## 数据、接口与失败行为
@@ -56,13 +56,15 @@ flowchart TD
 
 Android 队列 `notification_capture.sqlite` 的 events 表为 `id TEXT PRIMARY KEY, payload TEXT NOT NULL`。SHA-256 ID 基于通知 key、postTime、标题与完整正文。每批最多 50 条，成功后逐条 ACK；原生队列不包含在 JSON 备份。配置保存在私有 SharedPreferences `notification_capture/config`，包括 enabled、bindings、递增 version，不进入账本 JSON，跨设备不自动启用。捕获保存失败尝试保存 captureFailed 标记，在页面提示核对账单；日志不输出通知正文。
 
+连接握手、消费队列、Repository 刷新、记录列表读取均纳入同一恢复流程：失败显示状态并在 30 秒后重试，也可手动刷新或恢复前台触发。未提交/未 ACK 的事件保留在原生队列；已 ACK 但 Repository 刷新失败时，保留本进程待刷新标记，下次重试只需重载账本，不重复入账。桥接对象销毁后不再通知页面或继续消费，已提交但未 ACK 的事件由下一次连接幂等恢复。
+
 MethodChannel：`finance_compass/notification_bookkeeping`。Dart 调用 ready、config、configure(JSON 字符串)、permission、captureFailed、openPermission、apps、pending、ack(eventId)；Android 发 available 唤醒消费。apps 只查询可启动应用，不请求 QUERY_ALL_PACKAGES。服务要求 BIND_NOTIFICATION_LISTENER_SERVICE 系统绑定权限；用户必须单独开启通知读取，普通发送通知权限不能替代它。
 
 记录默认持续保留，暂无自动保留期或批量清除正文入口。完整 JSON 备份包含记录；AI 摘要不含通知原文，已记账交易仍参与现有财务分析。清除应用数据/卸载会丢失私有队列与设置。旧版不会显示新记录；回滚前关闭通知权限，优先用升级前 JSON 恢复。Debug 使用 `.debug` ID，与正式版数据隔离，不需要卸载正式版。
 
 ## 验证与限制
 
-自动化覆盖严格句式、拒绝不确定内容、原子余额、防重/更新、忽略、撤销、回滚、ACK 重试、人工确认、隐私导出、暂停，以及 375px 小屏、横屏、平板和两倍字号。最终构建与测试结果见[变更记录](CHANGELOG.md)。
+自动化覆盖严格句式、拒绝不确定内容、原子余额、防重/更新、忽略、撤销、回滚、ACK 重试、连接握手与 30 秒自动重试、逐条撤权检查、刷新失败恢复、刷新期间通知唤醒、销毁时队列保留、并发设置刷新下账户隔离、人工确认、隐私导出、暂停，以及 375px 小屏、横屏、平板和两倍字号。最终构建与测试结果见[变更记录](CHANGELOG.md)。
 
 真机验收尚未完成：授权/撤权、进程回收后新通知、锁屏隐藏正文、银行模板、厂商省电策略、后台到前台引擎复用、重启恢复和屏幕阅读器。系统强制停止、后台限制或来源不发通知都可能漏记，不保证与账单完整一致。新增银行适配必须先取得脱敏成功、失败、重复、退款、多账户样本，并添加回归测试。
 

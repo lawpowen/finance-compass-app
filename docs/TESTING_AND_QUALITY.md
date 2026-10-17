@@ -224,7 +224,7 @@ flutter build windows --debug
 ## 2026-09-29 信用卡复审跟进验证（未发布）
 
 - 工具链：同上，通过 Windows PowerShell 以绝对路径调用 Flutter 3.44.1 / Dart 3.12.1；未运行 `pub get`，`pubspec.lock` SHA-256 仍为 `9E53C573…AED7BD7EB`，`pubspec.lock`、`pubspec.yaml`、`analysis_options.yaml` 无改动。
-- 测试：相关 7 个文件（`credit_card_billing_test`、`credit_card_outstanding_test`、`account_form_credit_balance_test`、`credit_card_statement_history_test`、`transaction_scope_test`、`account_cutoff_interaction_test`、`loan_detail_screen_test`）共 47 项通过；全量 `flutter test --no-pub` 176 项通过、2 项按设计跳过、0 失败（较上一轮 160 项新增 16 项，其中 2 项为主审终轮新增）。以上为主审终轮修复后的最终结果，取代此前 45/174 的临时数量。
+- 测试：相关 7 个文件（`credit_card_billing_test`、`credit_card_outstanding_test`、`account_form_credit_balance_test`、`credit_card_statement_history_test`、`transaction_scope_test`、`account_cutoff_interaction_test`、`loan_detail_screen_test`）共 48 项通过；全量 `flutter test --no-pub` 176 项通过、2 项按设计跳过、0 失败（较上一轮 160 项新增 16 项，其中 2 项为主审终轮新增）。以上为主审终轮修复后的最终结果，取代此前 45/174 的临时数量。
 - 修复前对照：见上文“信用卡复审跟进回归”的失效验证；旧函数红灯日志单独保存。
 - 格式与分析：`dart format --output=none --set-exit-if-changed lib test` 检查 142 个文件、0 改动；`flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings` 退出码 0，67 项均为既有问题（0 error、2 warning、65 info），无一位于本次修改文件。
 - 证据：本机 `artifacts/qa/credit-debt-2026-09-29-followup-{item4-old-function-red,items1235-reverted-red}.log`，以及主审终轮 `artifacts/qa/credit-debt-2026-09-29-final-{targeted,negative-control,related-tests,full-test,format,analyze}.log`（不随仓库提交）。
@@ -260,4 +260,8 @@ flutter build windows --debug
 
 ## 通知记账验证
 
-新增 test/notification_bookkeeping_test.dart 与 test/notification_bookkeeping_page_test.dart，覆盖解析拒绝条件、原子余额、防重/撤销、失败重试、备份/AI 摘要隐私边界及页面操作。继续运行原有交易表单和交互门禁，并构建 Android Debug APK。真机后台接收、权限撤销和银行模板尚未验证，不能把构建成功标记为银行适配通过。验收要求见 [Android 通知记账](ANDROID_NOTIFICATION_BOOKKEEPING.md)。
+新增 test/notification_bookkeeping_test.dart、test/notification_bookkeeping_page_test.dart 和 test/notification_bridge_test.dart，覆盖解析拒绝条件、原子余额、防重/撤销、失败重试、备份/AI 摘要隐私边界及页面操作。继续运行原有交易表单和交互门禁，并构建 Android Debug APK。真机后台接收、权限撤销和银行模板尚未验证，不能把构建成功标记为银行适配通过。验收要求见 [Android 通知记账](ANDROID_NOTIFICATION_BOOKKEEPING.md)。
+
+### 2026-10-17 通知后台恢复回归（build 47）
+
+新增桥接回归覆盖握手重试、处理途中撤权、ACK 后 Repository 刷新失败、新通知在最终刷新时到达、30 秒自动重试销毁中的异步操作，以及并发设置刷新时的账户隔离。前四个用例在修复前均失败，修复后 7 项通过；通知模块、页面和既有交易表单/交互共 47 项通过。通知模块与新增测试静态分析无诊断。Android Debug APK 构建成功。仅使用 mock MethodChannel 与内存 SQLite，未连接实机或运行模拟器，不能代替系统通知监听验收。日志位于 artifacts/qa/notification-bookkeeping-2026-10-17/recovery-*.log；既有报表小屏命中测试失败已在修改前基线复现，本轮未改报表。
