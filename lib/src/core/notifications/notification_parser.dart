@@ -1,5 +1,9 @@
 import '../models/transaction.dart';
 
+// Verified against the developer's Google Play listing; see
+// docs/TNG_NOTIFICATION_RESEARCH.md for the template evidence boundary.
+const tngEwalletPackage = 'my.com.tngdigital.ewallet';
+
 class NotificationMatch {
   const NotificationMatch(
       {this.amount,
@@ -18,7 +22,8 @@ class NotificationMatch {
 }
 
 /// Conservative parser: unknown templates are reviewable, never guessed.
-NotificationMatch parsePaymentNotification(String text) {
+NotificationMatch parsePaymentNotification(String text,
+    {String? sourcePackage}) {
   final money = RegExp(
           r'\b(MYR|RM|USD|CNY|TWD)\s*([0-9]+(?:,[0-9]{3})*\.[0-9]{2})(?![0-9])',
           caseSensitive: false)
@@ -30,6 +35,24 @@ NotificationMatch parsePaymentNotification(String text) {
   final currency = single?[1]?.toUpperCase().replaceAll('RM', 'MYR');
   NotificationMatch uncertain(String reason) =>
       NotificationMatch(amount: amount, currency: currency, reason: reason);
+  if (sourcePackage == tngEwalletPackage) {
+    // The official payroll handbook supplies this phrase, but not a verified
+    // Android title/text payload or transaction ID. Use it only as a draft.
+    final payroll = RegExp(
+            r'^You have received payment from (.{1,100}?)\s*:\s*RM\s*[0-9,]+\.[0-9]{2}$')
+        .firstMatch(text.trim());
+    final validPayroll = payroll != null &&
+        single != null &&
+        amount != null &&
+        amount.isFinite &&
+        amount > 0;
+    return NotificationMatch(
+        amount: amount,
+        currency: currency,
+        type: validPayroll ? TransactionType.income : null,
+        merchant: validPayroll ? payroll[1]?.trim() : null,
+        reason: 'TNG eWallet 通知格式尚未完成验证，请核对后记账');
+  }
   if (RegExp(
           r'\b(otp|tac|verification|verify|failed|declined|pending|refund|reversal|reversed|transfer|repayment|due|request|authorization|authorisation|preauth|cashback|reward)\b|验证码|退款|转账|还款|预授权|失败|待处理',
           caseSensitive: false)

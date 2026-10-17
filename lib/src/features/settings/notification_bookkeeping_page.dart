@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/models/transaction.dart';
 import '../../core/notifications/notification_bridge.dart';
+import '../../core/notifications/notification_parser.dart';
 import '../../core/providers/repository_provider.dart';
 import '../transactions/transaction_form_dialog.dart';
 
@@ -96,6 +97,8 @@ class _NotificationBookkeepingPageState
           const SizedBox(height: 8),
           const Text(
               '只处理你选择的应用。通知正文在本机识别，不发送给 AI；完整 JSON 备份会包含通知记录。请先绑定账户，再授权并开启。'),
+          const SizedBox(height: 8),
+          const Text('TNG eWallet 可先绑定账户，无需通知样本。目前其通知均需逐笔确认，确认前不会改变余额。'),
           const SizedBox(height: 16),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
@@ -128,8 +131,9 @@ class _NotificationBookkeepingPageState
             Card(
                 child: ListTile(
               title: Text('${bridge.bindings[index]['label']}'),
-              subtitle: Text(
-                  '${bridge.bindings[index]['accountName']}\n包含：${bridge.bindings[index]['marker']}'),
+              subtitle: Text('${bridge.bindings[index]['accountName']}\n'
+                  '${bridge.bindings[index]['reviewOnly'] == true || bridge.bindings[index]['package'] == tngEwalletPackage ? '仅收集到待确认' : '符合规则时自动入账'}'
+                  '${(bridge.bindings[index]['marker'] as String? ?? '').isEmpty ? '' : '\n包含：${bridge.bindings[index]['marker']}'}'),
               trailing: IconButton(
                   tooltip: '移除来源绑定',
                   icon: const Icon(Icons.link_off),
@@ -236,77 +240,101 @@ class _NotificationBookkeepingPageState
     if (accounts.isEmpty) throw StateError('请先创建一个账户');
     if (!mounted) return;
     var marker = '';
+    var reviewOnly = false;
     String? package;
     String? accountId;
     final form = GlobalKey<FormState>();
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('绑定通知来源'),
-        content: SizedBox(
-            width: 420,
-            child: SingleChildScrollView(
-                child: Form(
-                    key: form,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        DropdownButtonFormField<String>(
-                            isExpanded: true,
-                            decoration:
-                                const InputDecoration(labelText: '通知来自哪个应用'),
-                            items: apps
-                                .map((a) => DropdownMenuItem(
-                                    value: a['package'] as String,
-                                    child: Text('${a['label']}',
-                                        overflow: TextOverflow.ellipsis)))
-                                .toList(),
-                            onChanged: (value) => package = value,
-                            validator: (v) => v == null ? '请选择来源应用' : null),
-                        const SizedBox(height: 16),
-                        DropdownButtonFormField<String>(
-                            isExpanded: true,
-                            decoration:
-                                const InputDecoration(labelText: '记入哪个账户'),
-                            items: accounts
-                                .map((a) => DropdownMenuItem(
-                                    value: a.id,
-                                    child: Text('${a.name} · ${a.currency}',
-                                        overflow: TextOverflow.ellipsis)))
-                                .toList(),
-                            onChanged: (value) => accountId = value,
-                            validator: (v) => v == null ? '请选择账户' : null),
-                        const SizedBox(height: 16),
-                        TextFormField(
-                            onChanged: (value) => marker = value,
-                            decoration: const InputDecoration(
-                                labelText: '通知中的账户识别片段',
-                                hintText: '例如 Card: **1234',
-                                helperText: '区分同一应用中的多个账户；按原文匹配'),
-                            validator: (value) =>
-                                (value ?? '').trim().length < 4
-                                    ? '请输入至少 4 个字符的独有片段'
-                                    : null),
-                      ],
-                    )))),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context), child: const Text('取消')),
-          FilledButton(
-              onPressed: () {
-                if (!form.currentState!.validate()) return;
-                Navigator.pop(context, <String, dynamic>{
-                  'package': package,
-                  'label':
-                      apps.firstWhere((a) => a['package'] == package)['label'],
-                  'accountId': accountId,
-                  'accountName':
-                      accounts.firstWhere((a) => a.id == accountId).name,
-                  'marker': marker.trim()
-                });
-              },
-              child: const Text('保存绑定')),
-        ],
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('绑定通知来源'),
+          content: SizedBox(
+              width: 420,
+              child: SingleChildScrollView(
+                  child: Form(
+                      key: form,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          DropdownButtonFormField<String>(
+                              isExpanded: true,
+                              decoration:
+                                  const InputDecoration(labelText: '通知来自哪个应用'),
+                              items: apps
+                                  .map((a) => DropdownMenuItem(
+                                      value: a['package'] as String,
+                                      child: Text('${a['label']}',
+                                          overflow: TextOverflow.ellipsis)))
+                                  .toList(),
+                              onChanged: (value) => setDialogState(() {
+                                    package = value;
+                                    reviewOnly = value == tngEwalletPackage;
+                                  }),
+                              validator: (v) => v == null ? '请选择来源应用' : null),
+                          const SizedBox(height: 16),
+                          DropdownButtonFormField<String>(
+                              isExpanded: true,
+                              decoration:
+                                  const InputDecoration(labelText: '记入哪个账户'),
+                              items: accounts
+                                  .map((a) => DropdownMenuItem(
+                                      value: a.id,
+                                      child: Text('${a.name} · ${a.currency}',
+                                          overflow: TextOverflow.ellipsis)))
+                                  .toList(),
+                              onChanged: (value) => accountId = value,
+                              validator: (v) => v == null ? '请选择账户' : null),
+                          const SizedBox(height: 16),
+                          SwitchListTile(
+                              contentPadding: EdgeInsets.zero,
+                              title: const Text('仅收集到待确认'),
+                              subtitle: Text(package == tngEwalletPackage
+                                  ? 'TNG eWallet 目前需逐笔确认；无需填写账户片段'
+                                  : '没有通知样本时可先开启；确认前不改变余额'),
+                              value: reviewOnly,
+                              onChanged: package == tngEwalletPackage
+                                  ? null
+                                  : (value) =>
+                                      setDialogState(() => reviewOnly = value)),
+                          const SizedBox(height: 16),
+                          TextFormField(
+                              onChanged: (value) => marker = value,
+                              decoration: InputDecoration(
+                                  labelText: reviewOnly
+                                      ? '通知中的账户识别片段（可选）'
+                                      : '通知中的账户识别片段',
+                                  hintText: '例如 Card: **1234',
+                                  helperMaxLines: 3,
+                                  helperText: '区分同一应用中的多个账户；按原文匹配'),
+                              validator: (value) => (!reviewOnly ||
+                                          (value ?? '').trim().isNotEmpty) &&
+                                      (value ?? '').trim().length < 4
+                                  ? '请输入至少 4 个字符的独有片段'
+                                  : null),
+                        ],
+                      )))),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('取消')),
+            FilledButton(
+                onPressed: () {
+                  if (!form.currentState!.validate()) return;
+                  Navigator.pop(context, <String, dynamic>{
+                    'package': package,
+                    'label': apps
+                        .firstWhere((a) => a['package'] == package)['label'],
+                    'accountId': accountId,
+                    'accountName':
+                        accounts.firstWhere((a) => a.id == accountId).name,
+                    'marker': marker.trim(),
+                    'reviewOnly': reviewOnly,
+                  });
+                },
+                child: const Text('保存绑定')),
+          ],
+        ),
       ),
     );
     if (result != null) {

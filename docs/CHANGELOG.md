@@ -2,6 +2,15 @@
 
 ## 2026-10-17
 
+### TNG eWallet 待确认接入与官方样本调查（0.11.0-dev+48）
+
+- 行为：选择 TNG eWallet 后固定为仅收集到待确认，可在没有通知样本和账户识别片段时完成绑定。其他来源可主动选择仅收集；通知在用户确认前不改变余额。官方工资收款示意可预填金额、收入方向和付款方，仍需逐笔核对。
+- 设计：解析器新增可选 sourcePackage 并按官方包名隔离 TNG；TNG 不进入通用自动规则，即使旧绑定未设置 reviewOnly 也待确认。来源绑定新增可选 reviewOnly，缺省 false；空片段只有在仅收集模式才参与候选账户匹配，多个匹配不设置候选账户。
+- 安全与运维：没有新增联网解析或样本上传；营销通知也可能进入待确认，原文继续按现有完整备份规则保留。账本 schema 9 与原生队列表不变，无需数据库迁移；回滚前应暂停接收。build 48 与正式版并存，既有 GitHub 备份保留。
+- 文档：新增 TNG_NOTIFICATION_RESEARCH；同步根 README、docs/README、ANDROID_NOTIFICATION_BOOKKEEPING、SYSTEM_REQUIREMENTS、MODULE_DESIGN、DATA_DESIGN、INTERFACES、SECURITY_AND_OPERATIONS、TESTING_AND_QUALITY、TRACEABILITY 及本记录。研究文档逐项标注官方来源与证据边界。
+- 验证：TNG 规则与原有通知/桥接/交易表单/交互联合回归 63 项通过；相关静态分析无诊断，格式检查通过，Android Debug APK 构建成功。页面测试覆盖无片段绑定、模式切换、375px/横屏/平板两倍字号。日志见 artifacts/qa/notification-bookkeeping-2026-10-17/tng-*.log。
+- 限制：官方资料尚不足以验证消费者 Android 完整付款通知，未启用 TNG 自动入账模板。工资示意并非已验证的 NotificationListener payload；真机授权、后台送达及真实交易核对仍待验收。前轮已确认的既有报表小屏测试问题未修改。
+
 ### Android 通知后台恢复与授权检查（0.11.0-dev+47）
 
 - 行为：首次连接失败可自动重试；处理队列时逐条检查系统授权，撤权后剩余事件待确认。修复 Repository 刷新失败造成页面持续忙碌，以及最终刷新期间到达的新通知遗漏唤醒。

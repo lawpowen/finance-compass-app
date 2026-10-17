@@ -6,6 +6,7 @@ import 'package:finance_app/src/core/database/app_database.dart'
 import 'package:finance_app/src/core/models/account.dart';
 import 'package:finance_app/src/core/notifications/notification_bookkeeper.dart';
 import 'package:finance_app/src/core/notifications/notification_bridge.dart';
+import 'package:finance_app/src/core/notifications/notification_parser.dart';
 import 'package:finance_app/src/core/providers/database_provider.dart';
 import 'package:finance_app/src/core/providers/repository_provider.dart';
 import 'package:finance_app/src/core/settings/app_theme_style.dart';
@@ -72,7 +73,8 @@ void main() {
           return null;
         case 'apps':
           return [
-            {'package': 'other.bank', 'label': '另一个银行'}
+            {'package': 'other.bank', 'label': '另一个银行'},
+            {'package': tngEwalletPackage, 'label': 'TNG eWallet'},
           ];
         case 'ready':
           return null;
@@ -182,6 +184,37 @@ void main() {
     expect(sources.last['package'], 'other.bank');
     expect(sources.last['accountId'], 'bank');
     expect(sources.last['marker'], 'Account: **5678');
+    expect(sources.last['reviewOnly'], isFalse);
+    expect(tester.takeException(), isNull);
+  });
+
+  androidTestWidgets(
+      'source without a sample must opt into review before saving',
+      (tester) async {
+    await open(tester);
+    await tester.ensureVisible(find.text('绑定通知来源与账户'));
+    await tester.tap(find.text('绑定通知来源与账户'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(DropdownButtonFormField<String>).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('另一个银行').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(DropdownButtonFormField<String>).last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('测试银行 · MYR').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('保存绑定'));
+    await tester.pumpAndSettle();
+    expect(find.text('请输入至少 4 个字符的独有片段'), findsOneWidget);
+    await tester.ensureVisible(find.widgetWithText(SwitchListTile, '仅收集到待确认'));
+    await tester.tap(find.widgetWithText(SwitchListTile, '仅收集到待确认'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('保存绑定'));
+    await tester.pumpAndSettle();
+    final binding = (config['bindings'] as List).last as Map;
+    expect(binding['package'], 'other.bank');
+    expect(binding['marker'], isEmpty);
+    expect(binding['reviewOnly'], isTrue);
     expect(tester.takeException(), isNull);
   });
 
@@ -194,9 +227,54 @@ void main() {
         (tester) async {
       await open(tester, size: size, scale: 2);
       expect(find.text('通知记账'), findsOneWidget);
+      await tester.scrollUntilVisible(find.text('绑定通知来源与账户'), 200,
+          scrollable: find
+              .descendant(
+                  of: find.byType(ListView).first,
+                  matching: find.byType(Scrollable))
+              .first);
+      await tester.ensureVisible(find.text('绑定通知来源与账户'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('绑定通知来源与账户'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(DropdownButtonFormField<String>).first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('TNG eWallet').last);
+      await tester.pumpAndSettle();
+      expect(find.text('通知中的账户识别片段（可选）'), findsOneWidget);
       expect(tester.takeException(), isNull);
+      await tester.tap(find.text('取消'));
+      await tester.pumpAndSettle();
     });
   }
+
+  androidTestWidgets(
+      'TNG can be bound without a sample and always requires review',
+      (tester) async {
+    await open(tester);
+    await tester.ensureVisible(find.text('绑定通知来源与账户'));
+    await tester.tap(find.text('绑定通知来源与账户'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(DropdownButtonFormField<String>).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('TNG eWallet').last);
+    await tester.pumpAndSettle();
+    final review = tester
+        .widget<SwitchListTile>(find.widgetWithText(SwitchListTile, '仅收集到待确认'));
+    expect(review.value, isTrue);
+    expect(review.onChanged, isNull);
+    await tester.tap(find.byType(DropdownButtonFormField<String>).last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('测试银行 · MYR').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('保存绑定'));
+    await tester.pumpAndSettle();
+    final binding = (config['bindings'] as List).last as Map;
+    expect(binding['package'], tngEwalletPackage);
+    expect(binding['marker'], isEmpty);
+    expect(binding['reviewOnly'], isTrue);
+    expect(tester.takeException(), isNull);
+  });
 
   test('ack failure retries without a second debit and refreshes repository',
       () async {

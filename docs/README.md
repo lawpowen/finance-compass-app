@@ -44,3 +44,5 @@
 ## Android 通知记账开发版
 
 [Android 通知记账](ANDROID_NOTIFICATION_BOOKKEEPING.md)：授权、来源绑定、准入、待确认、撤销、隐私、后台限制与回滚。
+
+[TNG eWallet 通知样本调查](TNG_NOTIFICATION_RESEARCH.md)：官方来源、工资示意、通知类型区别及尚未验证的 Android 字段。

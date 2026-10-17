@@ -1,18 +1,28 @@
-# Android 通知记账（0.11.0-dev+47）
+# Android 通知记账（0.11.0-dev+48）
 
 本功能为开发版。APK 编译与自动化测试不等于银行实机验收；没有真实银行通知样本时，不承诺任何银行或钱包的识别率。公开稳定版仍为 v0.10.1。
 
 ## 使用流程
 
-1. 在 Android“设置 → 通知记账 → 来源设置”绑定来源应用、账本账户及通知中的独有账户片段（例如 `Card: **1234`）。多个账户分别绑定；不要用常见金额或“Card”等通用词作为识别片段。
+1. 在 Android“设置 → 通知记账 → 来源设置”绑定来源应用、账本账户及通知中的独有账户片段（例如 `Card: **1234`）。没有通知样本时可选择“仅收集到待确认”，账户片段可留空；TNG eWallet 固定使用此模式。多个账户分别绑定；不要用常见金额或“Card”等通用词作为识别片段。
 2. 打开系统通知读取授权，再开启“自动接收与记账”。授权前通知不补读。关闭开关后停止接收；已经进入队列的通知转待确认。移除最后一条绑定同时关闭接收。
 3. 明确的交易进入“已处理”；疑问交易进入“待确认”，显示原因与原文，可核对金额、账户、类型、日期后保存一笔实际交易，或忽略。退款可人工确认为负支出，转账/还款需人工选择两端账户。
 4. “已处理”支持撤销，删除对应交易并反向恢复余额，同时保留防重记录。若交易被手动编辑，撤销作用于其当前版本；普通交易页仍可修改自动生成的交易。
 5. 完整 JSON 导出包含通知正文和防重记录，请保护备份。更换设备后重新设置来源与授权。导入历史备份、清空账本或降级前，先关闭通知接收并处理队列，避免旧队列与恢复后的账本混用。
 
+## TNG eWallet 待确认接入
+
+来源精确匹配 Google Play 官方包名 `my.com.tngdigital.ewallet`。已找到官方工资入账示意，但没有足够证据证明消费者 Android 通知的完整字段、账户标识和交易编号，因此没有启用 TNG 自动入账模板。证据、官方链接与调查限制见 [TNG 通知样本调查](TNG_NOTIFICATION_RESEARCH.md)。
+
+在已安装的来源列表选择 TNG eWallet 后，“仅收集到待确认”固定开启，账户片段可不填写。授权并开启接收后，新通知进入待确认；唯一来源绑定会预选账户，多个匹配则不设置候选账户；确认表单仍沿用既有默认账户，必须人工核对。其他应用也可主动选择仅收集模式。可选账户片段一旦填写，仍必须匹配正文；关闭仅收集模式时须填写至少 4 字符的片段。
+
+官方 Payroll Handbook 的收款示意句式可预填 MYR 金额、收入方向及付款方，但仅是候选值；用户必须核对实际业务（例如是否自有账户转入）后确认。付款、充值、TapSecure 待授权、退款、营销或多金额内容均不自动改余额；营销通知也可能进入列表，可忽略。即使旧配置没有 reviewOnly 或正文碰巧匹配通用成功句式，TNG 来源仍待确认。未知格式只尝试提取唯一币种金额，不从正文推测账户或类型。
+
+开启前的通知不补读，不会因为加入来源就生成历史交易。样本原文留在本机且进入完整 JSON 备份；没有新增上传或联网解析。
+
 ## 自动入账契约
 
-当前支持下列严格英文句式。示例是合成测试数据，不代表已适配任何银行：
+其他来源当前支持下列严格英文句式；TNG eWallet 不进入这组自动规则。示例是合成测试数据，不代表已适配任何银行：
 
 ```text
 Payment of MYR 12.34 to SHOP was successful. Ref: ABC12345 Card: **1234
@@ -43,7 +53,7 @@ flowchart TD
 ```
 
 - `android/app/src/main/kotlin/com/financecompass/app/NotificationCapture.kt`：`PaymentNotificationListener`、`NotificationQueue`、`FinanceEngine`。Activity 与服务复用同一 FlutterEngine，避免两个 Dart 引擎持有独立账本连接。后台收到通知可启动引擎执行相同主入口，不自动打开 Activity。
-- `lib/src/core/notifications/notification_parser.dart`：纯解析器，返回候选字段与人工确认原因。
+- `lib/src/core/notifications/notification_parser.dart`：纯解析器，接收可选 sourcePackage，返回候选字段与人工确认原因。TNG 包名强制待确认，官方工资示意句式仅用于候选字段预填。
 - `notification_bookkeeper.dart`：接收、防重、确认、忽略、撤销；复用 AppDatabase 入账和反向余额操作，不另算一套余额。
 - `notification_bridge.dart`：串行消费、提交后 ACK、失败后 30 秒及恢复前台重试、刷新 Riverpod。每个事件重新读取当前配置与系统授权，并在该事件内使用独立快照，页面并发刷新不会替换正在处理事件的账户；已开始处理的事件按该次快照完成，设置变更影响后续读取。接收后配置版本变化或授权被撤销则待确认。连接握手失败也进入重试；消费与刷新期间收到 available 会补做一次队列读取。
 - `lib/src/features/settings/notification_bookkeeping_page.dart`：来源设置、待确认、已处理。确认复用 TransactionFormDialog 的 `notificationDraft` 模式，保留通知日期并禁止生成多个月记录。
@@ -54,7 +64,7 @@ flowchart TD
 
 状态：接收 → posted 或 pending；pending → confirmed 或 ignored；posted/confirmed → undone。已处理状态不自动回到 pending。交易 ID 固定为 `notification_<eventId>`。通知记录与交易/余额同事务提交，ACK 失败重试不会再次扣款，撤销保留 tombstone。人工确认再次验证有效账户、币种、非零有限金额、实际状态、转账目标及金额；重复确认报错，不重复写入。
 
-Android 队列 `notification_capture.sqlite` 的 events 表为 `id TEXT PRIMARY KEY, payload TEXT NOT NULL`。SHA-256 ID 基于通知 key、postTime、标题与完整正文。每批最多 50 条，成功后逐条 ACK；原生队列不包含在 JSON 备份。配置保存在私有 SharedPreferences `notification_capture/config`，包括 enabled、bindings、递增 version，不进入账本 JSON，跨设备不自动启用。捕获保存失败尝试保存 captureFailed 标记，在页面提示核对账单；日志不输出通知正文。
+Android 队列 `notification_capture.sqlite` 的 events 表为 `id TEXT PRIMARY KEY, payload TEXT NOT NULL`。SHA-256 ID 基于通知 key、postTime、标题与完整正文。每批最多 50 条，成功后逐条 ACK；原生队列不包含在 JSON 备份。配置保存在私有 SharedPreferences `notification_capture/config`，包括 enabled、bindings、递增 version；每条绑定包含 package、label、accountId、accountName、marker 和可选布尔 reviewOnly（缺省 false），不进入账本 JSON，跨设备不自动启用。捕获保存失败尝试保存 captureFailed 标记，在页面提示核对账单；日志不输出通知正文。
 
 连接握手、消费队列、Repository 刷新、记录列表读取均纳入同一恢复流程：失败显示状态并在 30 秒后重试，也可手动刷新或恢复前台触发。未提交/未 ACK 的事件保留在原生队列；已 ACK 但 Repository 刷新失败时，保留本进程待刷新标记，下次重试只需重载账本，不重复入账。桥接对象销毁后不再通知页面或继续消费，已提交但未 ACK 的事件由下一次连接幂等恢复。
 

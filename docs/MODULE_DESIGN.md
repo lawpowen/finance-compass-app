@@ -64,4 +64,4 @@ Settings public support：右上帮助入口打开 `FinanceCompassAboutPage`，�
 
 ## 通知记账模块
 
-core/notifications 负责解析、账户匹配、防重与原子入账；notification_bookkeeping_page.dart 负责设置、待确认和撤销；Android NotificationCapture.kt 负责系统接口、白名单采集、持久队列与共享引擎。调用 AppDatabase 既有余额处理。notification_bridge.dart 逐条重读配置与授权，使用独立事件快照避免并发刷新替换账户，串行消费并合并唤醒；连接/消费失败保留未 ACK 队列，已 ACK 后刷新失败保留待刷新标记，30 秒或前台恢复时重试。职责、依赖及失败模式见 [Android 通知记账](ANDROID_NOTIFICATION_BOOKKEEPING.md)。
+core/notifications 负责解析、账户匹配、防重与原子入账；notification_parser.dart 按 sourcePackage 隔离来源，TNG 官方包名强制待确认，通知候选仅预填；reviewOnly 绑定可在没有账户片段时选择待确认表单的账户，仍需唯一匹配；notification_bookkeeping_page.dart 负责设置、待确认和撤销；Android NotificationCapture.kt 负责系统接口、白名单采集、持久队列与共享引擎。调用 AppDatabase 既有余额处理。notification_bridge.dart 逐条重读配置与授权，使用独立事件快照避免并发刷新替换账户，串行消费并合并唤醒；连接/消费失败保留未 ACK 队列，已 ACK 后刷新失败保留待刷新标记，30 秒或前台恢复时重试。职责、依赖及失败模式见 [Android 通知记账](ANDROID_NOTIFICATION_BOOKKEEPING.md)。

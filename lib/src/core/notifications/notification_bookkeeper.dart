@@ -43,14 +43,17 @@ class NotificationBookkeeper {
       final id = event['id'] as String;
       if (await record(id) != null) return;
       final text = event['text'] as String;
-      final parsed = parsePaymentNotification(text);
+      final parsed = parsePaymentNotification(text,
+          sourcePackage: event['package'] as String);
       final accounts = await db.fetchAccounts();
-      final candidates = bindings
-          .where((b) =>
-              b['package'] == event['package'] &&
-              (b['marker'] as String? ?? '').trim().isNotEmpty &&
-              text.contains(b['marker'] as String))
-          .toList();
+      final candidates = bindings.where((b) {
+        if (b['package'] != event['package']) return false;
+        final marker = (b['marker'] as String? ?? '').trim();
+        // A source-only binding can preselect the review form's account, but
+        // must never authorize automatic ledger writes.
+        if (marker.isEmpty) return b['reviewOnly'] == true;
+        return text.contains(marker);
+      }).toList();
       final matchingAccounts = candidates.length == 1
           ? accounts
               .where(
@@ -60,6 +63,11 @@ class NotificationBookkeeper {
       final account =
           matchingAccounts.length == 1 ? matchingAccounts.single : null;
       var reason = parsed.reason;
+      if (reason.isEmpty &&
+          candidates.length == 1 &&
+          candidates.single['reviewOnly'] == true) {
+        reason = '此来源仅收集到待确认，请核对后记账';
+      }
       if (RegExp(
               r'\b(failed|declined|pending|refund|reversed|request|otp|tac)\b|失败|退款|验证码',
               caseSensitive: false)
