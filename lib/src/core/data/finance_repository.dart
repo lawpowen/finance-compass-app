@@ -2065,7 +2065,7 @@ class FinanceRepository {
     return {
       'format_version': 3,
       'transaction_date_semantics': 'occurrence_date',
-      'app_version': '0.8.0',
+      'app_version': '0.11.0-dev',
       'schema_version': 9,
       'exported_at': DateTime.now().toIso8601String(),
       'meta': exportableMeta,

@@ -14,11 +14,13 @@ class TransactionFormDialog extends StatefulWidget {
     required this.repository,
     this.initialTransaction,
     this.draftTransaction,
+    this.notificationDraft = false,
   });
 
   final FinanceRepository repository;
   final FinanceTransaction? initialTransaction;
   final FinanceTransaction? draftTransaction;
+  final bool notificationDraft;
 
   @override
   State<TransactionFormDialog> createState() => _TransactionFormDialogState();
@@ -66,11 +68,12 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
       transactionStatus = seedTransaction.status == TransactionStatus.settled
           ? TransactionStatus.actual
           : seedTransaction.status;
-      recordDate = initialTransaction == null
+      recordDate = initialTransaction == null && !widget.notificationDraft
           ? DateTime.now()
           : seedTransaction.recordDate;
-      settlementDate =
-          initialTransaction == null ? null : seedTransaction.transactionDate;
+      settlementDate = initialTransaction == null && !widget.notificationDraft
+          ? null
+          : seedTransaction.transactionDate;
       accountId = seedTransaction.accountId;
       toAccountId = seedTransaction.toAccountId;
       if (_usesCreditCardAccount) {
@@ -317,7 +320,7 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                         : () => setState(() => settlementDate = null),
                   ),
                 ],
-                if (!_isEditing) ...[
+                if (!_isEditing && !widget.notificationDraft) ...[
                   const SizedBox(height: 12),
                   DropdownButtonFormField<int>(
                     value: recurrenceMonths,

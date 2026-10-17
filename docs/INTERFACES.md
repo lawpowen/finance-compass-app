@@ -93,3 +93,7 @@ Google 登录接口尚未实现。未来接口必须将远程身份绑定到 `lo
 - `FinanceRepository.deleteExistingTransactions(ids)` 调用数据库原子删除并执行现有目标同步刷新逻辑。
 - `AppDatabase.deleteTransactionsByIds(ids)` 在同一数据库事务内恢复所有相关账户余额并删除记录；任一 ID 不存在时抛出 `StateError`，不产生部分变更。
 - `deleteTransaction(id)` 保持兼容，内部委托给单元素批量删除。
+
+## Android 通知读取接口
+
+新增 MethodChannel finance_compass/notification_bookkeeping，包含配置/权限、来源应用列表、队列获取与 ACK、available 事件。入口为设置 → 通知记账；非 Android 隐藏。人工确认复用交易表单 notificationDraft，只生成单笔实际交易。参数、系统权限与错误语义见 [Android 通知记账](ANDROID_NOTIFICATION_BOOKKEEPING.md)。

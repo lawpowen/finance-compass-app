@@ -1,6 +1,8 @@
 # Finance Compass
 
-当前版本：`0.10.1+45`（[`v0.10.1`](https://github.com/lawpowen/finance-compass-app/releases/tag/v0.10.1) 已于 2026-09-29 在 GitHub 公开发布，发布核验与已知限制见 [v0.10.1 公开发布 QA](docs/public-release-qa-v0.10.1-2026-09-29.md)）。工程文档索引见 [docs/README.md](docs/README.md)。
+当前开发版本：`0.11.0-dev+46`（Android 通知记账，参见 [使用说明](docs/ANDROID_NOTIFICATION_BOOKKEEPING.md)，尚未完成真机验收）。
+
+当前公开稳定版本：`0.10.1+45`（[`v0.10.1`](https://github.com/lawpowen/finance-compass-app/releases/tag/v0.10.1) 已于 2026-09-29 在 GitHub 公开发布，发布核验与已知限制见 [v0.10.1 公开发布 QA](docs/public-release-qa-v0.10.1-2026-09-29.md)）。工程文档索引见 [docs/README.md](docs/README.md)。
 
 完整中文需求与设计文档请看：[finance-app-design.md](finance-app-design.md)。
 

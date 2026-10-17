@@ -50,7 +50,7 @@ Repository 对信用卡提供两条明确分离的读取路径：账单、未出
 
 模板与周期规则由 `app_meta` JSON 迁入独立表。0.8.0 暂时双写新表和旧 JSON，支持回滚；读取时若新表为空，会回退旧 JSON。
 
-共享 `CompassSettingsRow` 以可空 `onTap` 区分导航行与信息行：无处理逻辑时不创建 `InkWell`、不显示箭头。`interaction_wiring_test.dart` 对全部 feature 源码执行静态门禁，阻止 `_noop`、空交互回调及没有附近真实处理器的方向性图标。货币显示和应用内提醒保存在 `app_meta`，Repository 重载后由主页面统一应用，不新增后台服务。
+共享 `CompassSettingsRow` 以可空 `onTap` 区分导航行与信息行：无处理逻辑时不创建 `InkWell`、不显示箭头。`interaction_wiring_test.dart` 对全部 feature 源码执行静态门禁，阻止 `_noop`、空交互回调及没有附近真实处理器的方向性图标。货币显示和应用内提醒保存在 `app_meta`，Repository 重载后由主页面统一应用，应用内提醒本身不新增后台服务；Android 通知记账另使用下述通知监听服务。
 
 ## Android 构建变体
 
@@ -61,3 +61,7 @@ Repository 对信用卡提供两条明确分离的读取路径：账单、未出
 - Google 登录与云同步尚未实现；当前仅创建稳定的 `local_profile_id`。
 - 贷款计划当前使用固定合同利率；浮动利率重定价、手续费、罚息、部分还款和提前还款重算尚未实现。
 - 通知偏好会保存，但系统级定时通知调度尚未实现。
+
+## Android 通知记账引擎
+
+新增通知监听服务、私有持久队列及共享 FlutterEngine。MainActivity 与服务复用同一 Dart 主入口和账本连接；MethodChannel 串行消费，账本写入事务提交后才 ACK。通知记录使用 app_meta，账本 schema 不变。模块与运行图见 [Android 通知记账](ANDROID_NOTIFICATION_BOOKKEEPING.md)。

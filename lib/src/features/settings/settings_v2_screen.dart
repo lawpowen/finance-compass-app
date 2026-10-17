@@ -7,6 +7,8 @@ import '../../core/theme/finance_colors.dart';
 import '../shared/compass_ui.dart';
 import 'settings_screen.dart';
 import 'settings_reference_pages.dart';
+import 'notification_bookkeeping_page.dart';
+import '../../core/notifications/notification_bridge.dart';
 
 const _financeCompassRepositoryUrl =
     'https://github.com/lawpowen/finance-compass-app';
@@ -98,6 +100,13 @@ class SettingsV2Screen extends StatelessWidget {
         const Divider(),
         const SizedBox(height: 10),
         const _SettingsGroupTitle('数据与设备'),
+        if (NotificationBridge.supported)
+          CompassSettingsRow(
+            icon: Icons.auto_awesome_outlined,
+            title: '通知记账',
+            subtitle: '明确交易自动入账 · 不确定的待确认',
+            onTap: () => _openAdvanced(context, '通知记账'),
+          ),
         CompassSettingsRow(
           icon: Icons.cloud_upload_outlined,
           title: '备份、恢复与迁移',
@@ -191,6 +200,7 @@ class SettingsV2Screen extends StatelessWidget {
       '导入与导出' => ImportExportPage(repository: repository),
       '外观与主题' => AppearancePage(settingsController: settingsController),
       '通知与提醒' => NotificationsPage(repository: repository),
+      '通知记账' => const NotificationBookkeepingPage(),
       '智能分析与网关' => AiGatewayPage(repository: repository),
       _ => Scaffold(
           appBar: AppBar(title: Text(title)),
@@ -247,7 +257,7 @@ class FinanceCompassAboutPage extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 6),
-              const Text('版本 0.10.1+45 · 本地优先的个人财务罗盘'),
+              const Text('版本 0.11.0-dev+46 · Android 通知记账开发版'),
               const SizedBox(height: 12),
               const Card(
                 child: ListTile(
@@ -328,7 +338,7 @@ class _SettingsSearchDelegate extends SearchDelegate<void> {
   _SettingsSearchDelegate({required this.onOpen});
   final ValueChanged<String> onOpen;
 
-  static const entries = [
+  static final entries = [
     '个人账户',
     '货币、汇率与显示',
     '类别、模板与周期规则',
@@ -336,6 +346,7 @@ class _SettingsSearchDelegate extends SearchDelegate<void> {
     '导入与导出',
     '外观与主题',
     '通知与提醒',
+    if (NotificationBridge.supported) '通知记账',
     '智能分析与网关',
   ];
 

@@ -155,3 +155,7 @@ flowchart TD
 ## 保留与回滚
 
 0.8.0 继续保留旧模板/规则 JSON 并双写，尚未执行移除旧键的后续迁移。schema v9 回滚时优先使用本次升级建立的 `finance_compass_backups/pre_v9_*` 数据库文件；更早版本的历史恢复点仍可能位于 `pre_v8_*` 或 `pre_v7_*`。也可使用自动生成的导入前 JSON，但旧应用不能保证保留新增贷款条件。
+
+## 通知记账数据（schema 仍为 9）
+
+app_meta 的 notification_record_v1_<eventId> 保存通知与处理凭据；交易 ID 为 notification_<eventId>。状态与交易/余额同事务提交，撤销保留防重记录。完整 JSON 包含这些元数据，来源绑定和原生队列不随 JSON 迁移。导入历史备份前须关闭接收并处理队列。字段、状态及恢复限制见 [Android 通知记账](ANDROID_NOTIFICATION_BOOKKEEPING.md)。

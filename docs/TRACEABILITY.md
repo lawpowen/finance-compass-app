@@ -30,3 +30,11 @@
 | `deploy/selfhost/**`、`tool/build_web.*`、`tool/package_selfhost.ps1` | `SELF_HOSTING.md`、`ARCHITECTURE.md`、`SECURITY_AND_OPERATIONS.md`、`RELEASE_WORKFLOW.md`、`TESTING_AND_QUALITY.md`、`CHANGELOG.md`、根目录 `README.md` |
 
 任何重要变更还必须更新 `CHANGELOG.md`。未来计划不得写成当前能力。
+
+## 通知记账追踪
+
+| 代码 | 必须同步检查的文档 |
+| --- | --- |
+| Android NotificationCapture.kt、MainActivity.kt、AndroidManifest.xml | ARCHITECTURE、INTERFACES、SECURITY_AND_OPERATIONS、ANDROID_NOTIFICATION_BOOKKEEPING |
+| lib/src/core/notifications | DATA_DESIGN、MODULE_DESIGN、SYSTEM_REQUIREMENTS、ANDROID_NOTIFICATION_BOOKKEEPING |
+| 通知设置页、交易表单 notificationDraft、通知测试 | TESTING_AND_QUALITY、ANDROID_NOTIFICATION_BOOKKEEPING、CHANGELOG |

@@ -40,3 +40,7 @@
 | `.codex-remote-attachments/`、`.agents/`、`.codex/`、`.dart_tool/`、Android 签名文件 | 原始输入、Agent 配置、依赖缓存与发布密钥 | 本次保留，不列入旧过程文件删除范围 |
 
 `artifacts/` 中的本地数据不随 Git 提交；整理到一个目录不等于完成异地备份。`build/`、`outputs/`、`work/`、`tmp/` 与根目录生成的 `app-*-release.apk` 被 Git 忽略。清理构建目录前必须先检查是否混入 JSON 备份、数据库快照等用户数据。本次已清空 `build/`，下次构建将重新生成中间产物。
+
+## Android 通知记账开发版
+
+[Android 通知记账](ANDROID_NOTIFICATION_BOOKKEEPING.md)：授权、来源绑定、准入、待确认、撤销、隐私、后台限制与回滚。

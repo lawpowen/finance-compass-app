@@ -61,3 +61,7 @@ Settings public support：右上帮助入口打开 `FinanceCompassAboutPage`，�
 ## 信用卡未来账单浏览补充
 
 `CreditCardDetailScreen` 把未来 `actual`/`settled` 记录所在账期作为“已确定”月份加入账单选择器，并允许查看对应时间线和可编辑交易；`planned` 记录不进入该列表。当前未出账只展示截至今天已发生的记录，下一期基础金额使用下一完整账期的来源卡流水合计，因此已经锁定额度的未来分期只进入各自月份，不与账户累计欠款混算。`calculateCreditCardBilling` 会根据截至今天的实际欠款推导本期是否已经还清，并只在存在明确转入还款时，把超出本期剩余应还的部分从下一期基础金额扣除；这使银行已使用额度和下期剩余承诺保持一致，同时不让旧资料中的不完整余额污染账期金额。月份选择器和历史标题使用结算日前一天作为账单月份；原始账单额由 `calculateCreditCardOriginalStatementAmount` 提供，还款后仍可校对。若本地对账已把银行结单总额写入账户级 `app_meta`，`FinanceRepository.creditCardStatementAmountOverride` 按结算日返回权威值，详情页优先展示该值；缺失或损坏的 meta 自动回退到交易推算。`FinanceRepository.creditCardStatementBalance` 只用于结算日余额审计。
+
+## 通知记账模块
+
+core/notifications 负责解析、账户匹配、防重与原子入账；notification_bookkeeping_page.dart 负责设置、待确认和撤销；Android NotificationCapture.kt 负责系统接口、白名单采集、持久队列与共享引擎。调用 AppDatabase 既有余额处理，失败保留队列。职责、依赖及失败模式见 [Android 通知记账](ANDROID_NOTIFICATION_BOOKKEEPING.md)。

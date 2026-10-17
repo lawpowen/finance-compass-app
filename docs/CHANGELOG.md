@@ -1,5 +1,16 @@
 # 变更记录
 
+## 2026-10-17
+
+### Android 通知自动记账开发版（0.11.0-dev+46）
+
+- 行为：新增设置 → 通知记账，提供来源/账户绑定、系统授权入口、暂停、待确认、已处理与撤销。严格句式和唯一账户匹配的明确成功交易自动记账；未知、特殊或疑似重复内容待确认。人工确认只生成单笔实际交易。
+- 设计：Android 通知监听服务将白名单通知持久化到私有队列，Activity 与服务复用 FlutterEngine；Dart 本地解析后，在同一 Drift 事务保存凭据、交易与余额，提交后 ACK。账本 schema 仍为 9，通知凭据使用 app_meta；修正完整导出 app_version 的旧硬编码为当前开发版本。
+- 安全与运维：默认关闭、显式系统授权、来源白名单、验证码过滤、不联网解析。完整 JSON 含通知正文；来源配置和未处理原生队列不随 JSON 迁移。导入/清空/降级前应暂停并处理队列。Debug 应用 ID 为 com.financecompass.app.debug，可与正式版并存；没有修改线上发布。修改前代码和既有清理记录已保存到 GitHub 分支 codex/backup-before-notification-2026-10-17，提交 857bc56。
+- 文档：新增 ANDROID_NOTIFICATION_BOOKKEEPING.md；同步根 README、文档索引、SYSTEM_REQUIREMENTS、ARCHITECTURE、MODULE_DESIGN、DATA_DESIGN、INTERFACES、SECURITY_AND_OPERATIONS、TESTING_AND_QUALITY、TRACEABILITY 及本记录。
+- 验证：新模块静态分析无诊断；通知逻辑与既有表单/交互回归共 40 项通过，随后补充来源绑定生命周期回归，页面/桥接 7 项全部通过，合计覆盖 41 个不同用例。完整回归曾为 202 项通过、2 项按配置跳过、1 项报表小屏可点击区域失败；该报表失败在修改前 857bc56 隔离快照中同样复现，本任务未改报表。Android Debug APK 构建成功，已核对包名与 versionCode 46。测试日志保存在 artifacts/qa/notification-bookkeeping-2026-10-17/。
+- 限制：未连接 Android 实机；后台冷启动、进程回收、厂商省电与银行真实模板尚未验收。当前只有文档列出的严格英文句式，不宣称已适配任何银行。通知时刻暂作交易日期，通知/处理凭据默认持续保留。现有 Kotlin Gradle Plugin 构建兼容性警告仍在，未升级工具链。
+
 ## 2026-10-11
 
 ### 整理本地目录与清理旧过程文件

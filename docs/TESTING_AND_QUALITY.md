@@ -257,3 +257,7 @@ flutter build windows --debug
 ## UI 质量
 
 基准视口宽度为 390 逻辑像素；本次原生 Windows 对照使用精确 390 像素客户区宽度和 713 像素可见高度，长页面通过滚动覆盖参考图完整内容。预算与外观页另使用 390×844 widget 截图，分别与 `supplemental-budget-overview.png` 和 `27-appearance.png` 合成同屏比较图。检查六个底部入口、无横向/纵向 RenderFlex 溢出、预算占比口径、实色/斜纹状态、主题拖动预览、交易筛选、账户详情、表单主按钮、信用卡日期、闪电/加号浮动按钮及深色对比度。视觉对照记录见项目根目录 `design-qa.md`，页面映射见 [UI 参考基线](UI_REFERENCE.md)。Flutter widget 截图环境缺少中文字体时会显示方框字形；该限制只影响测试截图文字外观，不影响 Android 系统字体渲染或布局断言。
+
+## 通知记账验证
+
+新增 test/notification_bookkeeping_test.dart 与 test/notification_bookkeeping_page_test.dart，覆盖解析拒绝条件、原子余额、防重/撤销、失败重试、备份/AI 摘要隐私边界及页面操作。继续运行原有交易表单和交互门禁，并构建 Android Debug APK。真机后台接收、权限撤销和银行模板尚未验证，不能把构建成功标记为银行适配通过。验收要求见 [Android 通知记账](ANDROID_NOTIFICATION_BOOKKEEPING.md)。
