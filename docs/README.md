@@ -48,3 +48,5 @@
 [TNG eWallet 通知样本调查](TNG_NOTIFICATION_RESEARCH.md)：官方来源、工资示意、通知类型区别及尚未验证的 Android 字段。
 
 [马来西亚 10 家银行通知适配调查](MALAYSIA_BANK_NOTIFICATION_RESEARCH.md)：当前 Android App 身份、包名、官方通知证据与自动模板缺口。当前开发版为 0.11.0-dev+49，公开稳定版不变。
+
+Android build 49 已于 2026-10-17 以 [v0.11.0-dev.49](https://github.com/lawpowen/finance-compass-app/releases/tag/v0.11.0-dev.49) 预发布，提供 APK 与 SHA-256 文件；稳定 Latest 仍为 v0.10.1。

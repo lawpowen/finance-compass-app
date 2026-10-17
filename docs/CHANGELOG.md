@@ -2,6 +2,15 @@
 
 ## 2026-10-17
 
+### Android build 49 GitHub 预发布下载
+
+- 行为：发布 [v0.11.0-dev.49](https://github.com/lawpowen/finance-compass-app/releases/tag/v0.11.0-dev.49)，手机可下载 Android Debug APK 及 SHA256SUMS-build49.txt；更新 README、文档索引和通知使用说明的下载入口。
+- 设计：使用已测试的 e6efd755ade43b61f69afe801dada15ce565e220 构建产物，不修改运行时代码；标签固定该提交，后续文档提交独立保存在开发分支。
+- 安全与运维：独立 prerelease、非 Latest，不替换稳定版 v0.10.1。APK 为 com.financecompass.app.debug / versionCode 49，与正式版数据隔离；签名和归档检查通过，未上传数据库、财务备份或密钥。
+- 文档：更新根 README、docs/README、ANDROID_NOTIFICATION_BOOKKEEPING、RELEASE_WORKFLOW、SECURITY_AND_OPERATIONS 与本记录，明确开发版发布方式和安装边界。
+- 验证：APK 大小 159230613 字节，SHA-256 624d0b363fa67a28c50184e3ca479046bed083c966021d2fd2270cec87597d19；GitHub 两个附件的大小和 digest 与本地逐一一致，公开预发布状态已回读。沿用源码提交的 103 项回归与静态检查，文档变更不重复运行应用测试。证据在 artifacts/qa/notification-bookkeeping-2026-10-17/banks-release-*.json。
+- 限制：Debug 测试版尚未完成银行真机通知验收，银行和 TNG 仍需人工确认；不发布 Windows/Web 产物，也不改变正式版升级渠道。
+
 ### 马来西亚 10 家银行通知来源接入（0.11.0-dev+49）
 
 - 行为：接入 Maybank、CIMB、Public Bank、RHB、Hong Leong、AmBank、Bank Islam、Bank Rakyat、BSN、Affin 的当前 Android 零售 App；来源可无通知样本绑定，全部进入待确认，人工确认前不改变余额。设置页新增可折叠范围目录，已安装选择器优先显示目录内 App，并使用统一名称。

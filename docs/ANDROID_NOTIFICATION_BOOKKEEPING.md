@@ -2,6 +2,10 @@
 
 本功能为开发版。APK 编译与自动化测试不等于银行实机验收；没有真实银行通知样本时，不承诺任何银行或钱包的识别率。公开稳定版仍为 v0.10.1。
 
+## 手机安装
+
+[下载 build 49 APK](https://github.com/lawpowen/finance-compass-app/releases/download/v0.11.0-dev.49/FinanceCompass-Android-v0.11.0-dev-build49-debug.apk)，或打开 [GitHub 预发布页](https://github.com/lawpowen/finance-compass-app/releases/tag/v0.11.0-dev.49)，选择 Assets 中的 APK；Source code 不能直接安装。安装后名称为 Finance Compass Debug，包名 com.financecompass.app.debug，与正式版并存且数据隔离。APK 使用 Android Debug 签名，不是正式版覆盖升级。
+
 ## 使用流程
 
 1. 在 Android“设置 → 通知记账 → 来源设置”绑定来源应用、账本账户及通知中的独有账户片段（例如 `Card: **1234`）。没有通知样本时可选择“仅收集到待确认”，账户片段可留空；本页列出的 10 家银行及 TNG eWallet 固定使用此模式。多个账户分别绑定；不要用常见金额或“Card”等通用词作为识别片段。
