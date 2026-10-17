@@ -6,6 +6,20 @@
 
 [下载 build 49 APK](https://github.com/lawpowen/finance-compass-app/releases/download/v0.11.0-dev.49/FinanceCompass-Android-v0.11.0-dev-build49-debug.apk)，或打开 [GitHub 预发布页](https://github.com/lawpowen/finance-compass-app/releases/tag/v0.11.0-dev.49)，选择 Assets 中的 APK；Source code 不能直接安装。安装后名称为 Finance Compass Debug，包名 com.financecompass.app.debug，与正式版并存且数据隔离。APK 使用 Android Debug 签名，不是正式版覆盖升级。
 
+### 安装拦截排查
+
+Google 已于 2026-04-14 公布在马来西亚推出增强防诈骗保护；浏览器、消息应用或文件管理器下载的 APK 若声明通知读取等敏感能力，可能被拦截。build 49 的实际 APK 声明了 `PaymentNotificationListener` 及 `android.permission.BIND_NOTIFICATION_LISTENER_SERVICE`。因此，该限制适用于本测试版的分发评估；仍需根据手机完整提示确定具体原因，不能仅凭“无法安装”认定。来源：[Google Malaysia 官方公告](https://blog.google/intl/en-my/company-news/technology/google-launches-enhanced-protection-in-google/)、[Google Play Protect 开发者指南](https://developers.google.com/android/play-protect/warning-dev-guidance?hl=en)（2026-10-17 核对）。
+
+| 手机提示 | 处理方式 |
+|---|---|
+| App Scan Recommended / Send App for Security Check | 按系统提示选择扫描，等待扫描结果；不承诺扫描后必然可安装。 |
+| App blocked to protect your device，并提到 sensitive data / financial fraud | 核对通知读取用途、最小权限和用户同意，再按 Google 指南评估申诉；改文件名或改为 Release 签名不能作为已验证的解决方案。 |
+| Harmful App Blocked | 按具体检测原因检查应用及依赖，不能直接归为普通未知应用；需要保留完整提示。 |
+
+上述分类及处理依据为 [Google Play Protect 开发者指南](https://developers.google.com/android/play-protect/warning-dev-guidance?hl=en)。排查期间保持 Play Protect 开启，不以关闭全局防护作为标准安装步骤。APK 签名和 SHA-256 只用于核对来源与完整性，不代表 Google 的安全审核结果。删除通知服务会使自动接收功能失效，不能把删除后可安装的包称为已修复的通知记账版本。
+
+若确认需要申诉，可使用 [Google 官方表单](https://support.google.com/googleplay/android-developer/contact/protectappeals)。build 49 包名为 `com.financecompass.app.debug`，APK SHA-256 为 `624d0b363fa67a28c50184e3ca479046bed083c966021d2fd2270cec87597d19`，下载地址见上文。表单还要求联系邮箱、说明以及 VirusTotal 已上传文件的哈希；当前未提交申诉或向 VirusTotal 上传。本项目尚未建立 Google Play 测试渠道，也未获得解除拦截的验证结果。
+
 ## 使用流程
 
 1. 在 Android“设置 → 通知记账 → 来源设置”绑定来源应用、账本账户及通知中的独有账户片段（例如 `Card: **1234`）。没有通知样本时可选择“仅收集到待确认”，账户片段可留空；本页列出的 10 家银行及 TNG eWallet 固定使用此模式。多个账户分别绑定；不要用常见金额或“Card”等通用词作为识别片段。

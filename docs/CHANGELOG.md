@@ -2,6 +2,15 @@
 
 ## 2026-10-17
 
+### Android 通知版 Play Protect 安装限制排查
+
+- 行为：下载说明增加马来西亚 Google Play Protect 对通知读取类侧载 APK 的安装限制，并按扫描提示、敏感权限拦截和有害应用提示分别说明处理方式。
+- 设计：仅更新文档；应用代码、通知权限、APK、签名、数据库和备份格式均未修改。
+- 安全与运维：保持 Play Protect 开启，不把签名校验或改用 Release 签名称为解除拦截；未提交申诉、上传扫描服务或建立 Google Play 测试渠道。
+- 文档：更新 README、ANDROID_NOTIFICATION_BOOKKEEPING、RELEASE_WORKFLOW 与本记录，补充官方依据及现有 APK 的申诉识别信息。
+- 验证：对照 build 49 编译后 Manifest 确认通知服务权限；核对 Google 开发者指南、马来西亚公告及官方申诉表单。文档链接与 diff 检查通过；未改运行代码，不重复应用测试。
+- 限制：用户手机的完整拦截提示尚未取得，具体原因仍待确认；未验证解除拦截或安装成功。
+
 ### Android build 49 GitHub 预发布下载
 
 - 行为：发布 [v0.11.0-dev.49](https://github.com/lawpowen/finance-compass-app/releases/tag/v0.11.0-dev.49)，手机可下载 Android Debug APK 及 SHA256SUMS-build49.txt；更新 README、文档索引和通知使用说明的下载入口。

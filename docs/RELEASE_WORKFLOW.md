@@ -102,3 +102,5 @@ Web 发布前还必须验证 `tool/sqlite3_wasm.lock`：当前 `pubspec.lock` �
 先核对 package/versionCode、apksigner 签名、文件大小与 SHA-256，并检查 APK 不含数据库备份或签名密钥；然后建立草稿并上传，回读附件大小与 GitHub digest 后公开为 prerelease。发布说明必须标注 Debug 签名、独立数据目录、银行逐笔确认和未完成真机验收；不得当作正式版升级。已有文件不原地替换，修正使用新的构建号。
 
 APK 源码标签固定在构建提交，发布后的下载说明可在开发分支追加文档提交；源码和二进制来源应在变更记录中写清楚。
+
+包含通知读取服务的 APK 必须在下载说明中提示 Google Play Protect 的地区性安装限制，参见[安装拦截排查](ANDROID_NOTIFICATION_BOOKKEEPING.md#安装拦截排查)。公开下载、签名校验和构建测试通过都不能替代目标设备安装验收。更换 Debug/Release 签名不应被承诺为解除拦截的方法；未完成官方测试渠道或申诉时，应保留“尚未验证安装”的状态，不能写成已解决。

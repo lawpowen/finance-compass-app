@@ -4,6 +4,8 @@
 
 **[下载 Android 通知记账测试版 build 49](https://github.com/lawpowen/finance-compass-app/releases/download/v0.11.0-dev.49/FinanceCompass-Android-v0.11.0-dev-build49-debug.apk)**（[预发布页](https://github.com/lawpowen/finance-compass-app/releases/tag/v0.11.0-dev.49)）。安装名称为 Finance Compass Debug，与正式版数据隔离；10 家银行及 TNG 均需逐笔确认。
 
+**安装限制：** 通知记账使用通知读取服务，马来西亚的 Google Play Protect 可能拦截通过浏览器下载的此类 APK。可下载、签名校验通过不代表手机允许安装；请按[安装拦截排查](docs/ANDROID_NOTIFICATION_BOOKKEEPING.md#安装拦截排查)核对提示。当前尚未验证该测试版在受影响手机上的安装结果。
+
 当前公开稳定版本：`0.10.1+45`（[`v0.10.1`](https://github.com/lawpowen/finance-compass-app/releases/tag/v0.10.1) 已于 2026-09-29 在 GitHub 公开发布，发布核验与已知限制见 [v0.10.1 公开发布 QA](docs/public-release-qa-v0.10.1-2026-09-29.md)）。工程文档索引见 [docs/README.md](docs/README.md)。
 
 完整中文需求与设计文档请看：[finance-app-design.md](finance-app-design.md)。
