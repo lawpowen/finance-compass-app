@@ -1,5 +1,9 @@
 # 接口与导入导出
 
+## 结构化贷款月供编辑契约（2026-11-23）
+
+`TransactionComposerPage` 编辑带 `贷款月供 #N` 说明且含 `toAmount` 的原转账时，只要当前类型仍为 transfer、目标仍是原贷款账户，更换 `accountId` 不改变本金保护。`TransactionFormResult.transactions.single` 返回新的来源账户及其币种，保留原本金与目标币种；`FinanceRepository.updateExistingTransaction` 仍使用现有更新事务，无接口签名变化。
+
 ## 内部金额字段契约（build 50）
 
 `FinanceAmountField` 接收 TextEditingController、decoration、title、validator、onChanged、enabled、readOnly、autofocus 和可选 fieldKey。只有启用且业务可编辑时打开键盘；点击完成返回如 `11.34` 的十进制文本，先更新 controller 再回调 onChanged。取消不回调；清空后完成传空字符串，以保留原表单对可选/必填项的区别。未修改就完成保留原文本。

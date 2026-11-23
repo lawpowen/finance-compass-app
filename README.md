@@ -2,6 +2,8 @@
 
 当前开发版本：`0.11.0-dev+50`（金额数字键盘：输入 1134 显示 11.34，支持加减乘除，参见[金额键盘说明](docs/UI_REFERENCE.md#金额键盘使用与交互build-50)；本次不调整通知记账，尚未完成真机验收）。
 
+贷款月供切换付款账户的本金覆盖问题已在源码修复；按用户要求尚未重新构建。build 50 仅保留为金额键盘阶段的 GitHub 草稿，不含之后的修复。
+
 **[下载 Android 通知记账测试版 build 49](https://github.com/lawpowen/finance-compass-app/releases/download/v0.11.0-dev.49/FinanceCompass-Android-v0.11.0-dev-build49-debug.apk)**（[预发布页](https://github.com/lawpowen/finance-compass-app/releases/tag/v0.11.0-dev.49)）。安装名称为 Finance Compass Debug，与正式版数据隔离；10 家银行及 TNG 均需逐笔确认。
 
 **安装限制：** 通知记账使用通知读取服务，马来西亚的 Google Play Protect 可能拦截通过浏览器下载的此类 APK。可下载、签名校验通过不代表手机允许安装；请按[安装拦截排查](docs/ANDROID_NOTIFICATION_BOOKKEEPING.md#安装拦截排查)核对提示。当前尚未验证该测试版在受影响手机上的安装结果。

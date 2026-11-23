@@ -199,7 +199,9 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
                     ),
-                    if (toAccountId != null && !_isSameCurrencyTransfer)
+                    if (toAccountId != null &&
+                        !_isSameCurrencyTransfer &&
+                        !_isStructuredLoanPayment)
                       TextButton(
                         onPressed: () {
                           _toAmountEditedByUser = false;
@@ -436,9 +438,12 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
   bool get _isStructuredLoanPayment {
     final draft = widget.draft;
     return draft != null &&
+        type == TransactionType.transfer &&
         draft.type == TransactionType.transfer &&
-        draft.accountId == accountId &&
+        // The principal belongs to the loan installment, not its funding
+        // account. Selecting another payer must not turn it into an FX estimate.
         draft.toAccountId == toAccountId &&
+        _account(toAccountId)?.accountType == AccountType.loan &&
         draft.toAmount != null &&
         RegExp(r'^贷款月供 #\d+$').hasMatch(draft.description ?? '');
   }
@@ -475,6 +480,9 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
   }
 
   String _transferConversionHint() {
+    if (_isStructuredLoanPayment) {
+      return '贷款月供 · 转出为本息合计，转入仅偿还本金';
+    }
     final sourceCurrency = _account(accountId)?.currency ?? 'MYR';
     final targetCurrency = _account(toAccountId)?.currency;
     if (targetCurrency == null) {
