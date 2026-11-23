@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../shared/finance_amount_field.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/data/finance_repository.dart';
@@ -1302,11 +1304,9 @@ class _BudgetEditorInputRow extends StatelessWidget {
             Expanded(child: Text(title)),
             SizedBox(
               width: 128,
-              child: TextField(
+              child: FinanceAmountField(
                 controller: controller,
                 textAlign: TextAlign.right,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
                 onChanged: onChanged,
                 decoration: const InputDecoration(
                   prefixText: 'MYR ',

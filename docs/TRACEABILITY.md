@@ -1,5 +1,9 @@
 # 代码—文档追踪
 
+## 金额键盘追踪
+
+`core/utils/amount_calculator.dart`、`features/shared/finance_amount_field.dart`、`finance_form_fields.dart` 及金额入口改动对应：SYSTEM_REQUIREMENTS、ARCHITECTURE、MODULE_DESIGN、DATA_DESIGN、INTERFACES、UI_REFERENCE、INTERACTION_AUDIT、TESTING_AND_QUALITY、SECURITY_AND_OPERATIONS、CHANGELOG 与根目录 design-qa。金额精度只作用于录入，原持久化模型及业务校验保持原职责。
+
 | 代码范围 | 必须检查的文档 |
 |---|---|
 | `core/database/**`、表文件 | `DATA_DESIGN.md`、`ARCHITECTURE.md`、`SECURITY_AND_OPERATIONS.md`、`TESTING_AND_QUALITY.md`、`CHANGELOG.md` |

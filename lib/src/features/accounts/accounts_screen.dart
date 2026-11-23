@@ -1,6 +1,8 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+
+import '../shared/finance_amount_field.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/data/finance_repository.dart';
@@ -490,10 +492,8 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
               ),
             ),
             const SizedBox(height: 12),
-            TextField(
+            FinanceAmountField(
               controller: amountController,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
               decoration: const InputDecoration(
                 labelText: '目标金额',
                 border: OutlineInputBorder(),

@@ -206,6 +206,7 @@ class _AssetSnapshotFormDialogState extends State<AssetSnapshotFormDialog> {
                 ),
                 const SizedBox(height: 12),
                 FinanceTextField(
+                  isAmount: true,
                   controller: marketValueController,
                   label: '账户总市值',
                   keyboardType:
@@ -214,6 +215,7 @@ class _AssetSnapshotFormDialogState extends State<AssetSnapshotFormDialog> {
                 ),
                 const SizedBox(height: 12),
                 FinanceTextField(
+                  isAmount: true,
                   controller: cashBalanceController,
                   label: '账户现金余额',
                   keyboardType:
@@ -223,6 +225,7 @@ class _AssetSnapshotFormDialogState extends State<AssetSnapshotFormDialog> {
                 if (_canEditInitialCostBasis) ...[
                   const SizedBox(height: 12),
                   FinanceTextField(
+                    isAmount: true,
                     controller: costBasisController,
                     label: '累计成本基线',
                     keyboardType:

@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../shared/finance_amount_field.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/data/finance_repository.dart';
@@ -158,11 +160,9 @@ class AssetGoalsPage extends ConsumerWidget {
               decoration: const InputDecoration(labelText: '目标名称'),
             ),
             const SizedBox(height: 12),
-            TextField(
+            FinanceAmountField(
               key: const Key('asset-goal-amount'),
               controller: amountController,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
               decoration: const InputDecoration(labelText: '目标金额'),
             ),
           ],

@@ -22,6 +22,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/amount_entry.dart';
+
 void main() {
   test('feature source contains no no-op or empty interaction handlers', () {
     final files = Directory('lib/src/features')
@@ -241,7 +243,7 @@ void main() {
     );
     await tester.tap(find.text('新增预算'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField).first, '500');
+    await enterAmount(tester, find.byType(TextField).first, '500');
     await tester.tap(find.text('生效月份'));
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
@@ -314,7 +316,7 @@ void main() {
     await tester.tap(find.text('调整八月预算'));
     await tester.pumpAndSettle();
     expect(find.text('从该月起持续生效，直到同一类别设置新的月份预算。'), findsOneWidget);
-    await tester.enterText(find.byType(TextField).first, '400');
+    await enterAmount(tester, find.byType(TextField).first, '400');
     await tester.scrollUntilVisible(
       find.text('保存更改'),
       350,

@@ -1,5 +1,9 @@
 # Finance Compass 系统架构
 
+## 金额输入边界（build 50）
+
+金额输入通过共享 `FinanceAmountField` → 纯 Dart `AmountCalculator` 处理。计算器只返回正常十进制金额字符串；表单继续校验并调用原 Repository，因此分位键入不进入数据库模型。此模块无平台依赖，Android 是本次交付与构建目标；不据此宣称其它平台已完成打包或真机验收。详细状态及失败行为见 [模块设计](MODULE_DESIGN.md)。
+
 公开分发层由 Flutter Android Release、Flutter Windows Release、Inno Setup 安装器、便携 ZIP 及可自托管的 Flutter Web/PWA 组成。`pubspec.yaml` 负责版本与静态支持二维码资产，Android Gradle 配置从被 Git 忽略的本机 `key.properties`/JKS 读取稳定发布签名，Windows CMake 输出 `FinanceCompass.exe`，`packaging/windows/FinanceCompass.iss` 只包装同一次 Windows Release 目录。`deploy/selfhost/` 用 Docker 多阶段构建 Flutter Web，再用 Caddy 仅提供静态文件；它没有 API、服务端数据库或同步。GitHub Release 只接收二进制与校验文件，不接收数据库、JSON 备份或签名密钥。
 
 ## 技术栈

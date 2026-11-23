@@ -6,6 +6,7 @@ import '../../core/utils/currency_formatter.dart';
 import '../../core/utils/id_generator.dart';
 import '../../core/theme/finance_colors.dart';
 import '../shared/compass_ui.dart';
+import '../shared/finance_amount_field.dart';
 
 class AccountFormDialog extends StatefulWidget {
   const AccountFormDialog({
@@ -288,6 +289,7 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                     label: '信用额度',
                     child: _InlineTextEditor(
                       controller: creditLimitController,
+                      isAmount: true,
                       prefixText: '$currency ',
                       keyboardType:
                           const TextInputType.numberWithOptions(decimal: true),
@@ -302,6 +304,7 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                     child: _InlineTextEditor(
                       fieldKey: const Key('credit-card-balance-field'),
                       controller: currentBalanceController,
+                      isAmount: true,
                       prefixText: '$currency ',
                       keyboardType: const TextInputType.numberWithOptions(
                         decimal: true,
@@ -369,6 +372,7 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                     label: '贷款金额',
                     child: _InlineTextEditor(
                       controller: loanPrincipalController,
+                      isAmount: true,
                       prefixText: '$currency ',
                       keyboardType:
                           const TextInputType.numberWithOptions(decimal: true),
@@ -464,6 +468,7 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                       label: '银行核定月供',
                       child: _InlineTextEditor(
                         controller: loanQuotedPaymentController,
+                        isAmount: true,
                         prefixText: '$currency ',
                         hintText: '可选',
                         keyboardType: const TextInputType.numberWithOptions(
@@ -479,6 +484,7 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                     child: _InlineTextEditor(
                       fieldKey: const Key('loan-opening-balance'),
                       controller: loanOpeningBalanceController,
+                      isAmount: true,
                       prefixText: '$currency ',
                       hintText: '默认贷款金额',
                       keyboardType: const TextInputType.numberWithOptions(
@@ -506,6 +512,7 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                     label: '初始余额',
                     child: _InlineTextEditor(
                       controller: initialBalanceController,
+                      isAmount: true,
                       prefixText: '$currency ',
                       keyboardType:
                           const TextInputType.numberWithOptions(decimal: true),
@@ -517,6 +524,7 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                     label: '当前余额',
                     child: _InlineTextEditor(
                       controller: currentBalanceController,
+                      isAmount: true,
                       prefixText: '$currency ',
                       keyboardType:
                           const TextInputType.numberWithOptions(decimal: true),
@@ -841,6 +849,7 @@ class _InlineTextEditor extends StatelessWidget {
   const _InlineTextEditor({
     required this.controller,
     this.fieldKey,
+    this.isAmount = false,
     this.validator,
     this.hintText,
     this.prefixText,
@@ -851,6 +860,7 @@ class _InlineTextEditor extends StatelessWidget {
 
   final TextEditingController controller;
   final Key? fieldKey;
+  final bool isAmount;
   final FormFieldValidator<String>? validator;
   final String? hintText;
   final String? prefixText;
@@ -859,27 +869,41 @@ class _InlineTextEditor extends StatelessWidget {
   final ValueChanged<String>? onChanged;
 
   @override
-  Widget build(BuildContext context) => TextFormField(
-        key: fieldKey,
+  Widget build(BuildContext context) {
+    final decoration = InputDecoration(
+      hintText: hintText,
+      prefixText: prefixText,
+      suffixText: suffixText,
+      isDense: true,
+      border: InputBorder.none,
+      enabledBorder: InputBorder.none,
+      focusedBorder: InputBorder.none,
+      errorBorder: InputBorder.none,
+      focusedErrorBorder: InputBorder.none,
+      contentPadding: const EdgeInsets.symmetric(vertical: 12),
+    );
+    if (isAmount) {
+      return FinanceAmountField(
+        fieldKey: fieldKey,
         controller: controller,
         validator: validator,
-        keyboardType: keyboardType,
         onChanged: onChanged,
         textAlign: TextAlign.right,
         style: Theme.of(context).textTheme.bodyMedium,
-        decoration: InputDecoration(
-          hintText: hintText,
-          prefixText: prefixText,
-          suffixText: suffixText,
-          isDense: true,
-          border: InputBorder.none,
-          enabledBorder: InputBorder.none,
-          focusedBorder: InputBorder.none,
-          errorBorder: InputBorder.none,
-          focusedErrorBorder: InputBorder.none,
-          contentPadding: const EdgeInsets.symmetric(vertical: 12),
-        ),
+        decoration: decoration,
       );
+    }
+    return TextFormField(
+      key: fieldKey,
+      controller: controller,
+      validator: validator,
+      keyboardType: keyboardType,
+      onChanged: onChanged,
+      textAlign: TextAlign.right,
+      style: Theme.of(context).textTheme.bodyMedium,
+      decoration: decoration,
+    );
+  }
 }
 
 class _LoanPaymentPreview extends StatelessWidget {

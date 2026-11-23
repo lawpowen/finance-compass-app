@@ -1,5 +1,9 @@
 # 公开发布、测试版与数据恢复作业
 
+## Android build 50 交付范围
+
+金额键盘沿用 Android 开发包流程，版本为 `0.11.0-dev+50`，同步 pubspec 与设置页版本文字。只构建 Android Debug；其它平台的稳定版产物、Web Service Worker、Docker 镜像版本和稳定下载链接保持原发布版本，不把 Android 开发号写成多平台公开版本。发布验证及已知限制记录在 [测试与质量](TESTING_AND_QUALITY.md)；若交付 GitHub，使用独立预发布标签，不覆盖原 build 49 附件或稳定 Latest。
+
 ## 公开发布契约
 
 Finance Compass 的公开 GitHub Release 固定提供：

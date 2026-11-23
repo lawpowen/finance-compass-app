@@ -1,5 +1,15 @@
 # 模块设计
 
+## 金额计算与输入模块
+
+`core/utils/amount_calculator.dart` 的 `AmountCalculator` 是不依赖 Flutter 或数据库的状态机。每个操作数的数字均从分位录入，`BigInt` 有理数保存中间结果；先乘除、后加减，只在求值完成时四舍五入到分（半分向远离零方向）。例如按 `1134 + 150 =` 得到 `12.84`，按 `150 × 200 =` 得到 `3.00`。输入和结果绝对值上限为 `999999999999.99`，每次表达式最多 32 个运算符；除零、不完整算式和超限产生可纠正的错误，不提交结果。
+
+`features/shared/finance_amount_field.dart` 的 `FinanceAmountField` 维护字段焦点和单个底部键盘；内部 TextFormField 禁止系统 IME，保留业务 validator。`FinanceTextField.isAmount` 是通用表单的显式接入点；其它输入框无需猜测数字类型。`_AmountKeyboard` 持有临时计算状态，完成后返回普通十进制字符串，更新 controller 并调用 onChanged；取消返回 null，不修改 controller。组件销毁、controller 被替换或字段变为只读时，不回填旧操作结果。
+
+状态流程：点击字段 → 临时编辑 → 完成并回填 / 关闭后确认放弃。按等号后输入数字开始新金额，按运算符继续计算；连续按运算符替换最后一个符号；退格可撤回尚未输入右操作数的运算符。原值有多位小数时预览保留两位，未编辑就完成仍返回原字符串，不重写历史精度。
+
+模块只依赖 Flutter Material/Services 与本地计算，没有网络、平台通道或新权限；持久化仍由调用表单与 Repository 负责。回滚可恢复原字段及删除此计算模块，无数据库迁移；已保存金额无需转换。测试与设备验收边界见 [测试与质量](TESTING_AND_QUALITY.md)。
+
 ## Web 自托管与浏览器数据库
 
 `core/database/database_connection.dart` 是数据库执行器边界。`database_connection_native.dart` 保留 Android/桌面私有 SQLite 文件与 schema 升级恢复点；`database_connection_web.dart` 通过 `WasmDatabase.open` 打开 `finance_compass.sqlite`，并要求同源的 `sqlite3.wasm` 与 `drift_worker.js`。该选择使 Web UI、Repository 和业务规则复用同一 Drift schema，但 Web 数据只能留在访问者当前浏览器的 OPFS/IndexedDB，不能由静态 Caddy 容器读取。

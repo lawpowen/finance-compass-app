@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../shared/finance_amount_field.dart';
+
 import '../../core/data/finance_repository.dart';
 import '../../core/models/account.dart';
 import '../../core/models/category.dart';
@@ -154,12 +156,8 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   Expanded(
-                    child: TextField(
+                    child: FinanceAmountField(
                       controller: amountController,
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
-                        signed: true,
-                      ),
                       style: const TextStyle(
                         color: FinanceColors.compassTeal,
                         fontSize: 40,
@@ -216,14 +214,10 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     Expanded(
-                      child: TextField(
+                      child: FinanceAmountField(
                         controller: toAmountController,
                         enabled: toAccountId != null,
                         readOnly: _isSameCurrencyTransfer,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                          signed: true,
-                        ),
                         style: const TextStyle(
                           color: FinanceColors.compassTeal,
                           fontSize: 40,

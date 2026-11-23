@@ -11,6 +11,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/amount_entry.dart';
+
 void main() {
   testWidgets('credit-card repayment uses the loan-style cash account flow',
       (tester) async {
@@ -89,10 +91,8 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('记录信用卡还款'), findsOneWidget);
-    await tester.enterText(
-      find.byKey(const Key('credit-card-repayment-amount')),
-      '300',
-    );
+    await enterAmount(
+        tester, find.byKey(const Key('credit-card-repayment-amount')), '300');
     await tester.tap(
       find.byKey(const Key('credit-card-repayment-confirm')),
     );
@@ -186,10 +186,11 @@ void main() {
     await tester.pumpAndSettle();
 
     for (final input in ['NaN', 'Infinity', '-Infinity']) {
-      await tester.enterText(
-        find.byKey(const Key('credit-card-repayment-amount')),
-        input,
-      );
+      // The keypad cannot type non-finite values; validate injected old data.
+      amountController(
+              tester, find.byKey(const Key('credit-card-repayment-amount')))
+          .text = input;
+      await tester.pump();
       await tester.tap(find.byKey(const Key('credit-card-repayment-confirm')));
       await tester.pump();
 
@@ -346,10 +347,11 @@ void main() {
       find.byKey(const Key('credit-card-repayment-source-prepay-cash')),
     );
     await tester.pumpAndSettle();
-    final amountField = tester.widget<TextField>(
-      find.byKey(const Key('credit-card-repayment-amount')),
-    );
-    expect(amountField.controller!.text, '300.00');
+    expect(
+        amountController(
+                tester, find.byKey(const Key('credit-card-repayment-amount')))
+            .text,
+        '300.00');
 
     await tester.tap(find.text('取消'));
     await tester.pumpAndSettle();

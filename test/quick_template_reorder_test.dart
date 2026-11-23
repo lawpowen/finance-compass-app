@@ -12,6 +12,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/amount_entry.dart';
+
 void main() {
   test('template reorder persists a complete unique sort order', () async {
     final database = AppDatabase.forTesting(NativeDatabase.memory());
@@ -126,7 +128,10 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.add));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField).first, '12.50');
+    await enterAmount(tester, find.byType(TextField).first, '12.50');
+    await tester.scrollUntilVisible(find.text('保存'), -250,
+        scrollable: find.byType(Scrollable).first);
+    await tester.pumpAndSettle();
     await tester.tap(find.text('保存').first);
     await tester.pumpAndSettle();
     expect(find.text('模板名称'), findsOneWidget);

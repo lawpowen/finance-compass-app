@@ -1,5 +1,9 @@
 # 数据设计与迁移
 
+## 金额输入精度边界（build 50）
+
+新金额键盘仅在临时 UI 状态中使用整数分与有理数计算，完成时回传两位小数十进制文本，原表单按现有金额字段类型解析和持久化。未编辑的历史高精度数值不因打开键盘而被重写。本次不迁移 schema、不改 JSON 备份格式、不批量转换现有金额；数据库仍使用现有金额表示，不能将 UI 的精确计算描述为全库金额类型迁移。
+
 ## 平台存储边界
 
 `AppDatabase` 的 schema 与 JSON 格式在原生和 Web 保持一致，但物理保留位置不同：Android/Windows/macOS/Linux 使用应用私有 SQLite 文件；Web 使用 Drift WASM SQLite 的浏览器 OPFS/IndexedDB。Web 数据键为 `finance_compass.sqlite`，作用域是当前 origin 与浏览器 profile，而非 Docker 主机。自托管容器没有可备份的服务端账本卷；每个浏览器使用完整 JSON 导出进行可携备份和恢复。

@@ -5,6 +5,8 @@ import 'package:finance_app/src/features/accounts/account_form_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/amount_entry.dart';
+
 Account _card(double balance) => Account(
       id: 'card',
       name: 'Card',
@@ -94,12 +96,12 @@ void main() {
   testWidgets('edited debt stays negative and overpayment stays positive',
       (tester) async {
     var result = await _openForm(tester, _card(-250));
-    await tester.enterText(find.byKey(_balanceField), '-300.5');
+    await enterAmount(tester, find.byKey(_balanceField), '-300.5');
     await _save(tester);
     expect(result()!.currentBalance, -300.5);
 
     result = await _openForm(tester, _card(-250));
-    await tester.enterText(find.byKey(_balanceField), '45');
+    await enterAmount(tester, find.byKey(_balanceField), '45');
     await _save(tester);
     expect(result()!.currentBalance, 45);
     expect(tester.takeException(), isNull);
@@ -113,7 +115,9 @@ void main() {
         -300,
         scrollable: find.byType(Scrollable).first,
       );
-      await tester.enterText(find.byKey(_balanceField), input);
+      // Invalid restored/programmatic values must still fail form validation.
+      amountController(tester, find.byKey(_balanceField)).text = input;
+      await tester.pump();
       await _save(tester);
       await tester.scrollUntilVisible(
         find.byKey(_balanceField),

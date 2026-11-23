@@ -12,6 +12,8 @@ import 'package:finance_app/src/features/transactions/transaction_form_dialog.da
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/amount_entry.dart';
+
 void main() {
   testWidgets('edit composer preserves the existing transaction identity', (
     tester,
@@ -83,12 +85,17 @@ void main() {
     await tester.tap(find.text('打开编辑'));
     await tester.pumpAndSettle();
     expect(find.text('编辑交易'), findsOneWidget);
+    await enterAmount(tester, find.byType(TextFormField).first, '11.34');
+    await tester.scrollUntilVisible(find.text('保存修改'), -250,
+        scrollable: find.byType(Scrollable).first);
+    await tester.pumpAndSettle();
 
     await tester.tap(find.text('保存修改').first);
     await tester.pumpAndSettle();
 
     expect(saved, isNotNull);
     expect(saved!.transactions.single.id, draft.id);
+    expect(saved!.transactions.single.amount, 11.34);
     expect(saved!.transactions.single.recordDate, originalRecordDate);
     expect(saved!.transactions.single.transactionDate, transactionDate);
   });

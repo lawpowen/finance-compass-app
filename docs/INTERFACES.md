@@ -1,5 +1,11 @@
 # 接口与导入导出
 
+## 内部金额字段契约（build 50）
+
+`FinanceAmountField` 接收 TextEditingController、decoration、title、validator、onChanged、enabled、readOnly、autofocus 和可选 fieldKey。只有启用且业务可编辑时打开键盘；点击完成返回如 `11.34` 的十进制文本，先更新 controller 再回调 onChanged。取消不回调；清空后完成传空字符串，以保留原表单对可选/必填项的区别。未修改就完成保留原文本。
+
+`FinanceTextField(isAmount: true)` 复用此契约；默认 false 保留普通文字/数值输入。计算器对外方法为 digit、operation、evaluate、backspace、toggleSign、clear，读取 display、expression、isEmpty、dirty 和 error。外部 API、JSON 和数据库接口均不变。
+
 投资成本读取接口：`FinanceRepository.costBasisForAccount(accountId, upToDate)` 返回首张快照基线加之后实际投入的累计成本；`remainingCostBasisForAccount(accountId, upToDate)` 再扣首张快照之后的实际取出，供资产卡片、详情与报表计算未实现盈亏。没有快照时按全部实际投入减实际取出计算。`snapshotRemainingCostBasis` 和 `snapshotUnrealizedPnl` 采用相同截止日口径；这些调用只读，不改写快照或交易。截止日早于首张快照时，`costBasisForAccount` 只返回截至当日的实际投入，`accountBalanceAt` / `accountBalanceTrace` 从 `initial_balance` 累加截止日及之前的实际交易，均不读取未来快照。
 
 快照写入接口：`FinanceRepository.addAssetSnapshot`、`updateExistingAssetSnapshot`、`deleteExistingAssetSnapshot` 分别调用 `AppDatabase.insertAssetSnapshot`、`updateAssetSnapshot`、`deleteAssetSnapshot`，签名不变，返回刷新后的 Repository。契约变化如下：

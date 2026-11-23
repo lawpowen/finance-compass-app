@@ -19,6 +19,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/amount_entry.dart';
+
 DateTime _today() {
   final now = DateTime.now();
   return DateTime(now.year, now.month, now.day);
@@ -388,10 +390,8 @@ void main() {
       find.byKey(const Key('asset-goal-name')),
       '首个十万',
     );
-    await tester.enterText(
-      find.byKey(const Key('asset-goal-amount')),
-      '100000',
-    );
+    await enterAmount(
+        tester, find.byKey(const Key('asset-goal-amount')), '100000');
     await tester.tap(find.byKey(const Key('asset-goal-save')));
     await tester.pumpAndSettle();
 

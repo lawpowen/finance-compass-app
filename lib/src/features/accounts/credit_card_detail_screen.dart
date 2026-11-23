@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../shared/finance_amount_field.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/data/finance_repository.dart';
@@ -693,12 +695,10 @@ class _CreditCardDetailScreenState
           children: [
             Text('从 ${source.name} 转账至 ${card.name}'),
             const SizedBox(height: 14),
-            TextField(
+            FinanceAmountField(
               key: const Key('credit-card-repayment-amount'),
               controller: amountController,
               autofocus: true,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
               decoration: InputDecoration(
                 labelText: '还款金额',
                 prefixText: '${card.currency} ',

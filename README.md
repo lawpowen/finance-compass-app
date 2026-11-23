@@ -1,6 +1,6 @@
 # Finance Compass
 
-当前开发版本：`0.11.0-dev+49`（Android 通知记账，含马来西亚 10 家银行及 TNG eWallet 待确认接入，参见 [使用说明](docs/ANDROID_NOTIFICATION_BOOKKEEPING.md)，尚未完成真机验收）。
+当前开发版本：`0.11.0-dev+50`（金额数字键盘：输入 1134 显示 11.34，支持加减乘除，参见[金额键盘说明](docs/UI_REFERENCE.md#金额键盘使用与交互build-50)；本次不调整通知记账，尚未完成真机验收）。
 
 **[下载 Android 通知记账测试版 build 49](https://github.com/lawpowen/finance-compass-app/releases/download/v0.11.0-dev.49/FinanceCompass-Android-v0.11.0-dev-build49-debug.apk)**（[预发布页](https://github.com/lawpowen/finance-compass-app/releases/tag/v0.11.0-dev.49)）。安装名称为 Finance Compass Debug，与正式版数据隔离；10 家银行及 TNG 均需逐笔确认。
 

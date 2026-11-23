@@ -100,6 +100,7 @@ class _BudgetFormDialogState extends State<BudgetFormDialog> {
                 ),
                 const SizedBox(height: 12),
                 FinanceTextField(
+                  isAmount: true,
                   controller: amountController,
                   label: '预算金额',
                   keyboardType:

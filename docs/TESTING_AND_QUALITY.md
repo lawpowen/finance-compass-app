@@ -1,5 +1,13 @@
 # 测试与质量
 
+## 2026-11-23 金额数字键盘（build 50）
+
+- 全量 `flutter test --no-pub`：299 项通过、2 项按原设计跳过，退出码 0。新计算器 11 项与键盘 Widget 20 项；涉及交易、转账、预算、目标、信用卡、贷款和快捷模板的选定回归共 77 项通过。
+- 计算覆盖固定分位输入、加减乘除优先级、精确中间结果、最终四舍五入、负数、退格、空值、除零、不完整算式和金额范围。Widget 验证真实点击、物理键盘、controller/onChanged、草稿保护及业务只读，不用模拟系统文本输入替代自带键盘。
+- 布局覆盖 abyss/sky、375×812 / 812×375 / 1024×768、字号 1/2 倍和减少动态效果；检查无布局异常、按键至少 48×48、完成按钮文字对比度至少 4.5:1。深浅主题截图由可选 `AMOUNT_KEYBOARD_SCREENSHOTS=1` 导出，加载本机中文及 MaterialIcons 字体用于人工核对，不依赖这些字体执行正常 CI。
+- 修改范围静态分析为 0 error、0 warning；既有弃用/样式 info 保留。格式检查针对本次改动文件，避免改写无关源码。日志与本机截图保存在忽略目录 `artifacts/qa/amount-keyboard-2026-11-23/`，不包含真实账本。
+- Android Debug 构建成功（assembleDebug 74.4 秒）；aapt 确认包名 `com.financecompass.app.debug`、versionCode 50、versionName `0.11.0-dev-debug`，支持 ARM64/ARMv7/x86_64；apksigner 验证 v2 Debug 签名通过。APK 为 159,253,953 字节，SHA-256 `f4f14ab6b8170ebf660fc2509a714162358f4ea0d81d76e86287c5bb25c5b5d1`。最终专项 31 项再次通过，24 个 Dart 文件格式检查无变更，77 个 Markdown 本地链接全部存在。本次不修改数据库或权限；Widget、截图和构建不能代替真机安装、系统读屏及触控验收，既有 Play Protect 拦截尚未验证解决。
+
 ## 2026-09-25 资产目标日期与报表手机布局复验
 
 - Claude CLI Opus 5.5 High 执行 `flutter test test/asset_goals_page_test.dart test/asset_goal_reached_date_test.dart`：13 项通过。覆盖真实跨越日、快照升值、期初余额日期未知、未来实际和预计交易排除，以及改写或删除账本后重算持久化日期。

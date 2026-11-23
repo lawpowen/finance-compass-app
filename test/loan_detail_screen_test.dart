@@ -13,6 +13,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/amount_entry.dart';
+
 void main() {
   testWidgets('loan form saves complete terms at 390 logical pixels',
       (tester) async {
@@ -61,10 +63,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.drag(find.byType(ListView), const Offset(0, -1200));
     await tester.pumpAndSettle();
-    await tester.enterText(
-      find.byKey(const Key('loan-opening-balance')),
-      '71097',
-    );
+    await enterAmount(
+        tester, find.byKey(const Key('loan-opening-balance')), '71097');
     await tester.tap(find.text('保存更改'));
     await tester.pumpAndSettle();
 
