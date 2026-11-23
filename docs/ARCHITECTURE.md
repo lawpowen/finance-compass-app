@@ -36,7 +36,7 @@ Repository 对报表提供实际现金读模型，只累计 `ReportGroup.cash` �
 
 Repository 对信用卡提供两条明确分离的读取路径：账单、未出账和还款状态使用带日期截止的余额与交易快照；当前欠款、信用负债汇总和额度使用读取已影响物化余额的全部 `actual`/`settled`，从而包含未来已锁定额度的分期并排除 `planned`。两条路径分别由 `creditCardBillingSummary` 与 `creditCardOutstandingBalance` 集中提供，账户页信用卡行与信用卡详情不再各自拼装余额和截止时间，避免同一“当前欠款”在不同页面出现不同数值。实时账期摘要以参考日日终读取余额，历史账期摘要则以同一精确截止时刻过滤交易并读取余额，保证历史视图不会混入截止后的同日记录。欠款下限为 0 会把溢缴贷方余额排除在负债外，因此 `creditCardCreditBalance` 作为对称读模型提供正余额部分，只供账户页净资产加回，不进入总资产、现金分组或资产目标。周期规则保存后由 Repository 自动展开未来 3 个完整日历月，生成器只处理今天之后的发生日并统一写入 `planned`，因此不会提前改变真实余额；规则管理可继续补齐更远月份且以月份键防重。
 
-贷款计划采用派生模型：`Account` 分别保存合同开始日、开始记账日和合同条件，并以 `initial_balance` 保存本账本开始追踪时的贷款余额。`loan_amortization.dart` 以纯函数生成 `LoanAmortizationSchedule`；当开始余额小于合同金额时，只派生开始记账日之后需要追踪的期数，不制造以前已经还款的交易。计划行不持久化为交易，避免编辑条件后留下成百上千笔过期预计记录。用户确认某期还款时，页面通过 transaction mutation 写入一笔结构化月供转账：`amount` 是现金账户扣除的完整月供，`to_amount` 是贷款账户减少的本金，差额为利息。旧版预计本金/利息组合由贷款详情页安全合并，实际历史记录不自动改写。
+贷款计划采用派生模型：`Account` 分别保存合同开始日、开始记账日和合同条件，并以 `initial_balance` 保存本账本开始追踪时的贷款余额。`loan_amortization.dart` 以纯函数生成 `LoanAmortizationSchedule`；当开始余额小于合同金额时，只派生开始记账日之后需要追踪的期数，不制造以前已经还款的交易。计划行不持久化为交易，避免编辑条件后留下成百上千笔过期预计记录。用户确认某期还款时，页面通过 transaction mutation 写入一笔结构化月供转账：`amount` 是现金账户扣除的完整月供，`to_amount` 是贷款账户减少的本金，差额为利息。贷款详情页负责合并可唯一识别的旧版预计本金/利息组合。旧编辑错误造成的本金覆盖由数据库恢复流程处理。
 
 历史信用卡账期本身不是持久化快照，而是由 `availableCreditCardBillingPeriods` 根据账户结算日和最早相关交易按月派生。选择某期后，详情页使用该期 `CreditCardBillingPeriod` 过滤交易并计算原始账单金额：该期有来源卡流水时取其净额，只有完全缺少来源流水的旧导入账期才以结算日至还款日的转入还款净额作为凭据（下限 0）；若用户已经提供银行结单完成对账，可在账户级 `app_meta` 保存按结算日索引的权威账单总额，展示时优先使用该值。权威总额只覆盖历史原始金额，不改变交易明细或实时承诺负债口径。
 
@@ -50,7 +50,9 @@ Repository 对信用卡提供两条明确分离的读取路径：账单、未出
 
 ## 数据升级
 
-应用打开任何 v1–v8 数据库前会建立 `finance_compass_backups/pre_v9_*` 恢复点，包含 SQLite 文件、WAL/SHM（如存在）和逐表 JSON 快照。Drift 在事务内逐级升级到 v9，随后执行 `quick_check` 与 `foreign_key_check`。备份失败会阻止升级，不会修改原数据库。v8 增加可空贷款合同字段；v9 只增加可空 `loan_tracking_start_date`，旧贷款缺失时回退使用合同开始日，不猜测或改写余额。
+应用打开任何 v1–v8 数据库前会建立 `finance_compass_backups/pre_v9_*` 恢复点，包含 SQLite 文件、WAL/SHM（如存在）和逐表 JSON 快照。Drift 在事务内逐级升级到 v9，随后执行 `quick_check` 与 `foreign_key_check`。备份失败会阻止升级，不会修改原数据库。v8 增加可空贷款合同字段；v9 只增加可空 `loan_tracking_start_date`，旧贷款缺失该字段时回退使用合同开始日。
+
+`AppDatabase` 在 `MigrationStrategy.beforeOpen` 回调中于完整性检查前执行一次贷款本金回补，`replaceAllWithSeedData` 在完整导入时强制检查导入的数据。贷款本金字段、已入账余额差额及修复记录一起提交，流程复用现有 schema v9。详见[历史贷款本金回补](DATA_DESIGN.md#历史贷款本金回补2026-11-23)。
 
 模板与周期规则由 `app_meta` JSON 迁入独立表。0.8.0 暂时双写新表和旧 JSON，支持回滚；读取时若新表为空，会回退旧 JSON。
 

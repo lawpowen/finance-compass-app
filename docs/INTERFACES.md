@@ -34,7 +34,7 @@ Web 自托管版没有 JSON/REST/GraphQL 服务端接口。Caddy 仅提供静态
 
 `accounts` 的贷款扩展字段为 `loan_principal`、`loan_annual_interest_rate`、`loan_term_months`、`loan_start_date`（合同开始日）、`loan_tracking_start_date`（开始记账日）、`loan_payment_day`、`loan_repayment_method` 和可空的 `loan_quoted_monthly_payment`。日期使用 ISO-8601。JSON v3 保持向后兼容：旧备份缺少追踪日期时按 `NULL` 导入并回退使用合同开始日；新备份的 `schema_version=9`，旧应用可能忽略未知字段，因此回滚前必须保留 v9 恢复点。
 
-导入是完整替换，不执行记录级合并。导入前展示数量摘要并要求确认，随后建立自动恢复点。空文件、缺少财务数据或枚举/日期格式错误会拒绝导入。兼容旧信用卡资料时，若 `record_date` 与 `transaction_date` 不同，以 `record_date` 作为实际发生日期写入两个字段；信用卡账期由账户级 `statement_day` 推导。
+导入是完整替换，不执行记录级合并。导入前展示数量摘要并要求确认，随后建立自动恢复点。空文件、缺少财务数据或枚举/日期格式错误会拒绝导入。兼容旧信用卡资料时，若 `record_date` 与 `transaction_date` 不同，以 `record_date` 作为实际发生日期写入两个字段；信用卡账期由账户级 `statement_day` 推导。正式导入经 `AppDatabase.replaceAllWithSeedData` 提交时，自动回补能可靠识别的旧贷款本金。重新载入的账本反映修正后的本金和贷款余额。源 JSON 保持原样，新的完整导出会在既有 `meta` 字段携带 `loan_principal_repair_v1`。
 
 Android/桌面端通过系统文件选择器读取 `.json`，并由同一文件选择器把非空字节直接写入用户选定的文档 URI；Android 写入异常必须返回应用，不能把已创建但未写入的 0 KB 文档报告为成功。应用不会把导出路径写死到公共存储。设置页还可生成最近 6 个月的 AI 摘要 JSON，以及未来 24 个月计划表 CSV。导入完成后 mutation provider 会重新载入 `FinanceRepository`，界面退回主路由，因此账户、交易、预算、模板和周期规则立即使用新快照且不保留引用旧 repository 的详情页。
 

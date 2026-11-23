@@ -6,6 +6,7 @@ import '../models/account.dart' as model;
 import '../models/asset_snapshot.dart' as model;
 import '../models/budget.dart' as model;
 import '../models/category.dart' as model;
+import '../models/loan_amortization.dart';
 import '../models/transaction.dart' as model;
 import '../models/transaction_preset.dart' as model;
 import 'enum_codec.dart';
@@ -93,10 +94,11 @@ class AppDatabase extends _$AppDatabase {
           await _migrateCreditCardTransactionDates();
           await _ensureLocalProfileId();
           await _applyV2VisualDefault();
-          await super.transaction(
-            () => _repairLegacyZeroSameCurrencyTransfers(),
-          );
-          await _validateDatabaseIntegrity();
+          await super.transaction(() async {
+            await _repairLegacyZeroSameCurrencyTransfers();
+            await _repairOverwrittenLoanPrincipal();
+            await _validateDatabaseIntegrity();
+          });
         },
       );
 
@@ -700,6 +702,7 @@ class AppDatabase extends _$AppDatabase {
       // transfer target together with an explicit zero receiving amount.
       // Force a scan because imported meta may come from another installation.
       await _repairLegacyZeroSameCurrencyTransfers(forceScan: true);
+      await _repairOverwrittenLoanPrincipal(forceScan: true);
       await _validateDatabaseIntegrity();
     });
   }
@@ -754,6 +757,121 @@ class AppDatabase extends _$AppDatabase {
     }
 
     await setMetaValue(_zeroSameCurrencyTransferRepairKey, 'true');
+  }
+
+  static const _loanPrincipalRepairKey = 'loan_principal_repair_v1';
+  static final _loanInstallmentNote = RegExp(r'^贷款(?:月供|本金) #([1-9]\d*)$');
+  static final _generatedLoanPaymentId = RegExp(
+      r'^txn_loan_payment_(?:\d+|(?:plan|plan_upgrade)_\d+_([1-9]\d*))$');
+
+  Future<void> _repairOverwrittenLoanPrincipal({bool forceScan = false}) async {
+    final priorRepair = await getMetaValue(_loanPrincipalRepairKey);
+    if (priorRepair != null && !forceScan) return;
+
+    final rows = await (select(transactions)
+          ..where((tbl) =>
+              tbl.type.equals(model.TransactionType.transfer.name) &
+              tbl.toAccountId.isNotNull() &
+              (tbl.description.like('贷款月供 #%') |
+                  tbl.description.like('贷款本金 #%'))))
+        .get();
+    final installments = <(String, int, bool), List<Transaction>>{};
+    for (final row in rows) {
+      final number = int.tryParse(
+          _loanInstallmentNote.firstMatch(row.description!)?.group(1) ?? '');
+      if (number == null) continue;
+      final planned = row.status == model.TransactionStatus.planned.name;
+      (installments[(row.toAccountId!, number, planned)] ??= []).add(row);
+    }
+
+    final repairs = <Map<String, Object?>>[];
+    if (installments.isNotEmpty) {
+      final accountsById = {
+        for (final item in await fetchAccounts()) item.id: item
+      };
+      final schedules = <String, LoanAmortizationSchedule?>{};
+      for (final entry in installments.entries) {
+        if (entry.value.length != 1) continue;
+        final (loanId, number, planned) = entry.key;
+        final row = entry.value.single;
+        final id = _generatedLoanPaymentId.firstMatch(row.id);
+        if (row.description != '贷款月供 #$number' ||
+            id == null ||
+            (id.group(1) ?? '$number') != '$number' ||
+            (row.toAmount != null && row.toAmount != row.amount)) {
+          continue;
+        }
+        final source = accountsById[row.accountId];
+        final loan = accountsById[loanId];
+        if (source == null ||
+            loan == null ||
+            source.id == loan.id ||
+            loan.accountType != model.AccountType.loan ||
+            loan.reportGroup != model.ReportGroup.credit ||
+            source.currency != loan.currency ||
+            row.currency != loan.currency ||
+            (row.toCurrency ?? row.currency) != loan.currency) {
+          continue;
+        }
+        final schedule =
+            schedules.putIfAbsent(loanId, () => _repairSchedule(loan));
+        if (schedule == null || number > schedule.installments.length) continue;
+        final installment = schedule.installments[number - 1];
+        if (row.amount != installment.payment ||
+            installment.principal <= 0 ||
+            installment.principal >= row.amount) {
+          continue;
+        }
+        final due = installment.dueDate;
+        final date = row.transactionDate;
+        if (planned &&
+            (date.year != due.year ||
+                date.month != due.month ||
+                date.day != due.day)) {
+          continue;
+        }
+
+        await (update(transactions)..where((tbl) => tbl.id.equals(row.id)))
+            .write(
+                TransactionsCompanion(toAmount: Value(installment.principal)));
+        // A missing or copied principal was credited as the full payment.
+        // Preserve the loan's existing balance basis and reverse just that difference.
+        final balanceDelta = planned ? 0.0 : installment.principal - row.amount;
+        if (!planned) await _incrementAccountBalance(loanId, balanceDelta);
+        repairs.add({
+          'transaction_id': row.id,
+          'loan_id': loanId,
+          'previous_to_amount': row.toAmount,
+          'restored_to_amount': installment.principal,
+          'balance_delta': balanceDelta,
+        });
+      }
+    }
+
+    if (priorRepair == null || repairs.isNotEmpty) {
+      await setMetaValue(_loanPrincipalRepairKey, jsonEncode(repairs));
+    }
+  }
+
+  LoanAmortizationSchedule? _repairSchedule(model.Account loan) {
+    if (!loan.hasCompleteLoanProfile || loan.initialBalance >= 0) return null;
+    try {
+      return calculateLoanAmortization(
+        principal: loan.loanPrincipal!,
+        annualInterestRatePercent: loan.loanAnnualInterestRate!,
+        termMonths: loan.loanTermMonths!,
+        startDate: loan.loanTrackingStartDate ?? loan.loanStartDate!,
+        paymentDay: loan.loanPaymentDay!,
+        method: loan.loanRepaymentMethod!,
+        quotedMonthlyPayment: loan.loanQuotedMonthlyPayment,
+        openingPrincipal: loan.initialBalance.abs(),
+      );
+    } on ArgumentError {
+      return null;
+    } on UnsupportedError {
+      // Cent rounding can fail for non-finite results from invalid old terms.
+      return null;
+    }
   }
 
   Future<void> insertAccount(model.Account account) {

@@ -7,6 +7,7 @@
 | 代码范围 | 必须检查的文档 |
 |---|---|
 | `core/database/**`、表文件 | `DATA_DESIGN.md`、`ARCHITECTURE.md`、`SECURITY_AND_OPERATIONS.md`、`TESTING_AND_QUALITY.md`、`CHANGELOG.md` |
+| `AppDatabase._repairOverwrittenLoanPrincipal`、`replaceAllWithSeedData`、`test/loan_principal_repair_test.dart` | `SYSTEM_REQUIREMENTS.md`、`DATA_DESIGN.md`、`ARCHITECTURE.md`、`MODULE_DESIGN.md`、`INTERFACES.md`、`SECURITY_AND_OPERATIONS.md`、`TESTING_AND_QUALITY.md`、`CHANGELOG.md` |
 | `core/models/**` | `SYSTEM_REQUIREMENTS.md`、`DATA_DESIGN.md`、`MODULE_DESIGN.md` |
 | `core/models/loan_amortization.dart`、`features/accounts/loan_detail_screen.dart`、`features/accounts/account_form_dialog.dart` | `SYSTEM_REQUIREMENTS.md`、`ARCHITECTURE.md`、`MODULE_DESIGN.md`、`DATA_DESIGN.md`、`INTERFACES.md`、`UI_REFERENCE.md`、`TESTING_AND_QUALITY.md`、`CHANGELOG.md` |
 | `core/data/**`、`core/services/**` | `MODULE_DESIGN.md`、`INTERFACES.md`、`TESTING_AND_QUALITY.md` |

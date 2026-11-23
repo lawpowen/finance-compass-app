@@ -2,7 +2,7 @@
 
 当前开发版本：`0.11.0-dev+50`（金额数字键盘：输入 1134 显示 11.34，支持加减乘除，参见[金额键盘说明](docs/UI_REFERENCE.md#金额键盘使用与交互build-50)；本次不调整通知记账，尚未完成真机验收）。
 
-贷款月供切换付款账户的本金覆盖问题已在源码修复；按用户要求尚未重新构建。build 50 仅保留为金额键盘阶段的 GitHub 草稿，不含之后的修复。
+贷款月供切换付款账户时会保留本金。新版首次打开账本或导入旧备份时，会自动回补能与还款计划唯一匹配的旧本金，并校正贷款余额。当前仅更新源码，GitHub 的 build 50 草稿仍是金额键盘阶段的安装包。详见[历史贷款本金回补](docs/DATA_DESIGN.md#历史贷款本金回补2026-11-23)。
 
 **[下载 Android 通知记账测试版 build 49](https://github.com/lawpowen/finance-compass-app/releases/download/v0.11.0-dev.49/FinanceCompass-Android-v0.11.0-dev-build49-debug.apk)**（[预发布页](https://github.com/lawpowen/finance-compass-app/releases/tag/v0.11.0-dev.49)）。安装名称为 Finance Compass Debug，与正式版数据隔离；10 家银行及 TNG 均需逐笔确认。
 

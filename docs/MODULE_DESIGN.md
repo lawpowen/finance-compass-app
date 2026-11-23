@@ -10,6 +10,10 @@
 
 模块只依赖 Flutter Material/Services 与本地计算，没有网络、平台通道或新权限；持久化仍由调用表单与 Repository 负责。回滚可恢复原字段及删除此计算模块，无数据库迁移；已保存金额无需转换。测试与设备验收边界见 [测试与质量](TESTING_AND_QUALITY.md)。
 
+## 贷款历史本金回补
+
+`AppDatabase._repairOverwrittenLoanPrincipal` 服务于账本首次打开及完整导入。它按贷款、期号和预计/已入账状态识别月供，复用 `calculateLoanAmortization`（与贷款详情使用相同参数）核对本金。数据有歧义时跳过该笔记录，写入或完整性检查失败时回滚整个修复事务。详见[数据设计](DATA_DESIGN.md#历史贷款本金回补2026-11-23)和[恢复说明](SECURITY_AND_OPERATIONS.md#升级与故障恢复)。
+
 ## Web 自托管与浏览器数据库
 
 `core/database/database_connection.dart` 是数据库执行器边界。`database_connection_native.dart` 保留 Android/桌面私有 SQLite 文件与 schema 升级恢复点；`database_connection_web.dart` 通过 `WasmDatabase.open` 打开 `finance_compass.sqlite`，并要求同源的 `sqlite3.wasm` 与 `drift_worker.js`。该选择使 Web UI、Repository 和业务规则复用同一 Drift schema，但 Web 数据只能留在访问者当前浏览器的 OPFS/IndexedDB，不能由静态 Caddy 容器读取。
