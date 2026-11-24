@@ -7,12 +7,17 @@
 // service-worker.js whenever that registration exists, wiping the offline
 // shell on the next visit. service-worker.js is the only app service worker.
 //
-// CanvasKit bundles no text font. Its default fallback (Roboto, Noto Sans SC)
-// comes from fonts.gstatic.com, which the self-hosted CSP blocks and which is
-// unreachable offline, leaving every label blank. web/fonts mirrors those
-// paths same-origin; tool/build_web.* verify it against web/fonts/SHA256SUMS.
+// Flutter bundles the UI font with the app. CanvasKit's last-resort fonts
+// must also remain same-origin for user-entered names outside its coverage.
+// tool/build_web.* verify these fallback assets against web/fonts/SHA256SUMS.
+// Android can lose the WebGL surface while Chrome or its installed app is
+// backgrounded. Use CanvasKit's software path so the page can keep its state.
+const isAndroid =
+  navigator.userAgentData?.platform === 'Android' ||
+  /\bAndroid\b/i.test(navigator.userAgent);
 _flutter.loader.load({
   config: {
+    canvasKitForceCpuOnly: isAndroid,
     fontFallbackBaseUrl: 'fonts/',
   },
 });

@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../shared/finance_amount_field.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/data/finance_repository.dart';
@@ -9,6 +11,7 @@ import '../../core/providers/mutations/account_mutations.dart';
 import '../../core/providers/mutations/transaction_mutations.dart';
 import '../../core/providers/repository_provider.dart';
 import '../../core/theme/finance_colors.dart';
+import '../../core/theme/finance_theme.dart';
 import '../../core/utils/id_generator.dart';
 import '../shared/compass_ui.dart';
 import '../transactions/transaction_composer_page.dart';
@@ -255,7 +258,7 @@ class _CreditCardDetailScreenState
                           ),
                           style: OutlinedButton.styleFrom(
                             minimumSize: const Size.fromHeight(42),
-                            foregroundColor: FinanceColors.compassTeal,
+                            foregroundColor: financePaletteOf(context).seed,
                           ),
                           child: const Text('查看账单'),
                         ),
@@ -331,8 +334,8 @@ class _CreditCardDetailScreenState
                 value: usage,
                 minHeight: 6,
                 borderRadius: BorderRadius.circular(8),
-                color: FinanceColors.compassTeal,
-                backgroundColor: FinanceColors.compassBorder,
+                color: financePaletteOf(context).seed,
+                backgroundColor: financePaletteOf(context).border,
               ),
               const SizedBox(height: 18),
               compassHairline,
@@ -550,8 +553,8 @@ class _CreditCardDetailScreenState
                                   ),
                                   style: TextStyle(
                                     color: amount > 0
-                                        ? FinanceColors.compassOrange
-                                        : FinanceColors.compassMuted,
+                                        ? financePaletteOf(context).expense
+                                        : financePaletteOf(context).textMuted,
                                   ),
                                 ),
                               ),
@@ -562,8 +565,8 @@ class _CreditCardDetailScreenState
                                   ? Icons.check_circle_rounded
                                   : Icons.chevron_right_rounded,
                               color: isSelected
-                                  ? FinanceColors.compassTeal
-                                  : FinanceColors.compassMuted,
+                                  ? financePaletteOf(context).seed
+                                  : financePaletteOf(context).textMuted,
                             ),
                           ],
                         ),
@@ -693,12 +696,10 @@ class _CreditCardDetailScreenState
           children: [
             Text('从 ${source.name} 转账至 ${card.name}'),
             const SizedBox(height: 14),
-            TextField(
+            FinanceAmountField(
               key: const Key('credit-card-repayment-amount'),
               controller: amountController,
               autofocus: true,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
               decoration: InputDecoration(
                 labelText: '还款金额',
                 prefixText: '${card.currency} ',
@@ -797,14 +798,14 @@ class _HistoricalCreditCardBanner extends StatelessWidget {
         key: const Key('credit-card-historical-banner'),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: BoxDecoration(
-          color: FinanceColors.compassOrange.withValues(alpha: .14),
+          color: financePaletteOf(context).expense.withValues(alpha: .14),
           borderRadius: BorderRadius.circular(14),
         ),
         child: Row(
           children: [
-            const Icon(
+            Icon(
               Icons.history_rounded,
-              color: FinanceColors.compassOrange,
+              color: financePaletteOf(context).expense,
               size: 20,
             ),
             const SizedBox(width: 8),
@@ -863,8 +864,8 @@ class _BillingTimeline extends StatelessWidget {
                       child: Container(
                         height: 2,
                         color: labels[index].$1.isAfter(now)
-                            ? FinanceColors.compassBorder
-                            : FinanceColors.compassTeal,
+                            ? financePaletteOf(context).border
+                            : financePaletteOf(context).seed,
                       ),
                     ),
                     Container(
@@ -874,17 +875,18 @@ class _BillingTimeline extends StatelessWidget {
                         shape: BoxShape.circle,
                         color: labels[index].$1.isAfter(now)
                             ? Colors.transparent
-                            : FinanceColors.compassTeal,
+                            : financePaletteOf(context).seed,
                         border: Border.all(
                           color: isOrange
-                              ? FinanceColors.compassOrange
-                              : FinanceColors.compassTeal,
+                              ? financePaletteOf(context).expense
+                              : financePaletteOf(context).seed,
                           width: 2,
                         ),
                         boxShadow: isToday
                             ? [
                                 BoxShadow(
-                                  color: FinanceColors.compassTeal
+                                  color: financePaletteOf(context)
+                                      .seed
                                       .withValues(alpha: .35),
                                   blurRadius: 12,
                                   spreadRadius: 5,
@@ -911,9 +913,9 @@ class _BillingTimeline extends StatelessWidget {
                         _shortDate(item.$1),
                         style: TextStyle(
                           color: item.$3
-                              ? FinanceColors.compassOrange
+                              ? financePaletteOf(context).expense
                               : item.$2 == '今天'
-                                  ? FinanceColors.compassTeal
+                                  ? financePaletteOf(context).seed
                                   : null,
                           fontSize: 11,
                         ),
@@ -929,8 +931,8 @@ class _BillingTimeline extends StatelessWidget {
                           dueStatusLabel,
                           style: TextStyle(
                             color: dueNeedsAttention
-                                ? FinanceColors.compassOrange
-                                : FinanceColors.compassTeal,
+                                ? financePaletteOf(context).expense
+                                : financePaletteOf(context).seed,
                             fontSize: 10,
                           ),
                         ),

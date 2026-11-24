@@ -7,20 +7,28 @@ import '../../core/data/finance_repository.dart';
 import '../../core/models/account.dart';
 import '../../core/models/transaction.dart';
 import '../../core/providers/mutations/transaction_mutations.dart';
-import '../../core/theme/finance_colors.dart';
+import '../../core/theme/finance_theme.dart';
 import '../../core/utils/month_key.dart';
 import '../accounts/credit_card_detail_screen.dart';
 import '../accounts/accounts_v2_screen.dart';
 import '../budgets/budgets_v2_screen.dart';
 import '../shared/compass_ui.dart';
+import '../shared/finance_donut.dart';
 import '../settings/settings_reference_pages.dart';
 import '../transactions/transaction_composer_page.dart';
 import '../transactions/transaction_form_dialog.dart';
 
 class DashboardV2Screen extends ConsumerStatefulWidget {
-  const DashboardV2Screen({super.key, required this.repository});
+  const DashboardV2Screen({
+    super.key,
+    required this.repository,
+    this.onOpenAccounts,
+    this.onOpenBudgets,
+  });
 
   final FinanceRepository repository;
+  final VoidCallback? onOpenAccounts;
+  final VoidCallback? onOpenBudgets;
 
   @override
   ConsumerState<DashboardV2Screen> createState() => _DashboardV2ScreenState();
@@ -33,6 +41,7 @@ class _DashboardV2ScreenState extends ConsumerState<DashboardV2Screen> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = financePaletteOf(context);
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final forecastEnd = today.add(Duration(days: forecastDays));
@@ -46,10 +55,15 @@ class _DashboardV2ScreenState extends ConsumerState<DashboardV2Screen> {
     final showBudgetAttention =
         notificationsEnabled && notificationPreferences[4];
     final budgets = repository.activeBudgetsForMonth(monthKey);
-    final cash = repository.totalAssetsByGroup(ReportGroup.cash);
-    final investment = repository.totalAssetsByGroup(ReportGroup.investment);
-    final retirement = repository.totalAssetsByGroup(ReportGroup.retirement);
-    final total = cash + investment + retirement;
+    double positiveBalance(ReportGroup group) =>
+        repository.displayTotalAssetsByGroup(group, positiveOnly: true);
+    final cash = positiveBalance(ReportGroup.cash);
+    final investment = positiveBalance(ReportGroup.investment);
+    final retirement = positiveBalance(ReportGroup.retirement);
+    final liabilities = repository.accountLiabilities();
+    final debt = liabilities.credit + liabilities.loans;
+    final assets = cash + investment + retirement;
+    final assetColors = financeDonutSeries(context);
     final reminder = reminders.isEmpty ? null : reminders.first;
     final attentionReminder = showCreditAttention ? reminder : null;
     final due = reminder?.amountDue ?? 0;
@@ -95,29 +109,61 @@ class _DashboardV2ScreenState extends ConsumerState<DashboardV2Screen> {
             endInclusive: sampleEnd,
           );
     });
-    final attentionBudget =
-        !showBudgetAttention || budgets.isEmpty ? null : budgets.first;
-    final attentionBudgetUsed = attentionBudget == null
-        ? 0.0
-        : repository.expenseTotalForCategory(
-              attentionBudget.categoryId,
-              monthKey,
-            ) +
-            repository.plannedExpenseTotalForCategory(
-              attentionBudget.categoryId,
-              monthKey,
-            );
+    final balanceUnchanged = chartValues.every((amount) => amount == liquid);
+    ({
+      String categoryId,
+      double used,
+      double planned,
+      double limit,
+      double rate,
+    })? budgetAlert;
+    if (showBudgetAttention) {
+      for (final budget in budgets) {
+        final limit = repository.effectiveBudgetForMonth(budget, monthKey);
+        if (limit <= 0) continue;
+        final planned = repository.plannedExpenseTotalForCategory(
+          budget.categoryId,
+          monthKey,
+        );
+        final used =
+            repository.expenseTotalForCategory(budget.categoryId, monthKey) +
+                planned;
+        final rate = used / limit;
+        if (used <= 0 || rate < budget.alertThreshold) continue;
+        if (budgetAlert == null || rate > budgetAlert.rate) {
+          budgetAlert = (
+            categoryId: budget.categoryId,
+            used: used,
+            planned: planned,
+            limit: limit,
+            rate: rate
+          );
+        }
+      }
+    }
 
-    return ListView(
-      padding: compassPagePadding.copyWith(bottom: 34),
-      children: [
-        CompassPageHeader(
+    Widget header({required bool wide}) => CompassPageHeader(
           title: '财务罗盘',
           actions: [
-            const CircleAvatar(
+            if (wide) ...[
+              OutlinedButton.icon(
+                onPressed: () => _showTransactionEditor(context, planned: true),
+                icon: const Icon(Icons.event_available_outlined),
+                label: const Text('规划交易'),
+              ),
+              const SizedBox(width: 8),
+              FilledButton.icon(
+                onPressed: () => _showTransactionEditor(context),
+                icon: const Icon(Icons.edit_note_rounded),
+                label: const Text('记账'),
+              ),
+              const SizedBox(width: 20),
+            ],
+            CircleAvatar(
               radius: 17,
-              backgroundColor: Color(0xFF2A7A74),
-              child: Text('L', style: TextStyle(color: Colors.white)),
+              backgroundColor: palette.seed,
+              child: Text('L',
+                  style: TextStyle(color: financeForegroundOn(palette.seed))),
             ),
             const SizedBox(width: 8),
             InkWell(
@@ -139,383 +185,381 @@ class _DashboardV2ScreenState extends ConsumerState<DashboardV2Screen> {
               ),
             ),
             const SizedBox(width: 4),
-            Stack(
-              clipBehavior: Clip.none,
-              children: [
-                IconButton(
-                  onPressed: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => NotificationsPage(repository: repository),
-                    ),
-                  ),
-                  icon: const Icon(Icons.notifications_none_rounded, size: 27),
+            IconButton(
+              tooltip: '通知与提醒',
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => NotificationsPage(repository: repository),
                 ),
-                Positioned(
-                  right: 5,
-                  top: 3,
-                  child: Container(
-                    width: 7,
-                    height: 7,
-                    decoration: const BoxDecoration(
-                      color: FinanceColors.compassOrange,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                ),
-              ],
+              ),
+              icon: const Icon(Icons.notifications_none_rounded, size: 27),
             ),
           ],
-        ),
-        const SizedBox(height: 15),
-        CompassCard(
-          padding: EdgeInsets.zero,
-          borderColor: Colors.transparent,
+        );
+
+    Widget forecast({required bool wide}) => Padding(
+          padding: wide
+              ? const EdgeInsets.all(22)
+              : const EdgeInsets.fromLTRB(18, 20, 18, 0),
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(18, 20, 18, 0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    flex: 5,
+                    child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Expanded(
-                          flex: 5,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              PopupMenuButton<int>(
-                                initialValue: forecastDays,
-                                onSelected: (value) =>
-                                    setState(() => forecastDays = value),
-                                itemBuilder: (_) => const [
-                                  PopupMenuItem(
-                                      value: 7, child: Text('未来 7 天')),
-                                  PopupMenuItem(
-                                    value: 30,
-                                    child: Text('未来 30 天'),
-                                  ),
-                                  PopupMenuItem(
-                                    value: 60,
-                                    child: Text('未来 60 天'),
-                                  ),
-                                  PopupMenuItem(
-                                    value: 90,
-                                    child: Text('未来 90 天'),
-                                  ),
-                                ],
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Flexible(
-                                      child: Text(
-                                        '未来 $forecastDays 天',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .headlineSmall
-                                            ?.copyWith(fontSize: 22),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 5),
-                                    const Icon(Icons.arrow_drop_down_rounded),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(height: 5),
-                              Text(
-                                '今天 ${now.month}月${now.day}日',
-                                style: Theme.of(context).textTheme.bodySmall,
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          flex: 6,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              Text('预计余额',
-                                  style: Theme.of(context).textTheme.bodySmall),
-                              const SizedBox(height: 5),
-                              SizedBox(
-                                width: double.infinity,
-                                child: FittedBox(
-                                  fit: BoxFit.scaleDown,
-                                  alignment: Alignment.centerRight,
-                                  child: Text(
-                                    compassMoney(projected),
-                                    style: const TextStyle(
-                                      color: FinanceColors.compassTeal,
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 3),
-                              Text(
-                                '${forecastEnd.month}月${forecastEnd.day}日',
-                                style: Theme.of(context).textTheme.bodySmall,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 18),
-                    Stack(
-                      children: [
-                        CompassAreaChart(
-                          values: chartValues,
-                          height: 190,
-                          markerIndex: 1,
-                        ),
-                        Positioned(
-                          left: 0,
-                          top: 49,
-                          child: Text(
-                            compassMoney(liquid, decimals: 0),
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                        ),
-                        if (reminder != null)
-                          Positioned(
-                            right: 77,
-                            top: 6,
-                            child: Column(
-                              children: [
-                                Text(
-                                  '${reminder.dueDate.month}月${reminder.dueDate.day}日',
-                                  style: Theme.of(context).textTheme.bodySmall,
-                                ),
-                                const Text('信用卡还款'),
-                                Text(
-                                  '- ${compassMoney(due)}',
-                                  style: const TextStyle(
-                                    color: FinanceColors.compassOrange,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ],
+                        PopupMenuButton<int>(
+                          initialValue: forecastDays,
+                          onSelected: (value) =>
+                              setState(() => forecastDays = value),
+                          itemBuilder: (_) => const [
+                            PopupMenuItem(value: 7, child: Text('未来 7 天')),
+                            PopupMenuItem(
+                              value: 30,
+                              child: Text('未来 30 天'),
                             ),
-                          ),
-                        Positioned(
-                          left: 75,
-                          top: 136,
-                          child: Text(
-                            '今天\n${now.month}月${now.day}日',
-                            textAlign: TextAlign.center,
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                        ),
-                      ],
-                    ),
-                    Row(
-                      children: List.generate(6, (index) {
-                        final date = today.add(
-                          Duration(days: (forecastDays * index / 5).round()),
-                        );
-                        return '${date.month}月${date.day}日';
-                      })
-                          .map(
-                            (label) => Expanded(
-                              child: FittedBox(
-                                fit: BoxFit.scaleDown,
+                            PopupMenuItem(
+                              value: 60,
+                              child: Text('未来 60 天'),
+                            ),
+                            PopupMenuItem(
+                              value: 90,
+                              child: Text('未来 90 天'),
+                            ),
+                          ],
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Flexible(
                                 child: Text(
-                                  label,
-                                  style: const TextStyle(fontSize: 10),
+                                  '未来 $forecastDays 天',
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .headlineSmall
+                                      ?.copyWith(fontSize: 22),
                                 ),
                               ),
-                            ),
-                          )
-                          .toList(),
-                    ),
-                    const SizedBox(height: 18),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: SizedBox(
-                            height: 48,
-                            child: FilledButton.icon(
-                              onPressed: () => _showTransactionEditor(
-                                context,
-                                planned: true,
-                              ),
-                              style: FilledButton.styleFrom(
-                                backgroundColor: FinanceColors.compassOrange,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(9),
-                                ),
-                              ),
-                              icon:
-                                  const Icon(Icons.add_circle_outline_rounded),
-                              label: const Text('规划交易'),
-                            ),
+                              const SizedBox(width: 5),
+                              const Icon(Icons.arrow_drop_down_rounded),
+                            ],
                           ),
                         ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: SizedBox(
-                            height: 48,
-                            child: OutlinedButton.icon(
-                              onPressed: () => _showTransactionEditor(context),
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: FinanceColors.compassText,
-                                side: const BorderSide(
-                                  color: FinanceColors.compassBorder,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(9),
-                                ),
-                              ),
-                              icon: const Icon(Icons.edit_note_rounded),
-                              label: const Text('记账'),
-                            ),
-                          ),
+                        const SizedBox(height: 5),
+                        Text(
+                          '今天 ${now.month}月${now.day}日',
+                          style: Theme.of(context).textTheme.bodySmall,
                         ),
                       ],
                     ),
-                    const SizedBox(height: 16),
-                  ],
-                ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    flex: 6,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text('预计余额',
+                            style: Theme.of(context).textTheme.bodySmall),
+                        const SizedBox(height: 5),
+                        SizedBox(
+                          width: double.infinity,
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerRight,
+                            child: Text(
+                              compassMoney(projected),
+                              style: TextStyle(
+                                color: financePaletteOf(context).seed,
+                                fontSize: wide ? 28 : 20,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          '${forecastEnd.month}月${forecastEnd.day}日',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-              compassHairline,
-              Padding(
-                padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
-                child: Column(
-                  children: [
-                    const CompassSectionTitle('需要关注'),
-                    const SizedBox(height: 8),
-                    _AttentionRow(
-                      icon: Icons.credit_card_rounded,
-                      title: !showCreditAttention
-                          ? '信用卡应用内提醒已关闭'
-                          : attentionReminder == null
-                              ? '目前没有待还信用卡账单'
-                              : '${now.month}月信用卡账单',
-                      subtitle: !showCreditAttention
-                          ? '可在设置的“通知与提醒”重新开启'
-                          : attentionReminder == null
-                              ? '建立信用卡账户并设置结算日、还款日后显示'
-                              : '还款日 ${attentionReminder.dueDate.month}月${attentionReminder.dueDate.day}日',
-                      amount: attentionReminder == null
-                          ? '—'
-                          : compassMoney(due, decimals: 0),
-                      color: FinanceColors.compassOrange,
-                      badge: attentionReminder == null ? null : '待还款',
-                      onTap: attentionReminder == null
-                          ? null
-                          : () => Navigator.of(context).push(
-                                MaterialPageRoute<void>(
-                                  builder: (_) => CreditCardDetailScreen(
-                                    account: attentionReminder.account,
-                                    repository: repository,
-                                  ),
-                                ),
-                              ),
-                    ),
-                    const SizedBox(height: 6),
-                    _AttentionRow(
-                      icon: Icons.pie_chart_outline_rounded,
-                      title: !showBudgetAttention
-                          ? '预算应用内提醒已关闭'
-                          : attentionBudget == null
-                              ? '本月尚未设置预算'
-                              : '${repository.categoryName(attentionBudget.categoryId)}预算状态',
-                      subtitle: showBudgetAttention
-                          ? '${now.month}月预算'
-                          : '可在设置的“通知与提醒”重新开启',
-                      amount: attentionBudget == null
-                          ? '—'
-                          : '已用 ${compassMoney(attentionBudgetUsed, decimals: 0)}',
-                      color: FinanceColors.compassTeal,
-                      onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => Scaffold(
-                            body: SafeArea(
-                              child: BudgetsV2Screen(repository: repository),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    const CompassSectionTitle('资金分布'),
-                    const SizedBox(height: 10),
-                    CompassDistributionBar(
-                      values: [cash, investment, retirement],
-                      colors: const [
-                        FinanceColors.compassTeal,
-                        FinanceColors.compassOrange,
-                        Color(0xFF5B8D58),
-                      ],
-                      labels: [
-                        '${total == 0 ? 0 : (cash / total * 100).round()}%',
-                        '${total == 0 ? 0 : (investment / total * 100).round()}%',
-                        '${total == 0 ? 0 : (retirement / total * 100).round()}%',
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _DistributionLegend(
-                            label: '现金',
-                            value: cash,
-                            color: FinanceColors.compassTeal,
-                          ),
-                        ),
-                        Expanded(
-                          child: _DistributionLegend(
-                            label: '投资',
-                            value: investment,
-                            color: FinanceColors.compassOrange,
-                          ),
-                        ),
-                        Expanded(
-                          child: _DistributionLegend(
-                            label: '退休',
-                            value: retirement,
-                            color: const Color(0xFF5B8D58),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(8),
-                        onTap: () => Navigator.of(context).push(
-                          MaterialPageRoute<void>(
-                            builder: (_) => Scaffold(
-                              body: SafeArea(
-                                child: AccountsV2Screen(
-                                  repository: repository,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(6),
+              const SizedBox(height: 18),
+              CompassAreaChart(
+                values: chartValues,
+                height: balanceUnchanged ? 92 : (wide ? 200 : 190),
+              ),
+              Row(
+                children: List.generate(6, (index) {
+                  final date = today.add(
+                    Duration(days: (forecastDays * index / 5).round()),
+                  );
+                  return '${date.month}月${date.day}日';
+                })
+                    .map(
+                      (label) => Expanded(
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
                           child: Text(
-                            '总计  ${compassMoney(total)}  ›',
-                            style: Theme.of(context).textTheme.bodySmall,
+                            label,
+                            style: TextStyle(fontSize: wide ? 12 : 10),
                           ),
+                        ),
+                      ),
+                    )
+                    .toList(),
+              ),
+              if (wide) ...[
+                const SizedBox(height: 16),
+                compassHairline,
+              ],
+              const SizedBox(height: 12),
+              Wrap(
+                runSpacing: 6,
+                spacing: 20,
+                children: [
+                  Text(
+                    '今日余额 ${compassMoney(liquid, currency: repository.baseCurrency)}',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                  if (balanceUnchanged)
+                    Text('期末余额与今日相同',
+                        style: Theme.of(context).textTheme.bodySmall),
+                  if (dueInRange > 0)
+                    Text(
+                      '期间信用卡还款 ${compassMoney(dueInRange, currency: repository.baseCurrency)}',
+                      style: TextStyle(color: palette.expense),
+                    ),
+                ],
+              ),
+              if (!wide) ...[
+                const SizedBox(height: 18),
+                Row(
+                  children: [
+                    Expanded(
+                      child: SizedBox(
+                        height: 48,
+                        child: FilledButton.icon(
+                          onPressed: () => _showTransactionEditor(
+                            context,
+                            planned: true,
+                          ),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: palette.expense,
+                            foregroundColor:
+                                financeForegroundOn(palette.expense),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(9),
+                            ),
+                          ),
+                          icon: const Icon(Icons.add_circle_outline_rounded),
+                          label: const Text('规划交易'),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: SizedBox(
+                        height: 48,
+                        child: OutlinedButton.icon(
+                          onPressed: () => _showTransactionEditor(context),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor:
+                                financePaletteOf(context).textPrimary,
+                            side: BorderSide(
+                              color: financePaletteOf(context).border,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(9),
+                            ),
+                          ),
+                          icon: const Icon(Icons.edit_note_rounded),
+                          label: const Text('记账'),
                         ),
                       ),
                     ),
                   ],
                 ),
-              ),
+                const SizedBox(height: 16),
+              ],
             ],
           ),
-        ),
+        );
+
+    Widget? budgetAttention;
+    if (budgetAlert case final warning?) {
+      final hasPlanned = warning.planned > 0;
+      final spending = compassMoney(warning.used,
+          currency: repository.baseCurrency, decimals: 0);
+      final usedLabel = '${hasPlanned ? '含预计' : '已用'} $spending';
+      final overspend = warning.used - warning.limit;
+      final overspendLabel = compassMoney(
+        overspend,
+        currency: repository.baseCurrency,
+        decimals: 0,
+      );
+      budgetAttention = _AttentionRow(
+        icon: Icons.pie_chart_outline_rounded,
+        title: '${repository.categoryName(warning.categoryId)}预算',
+        subtitle: overspend > 0 ? usedLabel : null,
+        amount: overspend > 0
+            ? '${hasPlanned ? '预计超出' : '超出'} $overspendLabel'
+            : usedLabel,
+        color: palette.expense,
+        onTap: widget.onOpenBudgets ??
+            () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => Scaffold(
+                      body: SafeArea(
+                        child: BudgetsV2Screen(repository: repository),
+                      ),
+                    ),
+                  ),
+                ),
+      );
+    }
+
+    List<Widget> attention() => [
+          const CompassSectionTitle('需要关注'),
+          const SizedBox(height: 8),
+          if (attentionReminder != null)
+            _AttentionRow(
+              icon: Icons.credit_card_rounded,
+              title: '${now.month}月信用卡账单',
+              subtitle:
+                  '还款日 ${attentionReminder.dueDate.month}月${attentionReminder.dueDate.day}日',
+              amount: compassMoney(due, decimals: 0),
+              color: financePaletteOf(context).expense,
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => CreditCardDetailScreen(
+                    account: attentionReminder.account,
+                    repository: repository,
+                  ),
+                ),
+              ),
+            ),
+          if (attentionReminder != null && budgetAttention != null)
+            const SizedBox(height: 6),
+          if (budgetAttention case final item?) item,
+          if (attentionReminder == null && budgetAttention == null)
+            Align(
+              alignment: AlignmentDirectional.centerStart,
+              child:
+                  Text('暂无待处理事项', style: Theme.of(context).textTheme.bodySmall),
+            ),
+        ];
+
+    final openAccounts = widget.onOpenAccounts ??
+        () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => Scaffold(
+                  body:
+                      SafeArea(child: AccountsV2Screen(repository: repository)),
+                ),
+              ),
+            );
+    final debtLabel =
+        '负债 ${compassMoney(debt, currency: repository.baseCurrency, decimals: 0)}';
+    final distribution = FinanceDonutPanel(
+      key: const Key('dashboard-asset-composition'),
+      title: '资产构成',
+      totalLabel: '总资产',
+      totalValue:
+          compassMoney(assets, currency: repository.baseCurrency, decimals: 0),
+      slices: [
+        FinanceDonutSlice(label: '现金', value: cash, color: assetColors[0]),
+        FinanceDonutSlice(
+            label: '投资', value: investment, color: assetColors[2]),
+        FinanceDonutSlice(
+            label: '退休', value: retirement, color: assetColors[1]),
       ],
+      footer: Semantics(
+        container: true,
+        button: true,
+        excludeSemantics: true,
+        label: '查看账户，$debtLabel',
+        onTap: openAccounts,
+        child: InkWell(
+          key: const Key('dashboard-asset-accounts'),
+          borderRadius: BorderRadius.circular(8),
+          onTap: openAccounts,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 48),
+            child: Row(
+              children: [
+                Expanded(child: Text(debtLabel)),
+                const Icon(Icons.chevron_right_rounded, size: 18),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= compassDesktopMinWidth;
+        return ListView(
+          padding: compassScrollPadding(
+              context,
+              wide
+                  ? compassDesktopPagePadding
+                  : compassPagePadding.copyWith(bottom: 34)),
+          children: [
+            header(wide: wide),
+            SizedBox(height: wide ? 24 : 15),
+            if (wide)
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        CompassCard(
+                          padding: EdgeInsets.zero,
+                          child: forecast(wide: true),
+                        ),
+                        const SizedBox(height: 16),
+                        CompassCard(child: Column(children: attention())),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 24),
+                  SizedBox(width: 360, child: distribution),
+                ],
+              )
+            else ...[
+              CompassCard(
+                padding: EdgeInsets.zero,
+                borderColor: Colors.transparent,
+                child: Column(
+                  children: [
+                    forecast(wide: false),
+                    compassHairline,
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
+                      child: Column(
+                        children: attention(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              distribution,
+            ],
+          ],
+        );
+      },
     );
   }
 
@@ -574,23 +618,33 @@ class _AttentionRow extends StatelessWidget {
   const _AttentionRow({
     required this.icon,
     required this.title,
-    required this.subtitle,
+    this.subtitle,
     required this.amount,
     required this.color,
-    this.badge,
     this.onTap,
   });
 
   final IconData icon;
   final String title;
-  final String subtitle;
+  final String? subtitle;
   final String amount;
   final Color color;
-  final String? badge;
   final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
+    final amountLabel = FittedBox(
+      fit: BoxFit.scaleDown,
+      alignment: Alignment.centerRight,
+      child: Text(
+        amount,
+        style: TextStyle(
+          color: color,
+          fontSize: 15,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
     final content = Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
@@ -602,94 +656,23 @@ class _AttentionRow extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(title, style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 4),
-                Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
-                if (badge != null) ...[
-                  const SizedBox(height: 5),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 3,
-                    ),
-                    decoration: BoxDecoration(
-                      color: FinanceColors.compassOrange.withValues(alpha: .18),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      badge!,
-                      style: const TextStyle(
-                        color: FinanceColors.compassOrange,
-                        fontSize: 11,
-                      ),
-                    ),
-                  ),
+                if (subtitle != null) ...[
+                  const SizedBox(height: 4),
+                  Text(subtitle!, style: Theme.of(context).textTheme.bodySmall),
                 ],
               ],
             ),
           ),
           const SizedBox(width: 8),
           ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 112),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: Alignment.centerRight,
-                  child: Text(
-                    amount,
-                    style: TextStyle(
-                      color: color,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 5),
-                if (onTap != null)
-                  Text('查看明细  ›', style: Theme.of(context).textTheme.bodySmall),
-              ],
-            ),
+            constraints: const BoxConstraints(maxWidth: 138),
+            child: amountLabel,
           ),
+          if (onTap != null) const Icon(Icons.chevron_right_rounded, size: 18),
         ],
       ),
     );
     if (onTap == null) return content;
     return InkWell(onTap: onTap, child: content);
   }
-}
-
-class _DistributionLegend extends StatelessWidget {
-  const _DistributionLegend({
-    required this.label,
-    required this.value,
-    required this.color,
-  });
-
-  final String label;
-  final double value;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) => Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-              ),
-              const SizedBox(width: 7),
-              Text(label),
-            ],
-          ),
-          const SizedBox(height: 5),
-          Text(
-            compassMoney(value),
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-        ],
-      );
 }

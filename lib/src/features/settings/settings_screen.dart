@@ -12,11 +12,10 @@ import '../../core/providers/repository_provider.dart';
 import '../../core/services/ai_analysis_service.dart';
 
 import '../../core/settings/app_settings_controller.dart';
-import '../../core/settings/app_theme_style.dart';
-import '../../core/theme/finance_theme.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../shared/screen_header.dart';
 import '../shared/section_card.dart';
+import 'import_ledger_dialog.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({
@@ -85,7 +84,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('操作失败：$error')),
+          SnackBar(
+              content: Text(
+            '操作失败：${error is FormatException ? error.message : error}',
+          )),
         );
       }
     } finally {
@@ -211,76 +213,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   Future<void> _pickAndImportJson() async {
     await _runBusyTask(() async {
-      final result = await FilePicker.platform.pickFiles(
-        allowMultiple: false,
-        type: FileType.custom,
-        allowedExtensions: const ['json'],
+      final imported = await pickPreviewAndImportLedger(context, ref);
+      if (!imported || !mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('导入完成')),
       );
-      final path = result?.files.single.path;
-      if (path == null || path.isEmpty || !mounted) {
-        return;
-      }
-
-      final preview =
-          await ref.read(exportMutationsProvider.notifier).previewImport(path);
-      if (!mounted) {
-        return;
-      }
-      final totalItems = preview.accounts +
-          preview.categories +
-          preview.budgets +
-          preview.transactions +
-          preview.assetSnapshots;
-      if (totalItems == 0) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('这个 JSON 没有可导入的数据。')),
-        );
-        return;
-      }
-
-      final shouldImport = await showDialog<bool>(
-            context: context,
-            builder: (context) => AlertDialog(
-              title: const Text('导入预览'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('导出时间: ${preview.exportedAt ?? '-'}'),
-                  Text('账户: ${preview.accounts}'),
-                  Text('类别: ${preview.categories}'),
-                  Text('预算: ${preview.budgets}'),
-                  Text('交易: ${preview.transactions}'),
-                  Text('资产快照: ${preview.assetSnapshots}'),
-                  const SizedBox(height: 12),
-                  const Text('导入后会覆盖当前资料。'),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(false),
-                  child: const Text('取消'),
-                ),
-                FilledButton(
-                  onPressed: () => Navigator.of(context).pop(true),
-                  child: const Text('确认导入'),
-                ),
-              ],
-            ),
-          ) ??
-          false;
-      if (!shouldImport || !mounted) {
-        return;
-      }
-
-      await ref.read(exportMutationsProvider.notifier).importJson(path);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('导入完成')),
-        );
-        Navigator.of(context, rootNavigator: true)
-            .popUntil((route) => route.isFirst);
-      }
+      Navigator.of(context).popUntil((route) => route.isFirst);
     });
   }
 
@@ -356,85 +294,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           children: [
             const ScreenHeader(
               title: '设置',
-              subtitle: '外观、币种、备份与 AI 网关集中管理',
-            ),
-            const SizedBox(height: 16),
-            SectionCard(
-              title: '外观',
-              subtitle: '选择界面主题风格',
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final columns = constraints.maxWidth >= 640
-                      ? 4
-                      : constraints.maxWidth < 360
-                          ? 2
-                          : 3;
-                  final chipWidth =
-                      (constraints.maxWidth - 10 * (columns - 1)) / columns;
-                  final lightThemes = [
-                    AppThemeStyle.tide,
-                    AppThemeStyle.ocean,
-                    AppThemeStyle.sky,
-                    AppThemeStyle.ember,
-                    AppThemeStyle.forest,
-                    AppThemeStyle.dune,
-                    AppThemeStyle.aurora,
-                  ];
-                  final darkThemes = [
-                    AppThemeStyle.night,
-                    AppThemeStyle.abyss,
-                    AppThemeStyle.graphite,
-                    AppThemeStyle.darkGreen,
-                    AppThemeStyle.darkWood,
-                  ];
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const _SettingsSubsectionLabel('浅色主题'),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 10,
-                        runSpacing: 10,
-                        children: lightThemes.map((style) {
-                          final selected =
-                              style == widget.settingsController.themeStyle;
-                          return SizedBox(
-                            width: chipWidth,
-                            child: _ThemePreviewChip(
-                              style: style,
-                              label: _themeLabel(style),
-                              selected: selected,
-                              onTap: () => widget.settingsController
-                                  .setThemeStyle(style),
-                            ),
-                          );
-                        }).toList(),
-                      ),
-                      const SizedBox(height: 16),
-                      const _SettingsSubsectionLabel('暗色主题'),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 10,
-                        runSpacing: 10,
-                        children: darkThemes.map((style) {
-                          final selected =
-                              style == widget.settingsController.themeStyle;
-                          return SizedBox(
-                            width: chipWidth,
-                            child: _ThemePreviewChip(
-                              style: style,
-                              label: _themeLabel(style),
-                              selected: selected,
-                              onTap: () => widget.settingsController
-                                  .setThemeStyle(style),
-                            ),
-                          );
-                        }).toList(),
-                      ),
-                    ],
-                  );
-                },
-              ),
+              subtitle: '币种、备份与 AI 网关',
             ),
             const SizedBox(height: 16),
             SectionCard(
@@ -599,53 +459,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       },
     );
   }
-
-  String _themeLabel(AppThemeStyle style) {
-    switch (style) {
-      case AppThemeStyle.tide:
-        return '潮汐';
-      case AppThemeStyle.ocean:
-        return '海洋';
-      case AppThemeStyle.sky:
-        return '晴空';
-      case AppThemeStyle.ember:
-        return '余烬';
-      case AppThemeStyle.forest:
-        return '森林';
-      case AppThemeStyle.dune:
-        return '沙丘';
-      case AppThemeStyle.aurora:
-        return '极光';
-      case AppThemeStyle.night:
-        return '夜空';
-      case AppThemeStyle.abyss:
-        return '深海';
-      case AppThemeStyle.graphite:
-        return '石墨';
-      case AppThemeStyle.darkGreen:
-        return '墨绿';
-      case AppThemeStyle.darkWood:
-        return '沉木';
-    }
-  }
-}
-
-class _SettingsSubsectionLabel extends StatelessWidget {
-  const _SettingsSubsectionLabel(this.label);
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Text(
-      label,
-      style: theme.textTheme.labelMedium?.copyWith(
-        color: theme.colorScheme.onSurfaceVariant,
-        fontWeight: FontWeight.w700,
-      ),
-    );
-  }
 }
 
 class _SettingsActionRow extends StatelessWidget {
@@ -721,99 +534,6 @@ class _SettingsActionRow extends StatelessWidget {
           ],
         );
       },
-    );
-  }
-}
-
-class _ThemePreviewChip extends StatelessWidget {
-  const _ThemePreviewChip({
-    required this.style,
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final AppThemeStyle style;
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = paletteForStyle(style);
-    return InkWell(
-      borderRadius: BorderRadius.circular(18),
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        width: 104,
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(18),
-          color: palette.cardTint,
-          border: Border.all(
-            color: selected ? palette.seed : palette.cardBorderStrong,
-            width: selected ? 1.8 : 1.1,
-          ),
-          boxShadow: selected
-              ? [
-                  BoxShadow(
-                    color: palette.seed.withValues(alpha: 0.18),
-                    blurRadius: 18,
-                    offset: const Offset(0, 8),
-                  ),
-                ]
-              : null,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              height: 34,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(12),
-                gradient: LinearGradient(
-                  colors: palette.gradient,
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                border: Border.all(color: palette.cardBorderStrong),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: Container(
-                    height: 8,
-                    decoration: BoxDecoration(
-                      color: palette.surfaceAlt,
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Container(
-                  width: 16,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: palette.seed,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              label,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: palette.textPrimary,
-                    fontWeight: FontWeight.w600,
-                  ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

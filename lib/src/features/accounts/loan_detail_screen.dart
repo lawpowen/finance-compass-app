@@ -8,7 +8,7 @@ import '../../core/models/transaction.dart';
 import '../../core/providers/mutations/account_mutations.dart';
 import '../../core/providers/mutations/transaction_mutations.dart';
 import '../../core/providers/repository_provider.dart';
-import '../../core/theme/finance_colors.dart';
+import '../../core/theme/finance_theme.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../core/utils/id_generator.dart';
 import '../shared/compass_ui.dart';
@@ -220,11 +220,11 @@ class _LoanDetailScreenState extends ConsumerState<LoanDetailScreen> {
               ),
               const SizedBox(height: 14),
               if (isHistorical)
-                const CompassCard(
+                CompassCard(
                   child: Row(
                     children: [
                       Icon(Icons.lock_clock_outlined,
-                          color: FinanceColors.compassOrange),
+                          color: financePaletteOf(context).expense),
                       SizedBox(width: 10),
                       Expanded(child: Text('历史统计为只读状态，不能记录或生成还款交易。')),
                     ],
@@ -238,11 +238,11 @@ class _LoanDetailScreenState extends ConsumerState<LoanDetailScreen> {
                   onPressed: () => _recordInstallment(account, nextInstallment),
                 )
               else
-                const CompassCard(
+                CompassCard(
                   child: Row(
                     children: [
                       Icon(Icons.check_circle_outline,
-                          color: FinanceColors.compassTeal),
+                          color: financePaletteOf(context).seed),
                       SizedBox(width: 10),
                       Text('全部计划期数均已记录'),
                     ],
@@ -694,14 +694,14 @@ class _HistoricalLoanBanner extends StatelessWidget {
         key: const Key('loan-historical-banner'),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: BoxDecoration(
-          color: FinanceColors.compassOrange.withValues(alpha: .14),
+          color: financePaletteOf(context).expense.withValues(alpha: .14),
           borderRadius: BorderRadius.circular(14),
         ),
         child: Row(
           children: [
-            const Icon(
+            Icon(
               Icons.history_rounded,
-              color: FinanceColors.compassOrange,
+              color: financePaletteOf(context).expense,
               size: 20,
             ),
             const SizedBox(width: 8),
@@ -758,7 +758,7 @@ class _InstallmentRow extends StatelessWidget {
         margin: const EdgeInsets.only(bottom: 8),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
-          border: Border.all(color: FinanceColors.compassBorder),
+          border: Border.all(color: financePaletteOf(context).border),
           borderRadius: BorderRadius.circular(14),
         ),
         child: Row(
@@ -776,8 +776,8 @@ class _InstallmentRow extends StatelessWidget {
                     '${isPaid ? '已记录' : '预计'}',
                     style: TextStyle(
                       color: isPaid
-                          ? FinanceColors.compassTeal
-                          : FinanceColors.compassMuted,
+                          ? financePaletteOf(context).seed
+                          : financePaletteOf(context).textMuted,
                     ),
                   ),
                   const SizedBox(height: 3),

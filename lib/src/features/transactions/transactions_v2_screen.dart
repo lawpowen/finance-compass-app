@@ -7,7 +7,7 @@ import '../../core/models/category.dart';
 import '../../core/models/transaction.dart';
 import '../../core/providers/mutations/transaction_mutations.dart';
 import '../../core/providers/repository_provider.dart';
-import '../../core/theme/finance_colors.dart';
+import '../../core/theme/finance_theme.dart';
 import '../shared/compass_ui.dart';
 import '../shared/finance_action_menu_button.dart';
 import 'transaction_automation_pages.dart';
@@ -80,10 +80,137 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
     };
     final selectedSummary = basisSummaries[selectedBasis]!;
 
+    return LayoutBuilder(
+      builder: (context, constraints) => _ledger(
+        context,
+        desktop: constraints.maxWidth >= compassDesktopMinWidth,
+        month: month,
+        basisSummaries: basisSummaries,
+        selectedSummary: selectedSummary,
+        fundingNeed: fundingNeed,
+        visible: visible,
+      ),
+    );
+  }
+
+  Widget _ledger(
+    BuildContext context, {
+    required bool desktop,
+    required DateTime month,
+    required Map<_TransactionBasis, _BasisSummary> basisSummaries,
+    required _BasisSummary selectedSummary,
+    required MonthlyFundingNeed? fundingNeed,
+    required List<FinanceTransaction> visible,
+  }) {
+    final searchAction = _HeaderAction(
+      icon: Icons.search_rounded,
+      tooltip: '搜索交易',
+      onPressed: _openSearch,
+    );
+    final filterAction = _HeaderAction(
+      icon: Icons.filter_alt_outlined,
+      tooltip: '高级筛选',
+      onPressed: () => _openFilterSheet(_FilterDimension.values.toSet()),
+    );
+    final monthSelector = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          tooltip: '上个月',
+          onPressed: () => _changeMonth(-1),
+          icon: const Icon(Icons.chevron_left_rounded, size: 19),
+          style: IconButton.styleFrom(
+            backgroundColor: Colors.transparent,
+            side: BorderSide.none,
+          ),
+        ),
+        Text('${month.year}年${month.month}月',
+            style: Theme.of(context).textTheme.titleMedium),
+        IconButton(
+          tooltip: '下个月',
+          onPressed: monthOffset >= 120 ? null : () => _changeMonth(1),
+          icon: const Icon(Icons.chevron_right_rounded, size: 19),
+          style: IconButton.styleFrom(
+            backgroundColor: Colors.transparent,
+            side: BorderSide.none,
+          ),
+        ),
+      ],
+    );
+    final statusSwitch = _StatusSwitch(
+      includePlanned: includePlanned,
+      onChanged: (value) => setState(() {
+        selectedTransactionIds.clear();
+        includePlanned = value;
+      }),
+    );
+    final filterPills = [
+      _QuickFilterPill(
+        key: const Key('transaction-filter-account'),
+        icon: Icons.account_balance_wallet_outlined,
+        label: _selectionLabel(
+          filters.accountIds,
+          allLabel: '全部账户',
+          unit: '个账户',
+          nameOf: repository.accountName,
+        ),
+        selected: filters.accountIds.isNotEmpty,
+        onTap: () => _openFilterSheet({_FilterDimension.account}),
+      ),
+      _QuickFilterPill(
+        key: const Key('transaction-filter-type'),
+        icon: Icons.list_alt_rounded,
+        label: _selectionLabel(
+          filters.types,
+          allLabel: '全部类型',
+          unit: '种类型',
+          nameOf: _typeName,
+        ),
+        selected: filters.types.isNotEmpty,
+        onTap: () => _openFilterSheet({_FilterDimension.type}),
+      ),
+      _QuickFilterPill(
+        key: const Key('transaction-filter-category'),
+        icon: Icons.sell_outlined,
+        label: _selectionLabel(
+          filters.categoryIds,
+          allLabel: '全部类别',
+          unit: '个类别',
+          nameOf: repository.categoryName,
+        ),
+        selected: filters.categoryIds.isNotEmpty,
+        onTap: () => _openFilterSheet({_FilterDimension.category}),
+      ),
+    ];
+    final breakdown = [
+      _FlowLegend(
+        key: const Key('transaction-basis-primary'),
+        color: financePaletteOf(context).seed,
+        label:
+            '${selectedSummary.primaryLabel} ${compassMoney(selectedSummary.primary, decimals: 0)}',
+        compact: desktop,
+      ),
+      _FlowLegend(
+        key: const Key('transaction-basis-secondary'),
+        color: financePaletteOf(context).expense,
+        label:
+            '${selectedSummary.secondaryLabel} ${compassMoney(selectedSummary.secondary, decimals: 0)}',
+        compact: desktop,
+      ),
+    ];
+    final desktopActionStyle = TextButton.styleFrom(
+      minimumSize: const Size(0, 36),
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+    );
+
     return Stack(
       children: [
         ListView(
-          padding: compassPagePadding.copyWith(bottom: 108),
+          padding: compassScrollPadding(
+              context,
+              desktop
+                  ? compassDesktopPagePadding
+                  : compassPagePadding.copyWith(bottom: 108)),
           children: [
             CompassPageHeader(
               title:
@@ -108,83 +235,47 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
                       _HeaderAction(
                         icon: Icons.delete_outline_rounded,
                         tooltip: '删除所选交易',
-                        color: FinanceColors.compassOrange,
+                        color: financePaletteOf(context).expense,
                         onPressed: isDeleting ? null : _deleteSelected,
                       ),
                     ]
-                  : [
-                      _HeaderAction(
-                        icon: Icons.search_rounded,
-                        tooltip: '搜索交易',
-                        onPressed: _openSearch,
-                      ),
-                      const SizedBox(width: 8),
-                      _HeaderAction(
-                        icon: Icons.filter_alt_outlined,
-                        tooltip: '高级筛选',
-                        onPressed: () =>
-                            _openFilterSheet(_FilterDimension.values.toSet()),
-                      ),
-                    ],
+                  : desktop
+                      ? [
+                          OutlinedButton.icon(
+                            onPressed: () => _showQuickTemplates(context),
+                            icon: const Icon(Icons.bolt_rounded, size: 18),
+                            label: const Text('快捷模板'),
+                          ),
+                          const SizedBox(width: 10),
+                          FilledButton.icon(
+                            onPressed: () => _showTransactionEditor(context),
+                            icon: const Icon(Icons.add_rounded, size: 19),
+                            label: const Text('记账'),
+                          ),
+                        ]
+                      : [searchAction, const SizedBox(width: 8), filterAction],
             ),
             const SizedBox(height: 14),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                IconButton(
-                  onPressed: () => _changeMonth(-1),
-                  icon: const Icon(Icons.chevron_left_rounded, size: 19),
-                  style: IconButton.styleFrom(
-                    backgroundColor: Colors.transparent,
-                    side: BorderSide.none,
-                  ),
-                ),
-                Text('${month.year}年${month.month}月',
-                    style: Theme.of(context).textTheme.titleMedium),
-                IconButton(
-                  onPressed: monthOffset >= 120 ? null : () => _changeMonth(1),
-                  icon: const Icon(Icons.chevron_right_rounded, size: 19),
-                  style: IconButton.styleFrom(
-                    backgroundColor: Colors.transparent,
-                    side: BorderSide.none,
-                  ),
-                ),
-              ],
-            ),
+            if (!desktop) Center(child: monthSelector),
             _BasisCards(
               summaries: basisSummaries,
               selected: selectedBasis,
+              desktop: desktop,
               onSelected: (basis) => setState(() => selectedBasis = basis),
             ),
-            const SizedBox(height: 12),
-            _StatusSwitch(
-              includePlanned: includePlanned,
-              onChanged: (value) => setState(() {
-                selectedTransactionIds.clear();
-                includePlanned = value;
-              }),
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: _FlowLegend(
-                    key: const Key('transaction-basis-primary'),
-                    color: FinanceColors.compassTeal,
-                    label:
-                        '${selectedSummary.primaryLabel} ${compassMoney(selectedSummary.primary, decimals: 0)}',
-                  ),
-                ),
-                Expanded(
-                  child: _FlowLegend(
-                    key: const Key('transaction-basis-secondary'),
-                    color: FinanceColors.compassOrange,
-                    label:
-                        '${selectedSummary.secondaryLabel} ${compassMoney(selectedSummary.secondary, decimals: 0)}',
-                  ),
-                ),
-              ],
-            ),
+            if (!desktop) ...[
+              const SizedBox(height: 12),
+              statusSwitch,
+            ],
+            SizedBox(height: desktop ? 8 : 10),
+            if (desktop)
+              Wrap(spacing: 20, runSpacing: 4, children: breakdown)
+            else
+              Row(
+                children: [
+                  for (final entry in breakdown) Expanded(child: entry),
+                ],
+              ),
             if (selectedBasis == _TransactionBasis.cash &&
                 fundingNeed != null) ...[
               const SizedBox(height: 7),
@@ -197,52 +288,60 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ],
-            const SizedBox(height: 10),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
+            SizedBox(height: desktop ? 20 : 10),
+            if (desktop) ...[
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _QuickFilterPill(
-                    key: const Key('transaction-filter-account'),
-                    icon: Icons.account_balance_wallet_outlined,
-                    label: _selectionLabel(
-                      filters.accountIds,
-                      allLabel: '全部账户',
-                      unit: '个账户',
-                      nameOf: repository.accountName,
+                  Expanded(
+                    child: Wrap(
+                      spacing: 4,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        monthSelector,
+                        ...filterPills,
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            TextButton.icon(
+                              style: desktopActionStyle,
+                              onPressed: _openSearch,
+                              icon: const Icon(Icons.search_rounded, size: 17),
+                              label: const Text('搜索'),
+                            ),
+                            TextButton.icon(
+                              style: desktopActionStyle,
+                              onPressed: () => _openFilterSheet(
+                                _FilterDimension.values.toSet(),
+                              ),
+                              icon: const Icon(
+                                Icons.filter_alt_outlined,
+                                size: 17,
+                              ),
+                              label: const Text('高级筛选'),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
-                    selected: filters.accountIds.isNotEmpty,
-                    onTap: () => _openFilterSheet({_FilterDimension.account}),
                   ),
-                  _QuickFilterPill(
-                    key: const Key('transaction-filter-type'),
-                    icon: Icons.list_alt_rounded,
-                    label: _selectionLabel(
-                      filters.types,
-                      allLabel: '全部类型',
-                      unit: '种类型',
-                      nameOf: _typeName,
-                    ),
-                    selected: filters.types.isNotEmpty,
-                    onTap: () => _openFilterSheet({_FilterDimension.type}),
+                  const SizedBox(width: 12),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 5),
+                    child: SizedBox(width: 168, child: statusSwitch),
                   ),
-                  _QuickFilterPill(
-                    key: const Key('transaction-filter-category'),
-                    icon: Icons.sell_outlined,
-                    label: _selectionLabel(
-                      filters.categoryIds,
-                      allLabel: '全部类别',
-                      unit: '个类别',
-                      nameOf: repository.categoryName,
-                    ),
-                    selected: filters.categoryIds.isNotEmpty,
-                    onTap: () => _openFilterSheet({_FilterDimension.category}),
-                  ),
-                  _CompactSearchButton(onTap: _openSearch),
                 ],
               ),
-            ),
+            ] else
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: filterPills,
+                ),
+              ),
             const SizedBox(height: 12),
+            if (desktop) const _DesktopLedgerHeader(),
             if (visible.isEmpty)
               const CompassCard(
                 child: Padding(
@@ -251,13 +350,13 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
                 ),
               )
             else
-              ..._transactionWidgets(context, visible),
+              ..._transactionWidgets(context, visible, desktop: desktop),
           ],
         ),
-        if (!isSelecting)
+        if (!desktop && !isSelecting)
           Positioned(
             right: 18,
-            bottom: 16,
+            bottom: 16 + MediaQuery.paddingOf(context).bottom,
             child: Column(
               children: [
                 CompassActionBubble(
@@ -269,7 +368,7 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
                 CompassActionBubble(
                   heroTag: 'transactions_v2_add',
                   icon: Icons.add_rounded,
-                  color: FinanceColors.compassOrange,
+                  color: financePaletteOf(context).expense,
                   onPressed: () => _showTransactionEditor(context),
                 ),
               ],
@@ -445,29 +544,31 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
   }
 
   List<Widget> _transactionWidgets(
-      BuildContext context, List<FinanceTransaction> transactions) {
+    BuildContext context,
+    List<FinanceTransaction> transactions, {
+    required bool desktop,
+  }) {
     final widgets = <Widget>[];
     DateTime? activeDate;
     for (final item in transactions) {
-      final date = DateTime(
-        item.transactionDate.year,
-        item.transactionDate.month,
-        item.transactionDate.day,
-      );
-      if (activeDate != date) {
-        activeDate = date;
-        widgets.add(Padding(
-          padding: const EdgeInsets.fromLTRB(0, 8, 0, 5),
-          child: Text(
-            '${date.month}月${date.day}日',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-        ));
+      if (!desktop) {
+        final date = DateUtils.dateOnly(item.transactionDate);
+        if (activeDate != date) {
+          activeDate = date;
+          widgets.add(Padding(
+            padding: const EdgeInsets.fromLTRB(0, 8, 0, 5),
+            child: Text(
+              '${date.month}月${date.day}日',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ));
+        }
       }
       widgets.add(
         _TransactionRow(
           item: item,
           repository: repository,
+          desktop: desktop,
           selected: selectedTransactionIds.contains(item.id),
           onLongPress: () => _toggleSelection(item.id),
           onTap: () => isSelecting
@@ -486,7 +587,7 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
                   ),
         ),
       );
-      widgets.add(const Divider());
+      widgets.add(desktop ? const Divider(height: 1) : const Divider());
     }
     return widgets;
   }
@@ -810,7 +911,9 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
               FilledButton(
                 onPressed: () => Navigator.pop(dialogContext, true),
                 style: FilledButton.styleFrom(
-                  backgroundColor: FinanceColors.compassOrange,
+                  backgroundColor: financePaletteOf(dialogContext).expense,
+                  foregroundColor: financeForegroundOn(
+                      financePaletteOf(dialogContext).expense),
                 ),
                 child: const Text('删除'),
               ),
@@ -851,10 +954,10 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
         child: Align(
           alignment: const Alignment(.9, .45),
           child: Material(
-            color: FinanceColors.compassSurface,
+            color: financePaletteOf(context).surface,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(18),
-              side: const BorderSide(color: FinanceColors.compassBorder),
+              side: BorderSide(color: financePaletteOf(context).border),
             ),
             child: SizedBox(
               width: 258,
@@ -891,10 +994,10 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
                             onTap: () => Navigator.pop(dialogContext, item),
                             child: Container(
                               padding: const EdgeInsets.symmetric(vertical: 9),
-                              decoration: const BoxDecoration(
+                              decoration: BoxDecoration(
                                 border: Border(
                                   bottom: BorderSide(
-                                    color: FinanceColors.compassBorder,
+                                    color: financePaletteOf(context).border,
                                   ),
                                 ),
                               ),
@@ -904,8 +1007,8 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
                                     icon: _typeIcon(item.type),
                                     size: 34,
                                     color: item.type == TransactionType.income
-                                        ? FinanceColors.compassTeal
-                                        : FinanceColors.compassOrange,
+                                        ? financePaletteOf(context).seed
+                                        : financePaletteOf(context).expense,
                                   ),
                                   const SizedBox(width: 10),
                                   Expanded(
@@ -915,8 +1018,8 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
                                     compassMoney(item.amount),
                                     style: TextStyle(
                                       color: item.type == TransactionType.income
-                                          ? FinanceColors.compassTeal
-                                          : FinanceColors.compassOrange,
+                                          ? financePaletteOf(context).seed
+                                          : financePaletteOf(context).expense,
                                     ),
                                   ),
                                 ],
@@ -960,8 +1063,6 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
                         ),
                       ],
                     ),
-                    Text('ⓘ  选择后确认保存',
-                        style: Theme.of(context).textTheme.bodySmall),
                   ],
                 ),
               ),
@@ -1231,58 +1332,64 @@ class _BasisCards extends StatelessWidget {
     required this.summaries,
     required this.selected,
     required this.onSelected,
+    required this.desktop,
   });
 
   final Map<_TransactionBasis, _BasisSummary> summaries;
   final _TransactionBasis selected;
   final ValueChanged<_TransactionBasis> onSelected;
+  final bool desktop;
 
   @override
-  Widget build(BuildContext context) => Column(
-        children: [
-          SizedBox(
-            height: 118,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                for (final basis in _TransactionBasis.values) ...[
-                  Expanded(
-                    flex: basis == selected ? 18 : 11,
-                    child: _BasisCard(
-                      key: Key('basis-card-${basis.name}'),
-                      summary: summaries[basis]!,
-                      selected: basis == selected,
-                      onTap: () => onSelected(basis),
-                    ),
-                  ),
-                  if (basis != _TransactionBasis.committed)
-                    const SizedBox(width: 7),
-                ],
-              ],
+  Widget build(BuildContext context) {
+    final cards = Row(
+      crossAxisAlignment:
+          desktop ? CrossAxisAlignment.start : CrossAxisAlignment.stretch,
+      children: [
+        for (final basis in _TransactionBasis.values) ...[
+          Expanded(
+            flex: desktop ? 1 : (basis == selected ? 18 : 11),
+            child: _BasisCard(
+              key: Key('basis-card-${basis.name}'),
+              summary: summaries[basis]!,
+              selected: basis == selected,
+              desktop: desktop,
+              onTap: () => onSelected(basis),
             ),
           ),
-          const SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: _TransactionBasis.values
-                .map(
-                  (basis) => AnimatedContainer(
-                    duration: const Duration(milliseconds: 180),
-                    width: basis == selected ? 18 : 5,
-                    height: 5,
-                    margin: const EdgeInsets.symmetric(horizontal: 3),
-                    decoration: BoxDecoration(
-                      color: basis == selected
-                          ? FinanceColors.compassTeal
-                          : Colors.white24,
-                      borderRadius: BorderRadius.circular(3),
-                    ),
-                  ),
-                )
-                .toList(),
-          ),
+          if (basis != _TransactionBasis.committed)
+            SizedBox(width: desktop ? 12 : 7),
         ],
-      );
+      ],
+    );
+    if (desktop) return cards;
+
+    return Column(
+      children: [
+        SizedBox(height: 118, child: cards),
+        const SizedBox(height: 8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: _TransactionBasis.values
+              .map(
+                (basis) => AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  width: basis == selected ? 18 : 5,
+                  height: 5,
+                  margin: const EdgeInsets.symmetric(horizontal: 3),
+                  decoration: BoxDecoration(
+                    color: basis == selected
+                        ? financePaletteOf(context).seed
+                        : financePaletteOf(context).border,
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                ),
+              )
+              .toList(),
+        ),
+      ],
+    );
+  }
 }
 
 class _BasisCard extends StatelessWidget {
@@ -1291,27 +1398,29 @@ class _BasisCard extends StatelessWidget {
     required this.summary,
     required this.selected,
     required this.onTap,
+    required this.desktop,
   });
 
   final _BasisSummary summary;
   final bool selected;
   final VoidCallback onTap;
+  final bool desktop;
 
   @override
   Widget build(BuildContext context) {
     final valueColor = summary.valueIsOutflow || summary.value < 0
-        ? FinanceColors.compassOrange
-        : FinanceColors.compassTeal;
+        ? financePaletteOf(context).expense
+        : financePaletteOf(context).seed;
     return Material(
       color: selected
-          ? FinanceColors.compassTeal.withValues(alpha: .12)
-          : Colors.white.withValues(alpha: .025),
+          ? financePaletteOf(context).seed.withValues(alpha: .12)
+          : financePaletteOf(context).surfaceAlt,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(14),
         side: BorderSide(
           color: selected
-              ? FinanceColors.compassTeal.withValues(alpha: .8)
-              : Colors.white12,
+              ? financePaletteOf(context).seed.withValues(alpha: .8)
+              : financePaletteOf(context).border,
         ),
       ),
       child: InkWell(
@@ -1319,19 +1428,21 @@ class _BasisCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(14),
         child: Padding(
           padding: EdgeInsets.symmetric(
-            horizontal: selected ? 12 : 8,
-            vertical: 10,
+            horizontal: desktop ? 14 : (selected ? 12 : 8),
+            vertical: desktop ? 12 : 10,
           ),
           child: Column(
+            mainAxisSize: desktop ? MainAxisSize.min : MainAxisSize.max,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 children: [
                   Icon(
                     summary.icon,
-                    size: selected ? 18 : 16,
-                    color:
-                        selected ? FinanceColors.compassTeal : Colors.white54,
+                    size: desktop || selected ? 18 : 16,
+                    color: selected
+                        ? financePaletteOf(context).seed
+                        : financePaletteOf(context).textMuted,
                   ),
                   const SizedBox(width: 5),
                   Expanded(
@@ -1340,14 +1451,14 @@ class _BasisCard extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        fontSize: selected ? 13 : 11,
+                        fontSize: desktop || selected ? 13 : 11,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
                   ),
                 ],
               ),
-              const Spacer(),
+              if (desktop) const SizedBox(height: 9) else const Spacer(),
               FittedBox(
                 fit: BoxFit.scaleDown,
                 alignment: Alignment.centerLeft,
@@ -1358,21 +1469,21 @@ class _BasisCard extends StatelessWidget {
                       : null,
                   style: TextStyle(
                     color: valueColor,
-                    fontSize: selected ? 23 : 15,
+                    fontSize: desktop || selected ? 23 : 15,
                     fontWeight: FontWeight.w600,
                     height: 1,
                   ),
                 ),
               ),
-              if (selected) ...[
+              if (desktop || selected) ...[
                 const SizedBox(height: 7),
                 Text(
                   summary.subtitle,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        fontSize: 9.5,
-                        color: Colors.white54,
+                        fontSize: desktop ? 12 : 9.5,
+                        color: financePaletteOf(context).textMuted,
                       ),
                 ),
               ] else
@@ -1390,29 +1501,38 @@ class _FlowLegend extends StatelessWidget {
     super.key,
     required this.color,
     required this.label,
+    this.compact = false,
   });
 
   final Color color;
   final String label;
+  final bool compact;
 
   @override
-  Widget build(BuildContext context) => Row(
-        children: [
-          Container(
-            width: 7,
-            height: 7,
-            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-          ),
-          const SizedBox(width: 6),
+  Widget build(BuildContext context) {
+    final text = Text(label, style: Theme.of(context).textTheme.bodySmall);
+    return Row(
+      mainAxisSize: compact ? MainAxisSize.min : MainAxisSize.max,
+      children: [
+        Container(
+          width: 7,
+          height: 7,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 6),
+        if (compact)
+          Flexible(child: text)
+        else
           Expanded(
             child: FittedBox(
               fit: BoxFit.scaleDown,
               alignment: Alignment.centerLeft,
-              child: Text(label, style: Theme.of(context).textTheme.bodySmall),
+              child: text,
             ),
           ),
-        ],
-      );
+      ],
+    );
+  }
 }
 
 class _StatusSwitch extends StatelessWidget {
@@ -1429,9 +1549,9 @@ class _StatusSwitch extends StatelessWidget {
         height: 34,
         padding: const EdgeInsets.all(3),
         decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: .04),
+          color: financePaletteOf(context).surfaceAlt,
           borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: Colors.white10),
+          border: Border.all(color: financePaletteOf(context).border),
         ),
         child: Row(
           children: [
@@ -1473,14 +1593,14 @@ class _StatusButton extends StatelessWidget {
           alignment: Alignment.center,
           decoration: BoxDecoration(
             color: selected
-                ? FinanceColors.compassTeal.withValues(alpha: .18)
+                ? financePaletteOf(context).seed.withValues(alpha: .18)
                 : Colors.transparent,
             borderRadius: BorderRadius.circular(15),
           ),
           child: Text(
             label,
             style: TextStyle(
-              color: selected ? FinanceColors.compassTeal : null,
+              color: selected ? financePaletteOf(context).seed : null,
               fontSize: 11,
               fontWeight: FontWeight.w600,
             ),
@@ -1510,11 +1630,13 @@ class _QuickFilterPill extends StatelessWidget {
         margin: const EdgeInsets.only(right: 7),
         child: Material(
           color: selected
-              ? FinanceColors.compassTeal.withValues(alpha: .12)
+              ? financePaletteOf(context).seed.withValues(alpha: .12)
               : Colors.transparent,
           shape: StadiumBorder(
             side: BorderSide(
-              color: selected ? FinanceColors.compassTeal : Colors.white12,
+              color: selected
+                  ? financePaletteOf(context).seed
+                  : financePaletteOf(context).border,
             ),
           ),
           child: InkWell(
@@ -1528,7 +1650,7 @@ class _QuickFilterPill extends StatelessWidget {
                   Icon(
                     icon,
                     size: 14,
-                    color: FinanceColors.compassTeal,
+                    color: financePaletteOf(context).seed,
                   ),
                   const SizedBox(width: 6),
                   Flexible(
@@ -1537,7 +1659,7 @@ class _QuickFilterPill extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: selected ? FinanceColors.compassTeal : null,
+                        color: selected ? financePaletteOf(context).seed : null,
                         fontSize: 10.5,
                       ),
                     ),
@@ -1552,22 +1674,76 @@ class _QuickFilterPill extends StatelessWidget {
       );
 }
 
-class _CompactSearchButton extends StatelessWidget {
-  const _CompactSearchButton({required this.onTap});
-
-  final VoidCallback onTap;
+class _DesktopLedgerHeader extends StatelessWidget {
+  const _DesktopLedgerHeader();
 
   @override
-  Widget build(BuildContext context) => SizedBox(
-        width: 36,
-        height: 36,
-        child: IconButton(
-          tooltip: '搜索交易',
-          onPressed: onTap,
-          icon: const Icon(Icons.search_rounded, size: 17),
-          style: IconButton.styleFrom(
-            side: const BorderSide(color: Colors.white12),
+  Widget build(BuildContext context) => DecoratedBox(
+        decoration: BoxDecoration(
+          color: financePaletteOf(context).surfaceAlt,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+          border: Border(
+            bottom: BorderSide(color: financePaletteOf(context).border),
           ),
+        ),
+        child: DefaultTextStyle(
+          style: Theme.of(context).textTheme.bodySmall!.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+          child: const Padding(
+            padding: EdgeInsets.symmetric(vertical: 12),
+            child: _DesktopLedgerCells(
+              date: Text('日期'),
+              details: Text('交易'),
+              account: Text('账户'),
+              category: Text('类别'),
+              amount: Text('金额'),
+              status: Text('状态'),
+            ),
+          ),
+        ),
+      );
+}
+
+class _DesktopLedgerCells extends StatelessWidget {
+  const _DesktopLedgerCells({
+    required this.date,
+    required this.details,
+    required this.account,
+    required this.category,
+    required this.amount,
+    required this.status,
+    this.action,
+  });
+
+  final Widget date;
+  final Widget details;
+  final Widget account;
+  final Widget category;
+  final Widget amount;
+  final Widget status;
+  final Widget? action;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        child: Row(
+          children: [
+            SizedBox(width: 78, child: date),
+            Expanded(flex: 8, child: details),
+            const SizedBox(width: 14),
+            Expanded(flex: 5, child: account),
+            const SizedBox(width: 14),
+            Expanded(flex: 3, child: category),
+            const SizedBox(width: 14),
+            Expanded(
+              flex: 4,
+              child: Align(alignment: Alignment.centerRight, child: amount),
+            ),
+            const SizedBox(width: 24),
+            Expanded(flex: 2, child: status),
+            SizedBox(width: 44, child: Center(child: action)),
+          ],
         ),
       );
 }
@@ -1580,6 +1756,7 @@ class _TransactionRow extends StatelessWidget {
     this.onLongPress,
     this.onAction,
     this.selected = false,
+    this.desktop = false,
   });
 
   final FinanceTransaction item;
@@ -1588,6 +1765,7 @@ class _TransactionRow extends StatelessWidget {
   final VoidCallback? onLongPress;
   final ValueChanged<String>? onAction;
   final bool selected;
+  final bool desktop;
 
   @override
   Widget build(BuildContext context) {
@@ -1597,135 +1775,203 @@ class _TransactionRow extends StatelessWidget {
     final showsDirectionalSign =
         isExpense || isIncome || item.type == TransactionType.adjustment;
     final color = signedAmount < 0
-        ? FinanceColors.compassOrange
-        : FinanceColors.compassTeal;
-    final category = item.categoryId == null
+        ? financePaletteOf(context).expense
+        : financePaletteOf(context).seed;
+    final categoryId = item.categoryId;
+    final storedCategory = categoryId == null
         ? _typeName(item.type)
-        : _translatedCategory(repository.categoryName(item.categoryId!));
+        : repository.categoryName(categoryId);
+    final category = desktop || categoryId == null
+        ? storedCategory
+        : _translatedCategory(storedCategory);
     final title = item.merchant ??
         item.description ??
         (item.type == TransactionType.transfer ? '账户转账' : category);
-    final accountName = _translatedAccount(
-      repository.accountName(item.accountId),
-      item.accountId,
-    );
+    final storedAccountName = repository.accountName(item.accountId);
+    final accountName = desktop
+        ? storedAccountName
+        : _translatedAccount(storedAccountName, item.accountId);
+    final toAccountId = item.toAccountId;
     final subtitle =
         title == category ? accountName : '$accountName · $category';
+    final amount = Text(
+      '${showsDirectionalSign && signedAmount > 0 ? '+ ' : ''}'
+      '${compassMoney(signedAmount, currency: item.currency)}',
+      style: TextStyle(
+        color: color,
+        fontSize: desktop ? 14 : 12,
+        fontWeight: FontWeight.w600,
+        fontFeatures: desktop ? const [FontFeature.tabularFigures()] : null,
+      ),
+    );
+    final planned = item.status == TransactionStatus.planned;
+    final plannedLabel = Text(
+      '预计',
+      style: TextStyle(
+        color: financePaletteOf(context).expense,
+        fontSize: desktop ? 12 : 9,
+      ),
+    );
+    final action = _rowAction(context);
     return InkWell(
       onTap: onTap,
       onLongPress: onLongPress,
       borderRadius: BorderRadius.circular(12),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 140),
-        padding: const EdgeInsets.symmetric(horizontal: 8),
+        padding: desktop
+            ? EdgeInsets.zero
+            : const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(
           color: selected
-              ? FinanceColors.compassTeal.withValues(alpha: .14)
+              ? financePaletteOf(context).seed.withValues(alpha: .14)
               : Colors.transparent,
           borderRadius: BorderRadius.circular(12),
           border: selected
               ? Border.all(
-                  color: FinanceColors.compassTeal.withValues(alpha: .55),
+                  color: financePaletteOf(context).seed.withValues(alpha: .55),
                 )
               : null,
         ),
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 7),
-          child: Row(
-            children: [
-              CompassIconBadge(icon: _typeIcon(item.type), color: color),
-              const SizedBox(width: 11),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+          padding: EdgeInsets.symmetric(vertical: desktop ? 6 : 7),
+          child: desktop
+              ? _DesktopLedgerCells(
+                  date: _secondaryCell(
+                    context,
+                    '${item.transactionDate.month}月${item.transactionDate.day}日',
+                  ),
+                  details: _details(
+                    context,
+                    color: color,
+                    title: title,
+                    subtitle:
+                        title == item.description ? null : item.description,
+                  ),
+                  account: _secondaryCell(
+                    context,
+                    toAccountId == null
+                        ? accountName
+                        : '$accountName → ${repository.accountName(toAccountId)}',
+                  ),
+                  category: _secondaryCell(context, category),
+                  amount: FittedBox(fit: BoxFit.scaleDown, child: amount),
+                  status:
+                      planned ? plannedLabel : _secondaryCell(context, '已发生'),
+                  action: action,
+                )
+              : Row(
                   children: [
-                    Text(title,
-                        style: Theme.of(context).textTheme.titleSmall,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis),
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      style: Theme.of(context).textTheme.bodySmall,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    Expanded(
+                      child: _details(
+                        context,
+                        color: color,
+                        title: title,
+                        subtitle: subtitle,
+                      ),
                     ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [amount, if (planned) plannedLabel],
+                    ),
+                    if (action != null) ...[
+                      SizedBox(width: selected ? 7 : 2),
+                      action,
+                    ],
                   ],
                 ),
-              ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    '${showsDirectionalSign && signedAmount > 0 ? '+ ' : ''}'
-                    '${compassMoney(signedAmount, currency: item.currency)}',
-                    style: TextStyle(
-                      color: color,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  if (item.status == TransactionStatus.planned)
-                    const Text(
-                      '预计',
-                      style: TextStyle(
-                        color: FinanceColors.compassOrange,
-                        fontSize: 9,
-                      ),
-                    ),
-                ],
-              ),
-              if (selected) ...[
-                const SizedBox(width: 7),
-                const Icon(
-                  Icons.check_circle_rounded,
-                  size: 20,
-                  color: FinanceColors.compassTeal,
-                ),
-              ] else if (onAction != null) ...[
-                const SizedBox(width: 2),
-                SizedBox(
-                  width: 32,
-                  height: 32,
-                  child: FinanceActionMenuButton<String>(
-                    tooltip: '交易操作',
-                    iconSize: 19,
-                    onSelected: onAction!,
-                    items: const [
-                      FinanceActionMenuItem(
-                        value: 'edit',
-                        label: '编辑',
-                        icon: Icons.edit_outlined,
-                      ),
-                      FinanceActionMenuItem(
-                        value: 'reuse',
-                        label: '复用新增',
-                        icon: Icons.copy_outlined,
-                      ),
-                      FinanceActionMenuItem(
-                        value: 'template',
-                        label: '保存模板',
-                        icon: Icons.bolt_outlined,
-                      ),
-                      FinanceActionMenuItem(
-                        value: 'recurring',
-                        label: '保存周期',
-                        icon: Icons.repeat_rounded,
-                      ),
-                      FinanceActionMenuItem(
-                        value: 'delete',
-                        label: '删除',
-                        icon: Icons.delete_outline,
-                        destructive: true,
-                        dividerBefore: true,
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ],
-          ),
         ),
+      ),
+    );
+  }
+
+  Widget _secondaryCell(BuildContext context, String text) => Text(
+        text,
+        style: Theme.of(context).textTheme.bodySmall,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+      );
+
+  Widget _details(
+    BuildContext context, {
+    required Color color,
+    required String title,
+    required String? subtitle,
+  }) =>
+      Row(
+        children: [
+          CompassIconBadge(icon: _typeIcon(item.type), color: color),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: Theme.of(context).textTheme.titleSmall,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (subtitle != null && subtitle.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: Theme.of(context).textTheme.bodySmall,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      );
+
+  Widget? _rowAction(BuildContext context) {
+    if (selected) {
+      return Icon(
+        Icons.check_circle_rounded,
+        size: 20,
+        color: financePaletteOf(context).seed,
+      );
+    }
+    final onAction = this.onAction;
+    if (onAction == null) return null;
+    return SizedBox.square(
+      dimension: desktop ? 44 : 32,
+      child: FinanceActionMenuButton<String>(
+        tooltip: '交易操作',
+        iconSize: 19,
+        onSelected: onAction,
+        items: const [
+          FinanceActionMenuItem(
+            value: 'edit',
+            label: '编辑',
+            icon: Icons.edit_outlined,
+          ),
+          FinanceActionMenuItem(
+            value: 'reuse',
+            label: '复用新增',
+            icon: Icons.copy_outlined,
+          ),
+          FinanceActionMenuItem(
+            value: 'template',
+            label: '保存模板',
+            icon: Icons.bolt_outlined,
+          ),
+          FinanceActionMenuItem(
+            value: 'recurring',
+            label: '保存周期',
+            icon: Icons.repeat_rounded,
+          ),
+          FinanceActionMenuItem(
+            value: 'delete',
+            label: '删除',
+            icon: Icons.delete_outline,
+            destructive: true,
+            dividerBefore: true,
+          ),
+        ],
       ),
     );
   }

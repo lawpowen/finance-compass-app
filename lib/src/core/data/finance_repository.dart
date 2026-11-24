@@ -7,6 +7,7 @@ import '../models/account.dart';
 import '../models/asset_snapshot.dart';
 import '../models/budget.dart';
 import '../models/category.dart';
+import '../models/category_hierarchy.dart';
 import '../models/credit_card_billing.dart';
 import '../models/forecast_summary.dart';
 import '../models/loan_amortization.dart';
@@ -324,18 +325,23 @@ class FinanceRepository {
     return displayTotalAssetsByGroup(group);
   }
 
-  double displayTotalAssetsByGroup(ReportGroup group, {DateTime? cutoffDate}) {
+  double displayTotalAssetsByGroup(
+    ReportGroup group, {
+    DateTime? cutoffDate,
+    bool positiveOnly = false,
+  }) {
     final useCommittedCreditBalance = cutoffDate == null;
     final targetDate = cutoffDate ?? currentMonthCutoffDate();
     return _accounts.where((account) => account.reportGroup == group).fold(
-          0.0,
-          (sum, account) =>
-              sum +
-              (useCommittedCreditBalance &&
-                      account.accountType == AccountType.creditCard
-                  ? convertToBase(account.currentBalance, account.currency)
-                  : accountBalanceAtBase(account.id, targetDate)),
-        );
+      0.0,
+      (sum, account) {
+        final balance = useCommittedCreditBalance &&
+                account.accountType == AccountType.creditCard
+            ? convertToBase(account.currentBalance, account.currency)
+            : accountBalanceAtBase(account.id, targetDate);
+        return sum + (positiveOnly && balance < 0 ? 0 : balance);
+      },
+    );
   }
 
   double totalAssets({bool includeCredit = true}) {
@@ -631,6 +637,27 @@ class FinanceRepository {
         .toDouble();
   }
 
+  /// Credit and loan liabilities in base currency, calculated per account.
+  ({double credit, double loans}) accountLiabilities({DateTime? cutoffDate}) {
+    final loanCutoff = cutoffDate ?? currentMonthCutoffDate();
+    var credit = 0.0;
+    var loans = 0.0;
+    for (final account in _accounts) {
+      if (account.accountType == AccountType.creditCard) {
+        credit += convertToBase(
+          creditCardOutstandingBalance(account.id, cutoffDate: cutoffDate),
+          account.currency,
+        );
+      } else if (account.accountType == AccountType.loan) {
+        loans += convertToBase(
+          _accountBalanceAt(account, loanCutoff).abs(),
+          account.currency,
+        );
+      }
+    }
+    return (credit: credit, loans: loans);
+  }
+
   /// Overpaid (positive) card balance, the counterpart of
   /// [creditCardOutstandingBalance].
   ///
@@ -647,6 +674,20 @@ class FinanceRepository {
         ? account.currentBalance
         : accountBalanceAt(accountId, cutoffDate);
     return balance.clamp(0, double.infinity).toDouble();
+  }
+
+  double totalCreditCardCredit({DateTime? cutoffDate}) {
+    return _accounts
+        .where((account) => account.accountType == AccountType.creditCard)
+        .fold<double>(
+          0,
+          (sum, account) =>
+              sum +
+              convertToBase(
+                creditCardCreditBalance(account.id, cutoffDate: cutoffDate),
+                account.currency,
+              ),
+        );
   }
 
   /// Billing summary shared by the account list and the card detail page.
@@ -2377,8 +2418,37 @@ class FinanceRepository {
   }
 
   /// Browser imports use picker bytes, avoiding a fake filesystem path.
-  Future<FinanceRepository> importJsonSnapshotBytes(Uint8List bytes) async {
+  Future<FinanceRepository> importJsonSnapshotBytes(
+    Uint8List bytes, {
+    bool detachUnresolvedCategoryParents = false,
+  }) async {
     final payload = _decodeImportPayload(bytes);
+    final repairs = _repairImportCategoryParents(payload);
+    if (!detachUnresolvedCategoryParents) {
+      final unresolved = repairs.where((repair) => repair.parentName == null);
+      if (unresolved.firstOrNull case final repair?) {
+        throw FormatException(
+          '「${repair.categoryName}」的上级分类「${repair.originalParent}」无法确认。'
+          '请在导入预览中确认保留为顶层分类。',
+        );
+      }
+    }
+    return _restoreSnapshot(payload, fromSync: false);
+  }
+
+  /// Rebuilds the isolated browser cache from a server revision.
+  Future<FinanceRepository> restoreSyncedSnapshot(
+      Map<String, dynamic> snapshot) {
+    final validated = _decodeImportPayload(
+      Uint8List.fromList(utf8.encode(jsonEncode(snapshot))),
+    );
+    return _restoreSnapshot(validated, fromSync: true);
+  }
+
+  Future<FinanceRepository> _restoreSnapshot(
+    Map<String, dynamic> payload, {
+    required bool fromSync,
+  }) async {
     final metaPayload = payload['meta'] as Map<String, dynamic>? ?? const {};
 
     final accountItems = (payload['accounts'] as List<dynamic>? ?? const [])
@@ -2539,13 +2609,15 @@ class FinanceRepository {
         budgetItems.isNotEmpty ||
         transactionItems.isNotEmpty ||
         snapshotItems.isNotEmpty;
-    if (!hasAnyData) {
+    if (!hasAnyData && !fromSync) {
       throw const FormatException(
           'Import file does not contain any finance data.');
     }
 
-    final restorePoint = await local_files.importRestorePointPath();
-    if (restorePoint != null) await exportJsonSnapshot(restorePoint);
+    if (!fromSync) {
+      final restorePoint = await local_files.importRestorePointPath();
+      if (restorePoint != null) await exportJsonSnapshot(restorePoint);
+    }
 
     await database.replaceAllWithSeedData(
       accountItems: accountItems,
@@ -2568,6 +2640,7 @@ class FinanceRepository {
 
   Future<ImportPreview> previewImportBytes(Uint8List bytes) async {
     final payload = _decodeImportPayload(bytes);
+    final categoryParentRepairs = _repairImportCategoryParents(payload);
     return ImportPreview(
       accounts: (payload['accounts'] as List<dynamic>? ?? const []).length,
       categories: (payload['categories'] as List<dynamic>? ?? const []).length,
@@ -2577,7 +2650,49 @@ class FinanceRepository {
       assetSnapshots:
           (payload['asset_snapshots'] as List<dynamic>? ?? const []).length,
       exportedAt: payload['exported_at'] as String?,
+      categoryParentRepairs: categoryParentRepairs,
     );
+  }
+
+  List<CategoryParentImportRepair> _repairImportCategoryParents(
+    Map<String, dynamic> payload,
+  ) {
+    final rows = (payload['categories'] as List? ?? const [])
+        .cast<Map<String, dynamic>>();
+    final byId = {for (final row in rows) row['id'] as String: row};
+    final names = <({String type, String name}), List<String>>{};
+    final parents = <String, String?>{};
+    for (final row in rows) {
+      final id = row['id'] as String;
+      final type = row['type'] as String;
+      final name = (row['name'] as String).trim();
+      final parent = row['parent_id'] as String?;
+      names.putIfAbsent((type: type, name: name), () => []).add(id);
+      if (byId.containsKey(parent)) parents[id] = parent;
+    }
+
+    final repairs = <CategoryParentImportRepair>[];
+    for (final row in rows) {
+      final parent = row['parent_id'] as String?;
+      if (parent == null || byId.containsKey(parent)) continue;
+
+      final childId = row['id'] as String;
+      final type = row['type'] as String;
+      final candidates = names[(type: type, name: parent.trim())] ?? const [];
+      final candidate = candidates.length == 1 ? candidates.single : null;
+      final resolved = candidate != null &&
+              !categoryParentWouldCycle(childId, candidate, parents)
+          ? candidate
+          : null;
+      row['parent_id'] = resolved;
+      parents[childId] = resolved;
+      repairs.add((
+        categoryName: row['name'] as String,
+        originalParent: parent,
+        parentName: byId[resolved]?['name'] as String?,
+      ));
+    }
+    return List.unmodifiable(repairs);
   }
 
   Map<String, dynamic> _decodeImportPayload(Uint8List bytes) {
@@ -2645,8 +2760,7 @@ class FinanceRepository {
     uniqueIds(transactions.map((item) => item.id), '交易');
     uniqueIds(snapshots.map((item) => item.id), '资产快照');
     uniqueIds(templates.map((item) => item.id), '快速模板');
-    final recurringRuleIds =
-        uniqueIds(recurringRules.map((item) => item.id), '周期规则');
+    uniqueIds(recurringRules.map((item) => item.id), '周期规则');
 
     void requireAccount(String id, String owner) {
       if (!accountIds.contains(id)) {
@@ -2672,11 +2786,7 @@ class FinanceRepository {
         requireAccount(targetId, '交易 ${transaction.id}');
       }
       requireCategory(transaction.categoryId, '交易 ${transaction.id}');
-      if (transaction.recurringRuleId case final String ruleId) {
-        if (!recurringRuleIds.contains(ruleId)) {
-          throw FormatException('交易 ${transaction.id} 引用了不存在的周期规则：$ruleId');
-        }
-      }
+      // Deleting a recurring rule intentionally retains its transaction history.
     }
     for (final snapshot in snapshots) {
       requireAccount(snapshot.accountId, '资产快照 ${snapshot.id}');
@@ -3208,6 +3318,12 @@ class FinanceRepository {
   }
 }
 
+typedef CategoryParentImportRepair = ({
+  String categoryName,
+  String originalParent,
+  String? parentName,
+});
+
 class ImportPreview {
   const ImportPreview({
     required this.accounts,
@@ -3216,6 +3332,7 @@ class ImportPreview {
     required this.transactions,
     required this.assetSnapshots,
     required this.exportedAt,
+    this.categoryParentRepairs = const [],
   });
 
   final int accounts;
@@ -3224,6 +3341,10 @@ class ImportPreview {
   final int transactions;
   final int assetSnapshots;
   final String? exportedAt;
+  final List<CategoryParentImportRepair> categoryParentRepairs;
+
+  bool get hasUnresolvedCategoryParents =>
+      categoryParentRepairs.any((repair) => repair.parentName == null);
 }
 
 class InvestmentFlowSummary {

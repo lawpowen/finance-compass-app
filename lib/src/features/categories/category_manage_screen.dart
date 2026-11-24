@@ -6,6 +6,7 @@ import '../../core/models/category.dart';
 import '../../core/providers/mutations/category_mutations.dart';
 import '../../core/providers/repository_provider.dart';
 import '../../core/theme/finance_colors.dart';
+import '../../core/theme/finance_theme.dart';
 import '../shared/compass_ui.dart';
 import 'category_form_dialog.dart';
 
@@ -108,7 +109,7 @@ class _CategoryManageScreenState extends ConsumerState<CategoryManageScreen> {
                     _CategorySection(
                       title: '支出',
                       count: expense.length,
-                      color: FinanceColors.compassOrange,
+                      color: financePaletteOf(context).expense,
                       rows: expense
                           .map(
                             (item) => _CategoryPresentation.fromCategory(
@@ -119,7 +120,7 @@ class _CategoryManageScreenState extends ConsumerState<CategoryManageScreen> {
                           .toList(),
                       onEdit: (row) {
                         if (row.source != null) {
-                          _showEditCategory(context, row.source!);
+                          _showCategoryDialog(context, row.source!);
                         }
                       },
                     ),
@@ -128,7 +129,7 @@ class _CategoryManageScreenState extends ConsumerState<CategoryManageScreen> {
                     _CategorySection(
                       title: '收入',
                       count: income.length,
-                      color: FinanceColors.compassTeal,
+                      color: financePaletteOf(context).seed,
                       rows: income
                           .map(
                             (item) => _CategoryPresentation.fromCategory(
@@ -139,7 +140,7 @@ class _CategoryManageScreenState extends ConsumerState<CategoryManageScreen> {
                           .toList(),
                       onEdit: (row) {
                         if (row.source != null) {
-                          _showEditCategory(context, row.source!);
+                          _showCategoryDialog(context, row.source!);
                         }
                       },
                     ),
@@ -148,7 +149,7 @@ class _CategoryManageScreenState extends ConsumerState<CategoryManageScreen> {
                     _CategorySection(
                       title: '投资',
                       count: investment.length,
-                      color: FinanceColors.compassTeal,
+                      color: financePaletteOf(context).seed,
                       rows: investment
                           .map(
                             (item) => _CategoryPresentation.fromCategory(
@@ -159,7 +160,7 @@ class _CategoryManageScreenState extends ConsumerState<CategoryManageScreen> {
                           .toList(),
                       onEdit: (row) {
                         if (row.source != null) {
-                          _showEditCategory(context, row.source!);
+                          _showCategoryDialog(context, row.source!);
                         }
                       },
                     ),
@@ -168,7 +169,7 @@ class _CategoryManageScreenState extends ConsumerState<CategoryManageScreen> {
                     _CategorySection(
                       title: '转账',
                       count: transfer.length,
-                      color: FinanceColors.compassTeal,
+                      color: financePaletteOf(context).seed,
                       rows: transfer
                           .map(
                             (item) => _CategoryPresentation.fromCategory(
@@ -179,12 +180,12 @@ class _CategoryManageScreenState extends ConsumerState<CategoryManageScreen> {
                           .toList(),
                       onEdit: (row) {
                         if (row.source != null) {
-                          _showEditCategory(context, row.source!);
+                          _showCategoryDialog(context, row.source!);
                         }
                       },
                     ),
                   const SizedBox(height: 18),
-                  Text('ⓘ  已关联交易或预算的类别不可删除',
+                  Text('有子类别或关联记录的类别不可删除',
                       style: Theme.of(context).textTheme.bodySmall),
                 ],
               ),
@@ -194,8 +195,8 @@ class _CategoryManageScreenState extends ConsumerState<CategoryManageScreen> {
                 child: CompassActionBubble(
                   heroTag: 'category_add',
                   icon: Icons.add_rounded,
-                  color: FinanceColors.compassOrange,
-                  onPressed: () => _showAddCategory(context),
+                  color: financePaletteOf(context).expense,
+                  onPressed: () => _showCategoryDialog(context),
                 ),
               ),
             ],
@@ -205,30 +206,23 @@ class _CategoryManageScreenState extends ConsumerState<CategoryManageScreen> {
     );
   }
 
-  Future<void> _showAddCategory(BuildContext context) async {
+  Future<void> _showCategoryDialog(BuildContext context,
+      [Category? category]) async {
+    final repository =
+        ref.read(financeRepositoryProvider).valueOrNull ?? widget.repository;
     final result = await showDialog<CategoryFormResult>(
       context: context,
-      builder: (_) => const CategoryFormDialog(),
+      builder: (_) => CategoryFormDialog(
+        categories: repository.sortedCategories(),
+        initialCategory: category,
+      ),
     );
-    if (result != null) {
-      await ref
-          .read(categoryMutationsProvider.notifier)
-          .addCategory(result.category);
-    }
-  }
-
-  Future<void> _showEditCategory(
-    BuildContext context,
-    Category category,
-  ) async {
-    final result = await showDialog<CategoryFormResult>(
-      context: context,
-      builder: (_) => CategoryFormDialog(initialCategory: category),
-    );
-    if (result != null) {
-      await ref
-          .read(categoryMutationsProvider.notifier)
-          .updateCategory(result.category);
+    if (result == null || !mounted) return;
+    final mutations = ref.read(categoryMutationsProvider.notifier);
+    if (result.isEdit) {
+      await mutations.updateCategory(result.category);
+    } else {
+      await mutations.addCategory(result.category);
     }
   }
 }
@@ -265,8 +259,9 @@ class _TypeTabBar extends StatelessWidget {
                 border: Border(
                   bottom: BorderSide(
                     width: 2,
-                    color:
-                        active ? FinanceColors.compassTeal : Colors.transparent,
+                    color: active
+                        ? financePaletteOf(context).seed
+                        : Colors.transparent,
                   ),
                 ),
               ),
@@ -275,8 +270,8 @@ class _TypeTabBar extends StatelessWidget {
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: active
-                      ? FinanceColors.compassTeal
-                      : FinanceColors.compassMuted,
+                      ? financePaletteOf(context).seed
+                      : financePaletteOf(context).textMuted,
                 ),
               ),
             ),
@@ -367,9 +362,9 @@ class _CategoryRow extends StatelessWidget {
         onTap: onTap,
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 12),
-          decoration: const BoxDecoration(
+          decoration: BoxDecoration(
             border: Border(
-              bottom: BorderSide(color: FinanceColors.compassBorder),
+              bottom: BorderSide(color: financePaletteOf(context).border),
             ),
           ),
           child: Row(

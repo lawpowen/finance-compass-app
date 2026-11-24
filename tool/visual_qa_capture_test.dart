@@ -10,11 +10,9 @@ import 'package:finance_app/src/core/models/budget.dart';
 import 'package:finance_app/src/core/models/category.dart';
 import 'package:finance_app/src/core/models/transaction.dart';
 import 'package:finance_app/src/core/providers/database_provider.dart';
-import 'package:finance_app/src/core/settings/app_settings_controller.dart';
 import 'package:finance_app/src/core/settings/app_theme_style.dart';
 import 'package:finance_app/src/core/theme/finance_theme.dart';
 import 'package:finance_app/src/features/budgets/budgets_v2_screen.dart';
-import 'package:finance_app/src/features/settings/settings_reference_pages.dart';
 import 'package:finance_app/src/features/transactions/transactions_v2_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -138,13 +136,6 @@ void main() {
       outputPath: '${output.path}/budget-overview-390.png',
       database: database,
       child: BudgetsV2Screen(repository: repository),
-    );
-
-    await _capture(
-      tester,
-      outputPath: '${output.path}/appearance-carousel-390.png',
-      database: database,
-      child: AppearancePage(settingsController: AppSettingsController()),
     );
 
     await _capture(

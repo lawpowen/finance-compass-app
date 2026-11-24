@@ -1,4 +1,8 @@
-const CACHE_NAME = 'finance-compass-shell-v0.10.1';
+// Keep "consent-" in future release cache names so installed clients can
+// choose when to activate the next worker.
+const CACHE_NAME = 'finance-compass-shell-consent-v0.10.1-sync17';
+const SHELL_CACHE_PREFIX = 'finance-compass-shell-';
+const CONSENT_CACHE_PREFIX = 'finance-compass-shell-consent-';
 // Keep the complete rendering and local-database runtime available after a
 // successful first load. Do not add user data here: it stays in Drift's
 // browser storage, outside the HTTP cache.
@@ -27,6 +31,8 @@ const CORE = [
   './assets/AssetManifest.bin.json',
   './assets/FontManifest.json',
   './assets/NOTICES',
+  './assets/assets/fonts/MiSans-Regular.ttf',
+  './assets/assets/fonts/MisansTC-Regular.ttf',
   './assets/fonts/MaterialIcons-Regular.otf',
   './assets/packages/cupertino_icons/assets/CupertinoIcons.ttf',
   './assets/assets/support/touch-n-go-support-qr.jpg',
@@ -52,7 +58,7 @@ const FONT_INDEX = './fonts/SHA256SUMS';
 
 async function precache() {
   const cache = await caches.open(CACHE_NAME);
-  await cache.addAll(CORE);
+  await cache.addAll(CORE.map(path => new Request(path, { cache: 'reload' })));
   const index = await (await cache.match(FONT_INDEX)).text();
   const fonts = index.split(/\r?\n/)
     .map((line) => line.trim().split(/\s+/)[1])
@@ -62,30 +68,96 @@ async function precache() {
 }
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(precache());
-  self.skipWaiting();
+  event.waitUntil((async () => {
+    const hasConsentWorker = (await caches.keys()).some(
+      (key) => key !== CACHE_NAME && key.startsWith(CONSENT_CACHE_PREFIX),
+    );
+    try {
+      await precache();
+    } catch (error) {
+      await caches.delete(CACHE_NAME);
+      throw error;
+    }
+    // Earlier app shells have no update button. Activate this transition once
+    // without navigating open tabs so their next launch gets the new feature.
+    if (!hasConsentWorker) await self.skipWaiting();
+  })());
+});
+
+self.addEventListener('message', (event) => {
+  const client = event.source;
+  if (event.data?.type !== 'finance-compass-activate-update' ||
+      client?.type !== 'window' || !client.url.startsWith(self.registration.scope)) return;
+  event.waitUntil(self.skipWaiting());
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    caches.keys().then((keys) => Promise.all(
-      keys.filter((key) => key.startsWith('finance-compass-shell-') && key !== CACHE_NAME)
-        .map((key) => caches.delete(key)),
-    )),
-  );
-  self.clients.claim();
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys.filter((key) => key.startsWith(SHELL_CACHE_PREFIX) && key !== CACHE_NAME)
+      .map((key) => caches.delete(key)));
+    await self.clients.claim();
+  })());
 });
 
 self.addEventListener('fetch', (event) => {
   const request = event.request;
-  if (request.method !== 'GET' || new URL(request.url).origin !== self.location.origin) return;
-  event.respondWith(
-    caches.match(request).then((cached) => cached || fetch(request).then((response) => {
-      if (response.ok && response.type === 'basic') {
-        const copy = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+  const url = new URL(request.url);
+  if (request.method !== 'GET' || url.origin !== self.location.origin ||
+      url.pathname.startsWith(new URL('api/', self.registration.scope).pathname)) return;
+  event.respondWith((async () => {
+    const cache = await caches.open(CACHE_NAME);
+    const cached = await cache.match(request);
+    if (cached) return cached;
+    // A waiting worker uses its own cache. Refreshes and deep links should
+    // still use the shell paired with this controlling worker.
+    if (request.mode === 'navigate') {
+      return await cache.match('./index.html') ?? fetch(request);
+    }
+    const response = await fetch(request);
+    if (response.ok && response.type === 'basic' &&
+        !/\b(?:private|no-store)\b/i.test(response.headers.get('Cache-Control') || '')) {
+      await cache.put(request, response.clone()).catch(() => {});
+    }
+    return response;
+  })());
+});
+
+self.addEventListener('push', (event) => {
+  let message;
+  try {
+    message = event.data?.json();
+  } catch (_) {
+    // Always show an observable notification, including on Safari.
+  }
+  const title = typeof message?.title === 'string' && message.title.trim()
+    ? message.title.slice(0, 100) : 'Finance Compass';
+  const body = typeof message?.body === 'string' && message.body.trim()
+    ? message.body.slice(0, 300) : '你有一条账本提醒。';
+  const tag = typeof message?.tag === 'string' ? message.tag.slice(0, 160) : undefined;
+  event.waitUntil(self.registration.showNotification(title, {
+    body,
+    icon: new URL('icons/Icon-192.png', self.registration.scope).href,
+    tag,
+  }));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const root = new URL(self.registration.scope);
+  event.waitUntil((async () => {
+    const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const client of windows) {
+      const url = new URL(client.url);
+      if (url.origin === root.origin && url.pathname.startsWith(root.pathname)) {
+        try {
+          await client.focus();
+          return;
+        } catch (_) {
+          // The client can disappear between lookup and focus.
+        }
       }
-      return response;
-    })),
-  );
+    }
+    await self.clients.openWindow(root.href);
+  })());
 });

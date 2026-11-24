@@ -20,26 +20,23 @@ class CategoryMutations extends Notifier<void> {
 
   /// Creates a new category.
   Future<void> addCategory(Category category) async {
-    final updated = await (await _repo).addCategory(category);
-    _repoNotifier.setRepository(updated);
+    await _repoNotifier
+        .mutate((repository) => repository.addCategory(category));
   }
 
   /// Updates an existing category.
   Future<void> updateCategory(Category category) async {
-    final updated = await (await _repo).updateExistingCategory(category);
-    _repoNotifier.setRepository(updated);
+    await _repoNotifier
+        .mutate((repository) => repository.updateExistingCategory(category));
   }
 
   /// Deletes a category only if it has no linked transactions or budgets.
   ///
   /// Returns `true` if deleted, `false` if linked data exists.
   Future<bool> deleteCategory(String categoryId) async {
-    final updated = await (await _repo).deleteCategoryIfSafe(categoryId);
-    if (updated != null) {
-      _repoNotifier.setRepository(updated);
-      return true;
-    }
-    return false;
+    return await _repoNotifier.mutate(
+            (repository) => repository.deleteCategoryIfSafe(categoryId)) !=
+        null;
   }
 
   /// Checks whether a category can be safely deleted.

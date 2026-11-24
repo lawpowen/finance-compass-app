@@ -16,47 +16,39 @@ class TransactionMutations extends Notifier<void> {
   FinanceRepositoryNotifier get _repoNotifier =>
       ref.read(financeRepositoryProvider.notifier);
 
-  Future<FinanceRepository> get _repo =>
-      ref.read(financeRepositoryProvider.future);
-
   /// Creates a single transaction.
   Future<void> addTransaction(FinanceTransaction transaction) async {
-    final updated = await (await _repo).addTransaction(transaction);
-    _repoNotifier.setRepository(updated);
+    await _repoNotifier
+        .mutate((repository) => repository.addTransaction(transaction));
   }
 
   /// Creates multiple transactions in a single batch.
   Future<void> addTransactions(List<FinanceTransaction> transactions) async {
-    final updated = await (await _repo).addTransactions(transactions);
-    _repoNotifier.setRepository(updated);
+    await _repoNotifier
+        .mutate((repository) => repository.addTransactions(transactions));
   }
 
   /// Updates an existing transaction (reverses old balance effects, applies new).
   Future<void> updateTransaction(FinanceTransaction transaction) async {
-    final updated = await (await _repo).updateExistingTransaction(transaction);
-    _repoNotifier.setRepository(updated);
+    await _repoNotifier.mutate(
+        (repository) => repository.updateExistingTransaction(transaction));
   }
 
   /// Deletes a transaction and reverses its balance effects.
   Future<void> deleteTransaction(String transactionId) async {
-    final repository = await _repo;
-    final ids = _expandLoanInstallmentDeletionIds(
-      repository,
-      [transactionId],
-    );
-    final updated = await repository.deleteExistingTransactions(ids);
-    _repoNotifier.setRepository(updated);
+    await _repoNotifier.mutate((repository) {
+      final ids =
+          _expandLoanInstallmentDeletionIds(repository, [transactionId]);
+      return repository.deleteExistingTransactions(ids);
+    });
   }
 
   /// Deletes multiple transactions atomically and reverses every balance effect.
   Future<void> deleteTransactions(Iterable<String> transactionIds) async {
-    final repository = await _repo;
-    final ids = _expandLoanInstallmentDeletionIds(
-      repository,
-      transactionIds,
-    );
-    final updated = await repository.deleteExistingTransactions(ids);
-    _repoNotifier.setRepository(updated);
+    await _repoNotifier.mutate((repository) {
+      final ids = _expandLoanInstallmentDeletionIds(repository, transactionIds);
+      return repository.deleteExistingTransactions(ids);
+    });
   }
 
   Set<String> _expandLoanInstallmentDeletionIds(
@@ -110,31 +102,30 @@ class TransactionMutations extends Notifier<void> {
     required String name,
     required FinanceTransaction transaction,
   }) async {
-    final updated = await (await _repo).addTransactionTemplate(
-      name: name,
-      transaction: transaction,
-    );
-    _repoNotifier.setRepository(updated);
+    await _repoNotifier
+        .mutate((repository) => repository.addTransactionTemplate(
+              name: name,
+              transaction: transaction,
+            ));
   }
 
   /// Deletes a transaction template by id.
   Future<void> deleteTransactionTemplate(String templateId) async {
-    final updated = await (await _repo).deleteTransactionTemplate(templateId);
-    _repoNotifier.setRepository(updated);
+    await _repoNotifier.mutate(
+        (repository) => repository.deleteTransactionTemplate(templateId));
   }
 
   /// Replaces an existing template while preserving its identifier.
   Future<void> saveTransactionTemplate(TransactionTemplate template) async {
-    final updated = await (await _repo).saveTransactionTemplate(template);
-    _repoNotifier.setRepository(updated);
+    await _repoNotifier
+        .mutate((repository) => repository.saveTransactionTemplate(template));
   }
 
   /// Persists the complete quick-template order in one atomic replacement.
   Future<void> reorderTransactionTemplates(
       List<String> orderedTemplateIds) async {
-    final updated =
-        await (await _repo).reorderTransactionTemplates(orderedTemplateIds);
-    _repoNotifier.setRepository(updated);
+    await _repoNotifier.mutate((repository) =>
+        repository.reorderTransactionTemplates(orderedTemplateIds));
   }
 
   /// Creates a recurring transaction rule.
@@ -143,26 +134,26 @@ class TransactionMutations extends Notifier<void> {
     required FinanceTransaction transaction,
     required int intervalMonths,
   }) async {
-    final updated = await (await _repo).addRecurringTransactionRule(
-      name: name,
-      transaction: transaction,
-      intervalMonths: intervalMonths,
-    );
-    _repoNotifier.setRepository(updated);
+    await _repoNotifier
+        .mutate((repository) => repository.addRecurringTransactionRule(
+              name: name,
+              transaction: transaction,
+              intervalMonths: intervalMonths,
+            ));
   }
 
   /// Deletes a recurring transaction rule.
   Future<void> deleteRecurringTransactionRule(String ruleId) async {
-    final updated = await (await _repo).deleteRecurringTransactionRule(ruleId);
-    _repoNotifier.setRepository(updated);
+    await _repoNotifier.mutate(
+        (repository) => repository.deleteRecurringTransactionRule(ruleId));
   }
 
   /// Replaces an existing recurring rule while preserving generated history.
   Future<void> saveRecurringTransactionRule(
     RecurringTransactionRule rule,
   ) async {
-    final updated = await (await _repo).saveRecurringTransactionRule(rule);
-    _repoNotifier.setRepository(updated);
+    await _repoNotifier
+        .mutate((repository) => repository.saveRecurringTransactionRule(rule));
   }
 
   /// Generates future transactions from a recurring rule.
@@ -170,9 +161,8 @@ class TransactionMutations extends Notifier<void> {
     String ruleId, {
     required int monthsAhead,
   }) async {
-    final updated = await (await _repo)
-        .generateRecurringTransactions(ruleId, monthsAhead: monthsAhead);
-    _repoNotifier.setRepository(updated);
+    await _repoNotifier.mutate((repository) => repository
+        .generateRecurringTransactions(ruleId, monthsAhead: monthsAhead));
   }
 }
 

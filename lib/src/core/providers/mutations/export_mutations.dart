@@ -70,25 +70,30 @@ class ExportMutations extends Notifier<void> {
   /// After import the [financeRepositoryProvider] is refreshed so the
   /// entire UI rebuilds with the new data.
   Future<void> importJson(String path) async {
-    final updated = await (await _repo).importJsonSnapshot(path);
-    _repoNotifier.setRepository(updated);
+    await _repoNotifier
+        .mutate((repository) => repository.importJsonSnapshot(path));
   }
 
-  Future<void> importJsonBytes(Uint8List bytes) async {
-    final updated = await (await _repo).importJsonSnapshotBytes(bytes);
-    _repoNotifier.setRepository(updated);
+  Future<void> importJsonBytes(
+    Uint8List bytes, {
+    bool detachUnresolvedCategoryParents = false,
+  }) async {
+    await _repoNotifier.mutate(
+      (repository) => repository.importJsonSnapshotBytes(
+        bytes,
+        detachUnresolvedCategoryParents: detachUnresolvedCategoryParents,
+      ),
+    );
   }
 
   /// Clears all user data and reloads an empty repository.
   Future<void> clearAllData() async {
-    final updated = await (await _repo).clearAllData();
-    _repoNotifier.setRepository(updated);
+    await _repoNotifier.mutate((repository) => repository.clearAllData());
   }
 
   /// Loads the bundled example / seed data.
   Future<void> loadExampleData() async {
-    final updated = await (await _repo).loadExampleData();
-    _repoNotifier.setRepository(updated);
+    await _repoNotifier.mutate((repository) => repository.loadExampleData());
   }
 }
 

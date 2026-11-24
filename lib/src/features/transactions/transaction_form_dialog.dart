@@ -259,6 +259,7 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                 ],
                 const SizedBox(height: 12),
                 FinanceTextField(
+                  isAmount: true,
                   controller: amountController,
                   label: '金额',
                   keyboardType: const TextInputType.numberWithOptions(
@@ -276,6 +277,7 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                 if (transactionType == TransactionType.transfer) ...[
                   const SizedBox(height: 12),
                   FinanceTextField(
+                    isAmount: true,
                     controller: toAmountController,
                     label: '转入金额',
                     keyboardType: const TextInputType.numberWithOptions(

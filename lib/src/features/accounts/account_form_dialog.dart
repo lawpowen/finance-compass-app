@@ -4,8 +4,9 @@ import '../../core/models/account.dart';
 import '../../core/models/loan_amortization.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../core/utils/id_generator.dart';
-import '../../core/theme/finance_colors.dart';
+import '../../core/theme/finance_theme.dart';
 import '../shared/compass_ui.dart';
+import '../shared/finance_amount_field.dart';
 
 class AccountFormDialog extends StatefulWidget {
   const AccountFormDialog({
@@ -177,9 +178,10 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                             style: Theme.of(context).textTheme.bodySmall,
                           ),
                           const SizedBox(height: 6),
-                          const Text(
+                          Text(
                             '启用中',
-                            style: TextStyle(color: FinanceColors.compassTeal),
+                            style: TextStyle(
+                                color: financePaletteOf(context).seed),
                           ),
                         ],
                       ),
@@ -288,6 +290,7 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                     label: '信用额度',
                     child: _InlineTextEditor(
                       controller: creditLimitController,
+                      isAmount: true,
                       prefixText: '$currency ',
                       keyboardType:
                           const TextInputType.numberWithOptions(decimal: true),
@@ -302,6 +305,7 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                     child: _InlineTextEditor(
                       fieldKey: const Key('credit-card-balance-field'),
                       controller: currentBalanceController,
+                      isAmount: true,
                       prefixText: '$currency ',
                       keyboardType: const TextInputType.numberWithOptions(
                         decimal: true,
@@ -341,26 +345,6 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                       validator: _dayRequired,
                     ),
                   ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    child: Text(
-                      'ⓘ  消费按交易日期自动归入对应账单',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  const CompassSectionLabel('当前账期'),
-                  const _AccountCyclePreview(),
-                  const SizedBox(height: 12),
-                  const _AccountEditorRow(
-                    icon: Icons.image_outlined,
-                    label: '账户图标',
-                    child: Text('通用图标'),
-                  ),
-                  Text(
-                    '银行图标将在未来版本提供',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
                 ] else if (isLoan) ...[
                   const SizedBox(height: 16),
                   const CompassSectionLabel('贷款条件'),
@@ -369,6 +353,7 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                     label: '贷款金额',
                     child: _InlineTextEditor(
                       controller: loanPrincipalController,
+                      isAmount: true,
                       prefixText: '$currency ',
                       keyboardType:
                           const TextInputType.numberWithOptions(decimal: true),
@@ -464,6 +449,7 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                       label: '银行核定月供',
                       child: _InlineTextEditor(
                         controller: loanQuotedPaymentController,
+                        isAmount: true,
                         prefixText: '$currency ',
                         hintText: '可选',
                         keyboardType: const TextInputType.numberWithOptions(
@@ -479,6 +465,7 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                     child: _InlineTextEditor(
                       fieldKey: const Key('loan-opening-balance'),
                       controller: loanOpeningBalanceController,
+                      isAmount: true,
                       prefixText: '$currency ',
                       hintText: '默认贷款金额',
                       keyboardType: const TextInputType.numberWithOptions(
@@ -495,7 +482,7 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    '中途开始记账时，填写截至开始日的剩余贷款；以前已还的期数不会生成交易。首期从开始日的下一个月计算。',
+                    '填写开始日的剩余贷款。首期从下月计算。',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ] else ...[
@@ -506,6 +493,7 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                     label: '初始余额',
                     child: _InlineTextEditor(
                       controller: initialBalanceController,
+                      isAmount: true,
                       prefixText: '$currency ',
                       keyboardType:
                           const TextInputType.numberWithOptions(decimal: true),
@@ -517,6 +505,7 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                     label: '当前余额',
                     child: _InlineTextEditor(
                       controller: currentBalanceController,
+                      isAmount: true,
                       prefixText: '$currency ',
                       keyboardType:
                           const TextInputType.numberWithOptions(decimal: true),
@@ -530,9 +519,10 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                   const SizedBox(height: 8),
                   TextButton(
                     onPressed: () => Navigator.of(context).pop(),
-                    child: const Text(
+                    child: Text(
                       '停用账户',
-                      style: TextStyle(color: FinanceColors.compassOrange),
+                      style:
+                          TextStyle(color: financePaletteOf(context).expense),
                     ),
                   ),
                 ],
@@ -819,15 +809,16 @@ class _AccountEditorRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
         constraints: const BoxConstraints(minHeight: 50),
-        decoration: const BoxDecoration(
-          border:
-              Border(bottom: BorderSide(color: FinanceColors.compassBorder)),
+        decoration: BoxDecoration(
+          border: Border(
+              bottom: BorderSide(color: financePaletteOf(context).border)),
         ),
         child: Row(
           children: [
             SizedBox(
               width: 36,
-              child: Icon(icon, color: FinanceColors.compassTeal, size: 21),
+              child:
+                  Icon(icon, color: financePaletteOf(context).seed, size: 21),
             ),
             const SizedBox(width: 6),
             Expanded(child: Text(label)),
@@ -841,6 +832,7 @@ class _InlineTextEditor extends StatelessWidget {
   const _InlineTextEditor({
     required this.controller,
     this.fieldKey,
+    this.isAmount = false,
     this.validator,
     this.hintText,
     this.prefixText,
@@ -851,6 +843,7 @@ class _InlineTextEditor extends StatelessWidget {
 
   final TextEditingController controller;
   final Key? fieldKey;
+  final bool isAmount;
   final FormFieldValidator<String>? validator;
   final String? hintText;
   final String? prefixText;
@@ -859,27 +852,41 @@ class _InlineTextEditor extends StatelessWidget {
   final ValueChanged<String>? onChanged;
 
   @override
-  Widget build(BuildContext context) => TextFormField(
-        key: fieldKey,
+  Widget build(BuildContext context) {
+    final decoration = InputDecoration(
+      hintText: hintText,
+      prefixText: prefixText,
+      suffixText: suffixText,
+      isDense: true,
+      border: InputBorder.none,
+      enabledBorder: InputBorder.none,
+      focusedBorder: InputBorder.none,
+      errorBorder: InputBorder.none,
+      focusedErrorBorder: InputBorder.none,
+      contentPadding: const EdgeInsets.symmetric(vertical: 12),
+    );
+    if (isAmount) {
+      return FinanceAmountField(
+        fieldKey: fieldKey,
         controller: controller,
         validator: validator,
-        keyboardType: keyboardType,
         onChanged: onChanged,
         textAlign: TextAlign.right,
         style: Theme.of(context).textTheme.bodyMedium,
-        decoration: InputDecoration(
-          hintText: hintText,
-          prefixText: prefixText,
-          suffixText: suffixText,
-          isDense: true,
-          border: InputBorder.none,
-          enabledBorder: InputBorder.none,
-          focusedBorder: InputBorder.none,
-          errorBorder: InputBorder.none,
-          focusedErrorBorder: InputBorder.none,
-          contentPadding: const EdgeInsets.symmetric(vertical: 12),
-        ),
+        decoration: decoration,
       );
+    }
+    return TextFormField(
+      key: fieldKey,
+      controller: controller,
+      validator: validator,
+      keyboardType: keyboardType,
+      onChanged: onChanged,
+      textAlign: TextAlign.right,
+      style: Theme.of(context).textTheme.bodyMedium,
+      decoration: decoration,
+    );
+  }
 }
 
 class _LoanPaymentPreview extends StatelessWidget {
@@ -946,89 +953,4 @@ class _LoanPreviewMetric extends StatelessWidget {
           ),
         ],
       );
-}
-
-class _AccountCyclePreview extends StatelessWidget {
-  const _AccountCyclePreview();
-
-  @override
-  Widget build(BuildContext context) {
-    const items = [
-      ('6月13日', '开始', false),
-      ('7月12日', '已结算', false),
-      ('7月28日', '还款', true),
-      ('8月12日', '下期结算', false),
-    ];
-    return Column(
-      children: [
-        Row(
-          children: List.generate(items.length, (index) {
-            return Expanded(
-              child: Row(
-                children: [
-                  Container(
-                    width: 12,
-                    height: 12,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: index < 2
-                          ? FinanceColors.compassTeal
-                          : Colors.transparent,
-                      border: Border.all(
-                        width: 2,
-                        color: items[index].$3
-                            ? FinanceColors.compassOrange
-                            : FinanceColors.compassTeal,
-                      ),
-                    ),
-                  ),
-                  Expanded(
-                    child: Container(
-                      height: 2,
-                      color: index < 2
-                          ? FinanceColors.compassTeal
-                          : index == 2
-                              ? FinanceColors.compassOrange
-                              : FinanceColors.compassBorder,
-                    ),
-                  ),
-                ],
-              ),
-            );
-          }),
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: items
-              .map(
-                (item) => Expanded(
-                  child: Column(
-                    children: [
-                      Text(
-                        item.$1,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: item.$3
-                              ? FinanceColors.compassOrange
-                              : FinanceColors.compassMuted,
-                        ),
-                      ),
-                      Text(
-                        item.$2,
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: item.$3
-                              ? FinanceColors.compassOrange
-                              : FinanceColors.compassMuted,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              )
-              .toList(),
-        ),
-      ],
-    );
-  }
 }

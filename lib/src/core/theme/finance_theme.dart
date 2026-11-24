@@ -18,6 +18,7 @@ class FinanceThemePalette {
     required this.gradient,
     required this.income,
     required this.expense,
+    this.monochrome = false,
   });
 
   final Color seed;
@@ -34,6 +35,7 @@ class FinanceThemePalette {
   final List<Color> gradient;
   final Color income;
   final Color expense;
+  final bool monochrome;
 }
 
 @immutable
@@ -64,15 +66,39 @@ FinanceThemePalette financePaletteOf(BuildContext context) =>
           : AppThemeStyle.tide,
     );
 
+Color financeForegroundOn(Color background) {
+  final luminance = background.computeLuminance();
+  final contrastWithBlack = (luminance + .05) / .05;
+  final contrastWithWhite = 1.05 / (luminance + .05);
+  return contrastWithBlack >= contrastWithWhite ? Colors.black : Colors.white;
+}
+
 FinanceThemePalette paletteForStyle(AppThemeStyle style) {
-  // Shared semantic colors — muted and gentle, not high-contrast.
-  const incomeColor = Color(0xFF7BAE8A); // soft sage green
-  const expenseColor = Color(0xFFD49A9A); // soft dusty rose
+  const incomeColor = Color(0xFF356046);
+  const expenseColor = Color(0xFFA13E48);
 
   switch (style) {
+    case AppThemeStyle.monochrome:
+      return const FinanceThemePalette(
+        seed: Color(0xFF151515),
+        background: Color(0xFFFAFAF8),
+        backgroundTop: Color(0xFFFAFAF8),
+        backgroundBottom: Color(0xFFFAFAF8),
+        surface: Color(0xFFFFFFFF),
+        surfaceAlt: Color(0xFFECECEC),
+        border: Color(0xFFD5D5D5),
+        cardTint: Color(0xFFFFFFFF),
+        cardBorderStrong: Color(0xFF969696),
+        textPrimary: Color(0xFF151515),
+        textMuted: Color(0xFF5A5A5A),
+        gradient: [Color(0xFFCDCDCD), Color(0xFFF3F3F3)],
+        income: Color(0xFF454545),
+        expense: Color(0xFF151515),
+        monochrome: true,
+      );
     case AppThemeStyle.tide:
       return const FinanceThemePalette(
-        seed: Color(0xFF6A9E95),
+        seed: Color(0xFF4C7269),
         background: Color(0xFFF6F8FA),
         backgroundTop: Color(0xFFFAFBFC),
         backgroundBottom: Color(0xFFF1F4F7),
@@ -82,14 +108,14 @@ FinanceThemePalette paletteForStyle(AppThemeStyle style) {
         cardTint: Color(0xFFEFF5F3),
         cardBorderStrong: Color(0xFFB8D4CE),
         textPrimary: Color(0xFF3D6058),
-        textMuted: Color(0xFF8A939B),
+        textMuted: Color(0xFF5C6770),
         gradient: [Color(0xFFA8D5CC), Color(0xFFE2EDE9)],
         income: incomeColor,
         expense: expenseColor,
       );
     case AppThemeStyle.ocean:
       return const FinanceThemePalette(
-        seed: Color(0xFF5A9EB5),
+        seed: Color(0xFF397388),
         background: Color(0xFFF3F7FA),
         backgroundTop: Color(0xFFF8FBFD),
         backgroundBottom: Color(0xFFEAF0F5),
@@ -99,14 +125,14 @@ FinanceThemePalette paletteForStyle(AppThemeStyle style) {
         cardTint: Color(0xFFEAF3F8),
         cardBorderStrong: Color(0xFFA3C9DA),
         textPrimary: Color(0xFF3A6A7E),
-        textMuted: Color(0xFF8496A2),
+        textMuted: Color(0xFF536976),
         gradient: [Color(0xFF7BB8D4), Color(0xFFD0E6F0)],
         income: incomeColor,
         expense: expenseColor,
       );
     case AppThemeStyle.sky:
       return const FinanceThemePalette(
-        seed: Color(0xFF7A9FD0),
+        seed: Color(0xFF48688F),
         background: Color(0xFFF4F6FB),
         backgroundTop: Color(0xFFFAFBFE),
         backgroundBottom: Color(0xFFECF0F8),
@@ -116,14 +142,14 @@ FinanceThemePalette paletteForStyle(AppThemeStyle style) {
         cardTint: Color(0xFFECF1FC),
         cardBorderStrong: Color(0xFFB0C6E4),
         textPrimary: Color(0xFF446387),
-        textMuted: Color(0xFF8490A4),
+        textMuted: Color(0xFF55647B),
         gradient: [Color(0xFF9FC4F0), Color(0xFFDAE6F8)],
         income: incomeColor,
         expense: expenseColor,
       );
     case AppThemeStyle.ember:
       return const FinanceThemePalette(
-        seed: Color(0xFFC49070),
+        seed: Color(0xFF915B3E),
         background: Color(0xFFF8F6F5),
         backgroundTop: Color(0xFFFCFAF9),
         backgroundBottom: Color(0xFFF3EEEB),
@@ -133,14 +159,14 @@ FinanceThemePalette paletteForStyle(AppThemeStyle style) {
         cardTint: Color(0xFFF8EDE5),
         cardBorderStrong: Color(0xFFDDBAA0),
         textPrimary: Color(0xFF7A5E48),
-        textMuted: Color(0xFF948478),
+        textMuted: Color(0xFF6F594B),
         gradient: [Color(0xFFF0D0BA), Color(0xFFF8EBE0)],
         income: incomeColor,
         expense: expenseColor,
       );
     case AppThemeStyle.forest:
       return const FinanceThemePalette(
-        seed: Color(0xFF8BA480),
+        seed: Color(0xFF546D47),
         background: Color(0xFFF5F7F3),
         backgroundTop: Color(0xFFFAFBF8),
         backgroundBottom: Color(0xFFEFF3EB),
@@ -150,14 +176,14 @@ FinanceThemePalette paletteForStyle(AppThemeStyle style) {
         cardTint: Color(0xFFEFF5EA),
         cardBorderStrong: Color(0xFFB8CBAD),
         textPrimary: Color(0xFF4D6643),
-        textMuted: Color(0xFF8A9282),
+        textMuted: Color(0xFF59664E),
         gradient: [Color(0xFFC0D4B2), Color(0xFFE4ECD9)],
         income: incomeColor,
         expense: expenseColor,
       );
     case AppThemeStyle.dune:
       return const FinanceThemePalette(
-        seed: Color(0xFFC4966A),
+        seed: Color(0xFF885A32),
         background: Color(0xFFFAF5EF),
         backgroundTop: Color(0xFFFDFAF6),
         backgroundBottom: Color(0xFFF4E8DB),
@@ -167,14 +193,14 @@ FinanceThemePalette paletteForStyle(AppThemeStyle style) {
         cardTint: Color(0xFFF8ECE0),
         cardBorderStrong: Color(0xFFDABB96),
         textPrimary: Color(0xFF7A5C3E),
-        textMuted: Color(0xFF9A8575),
+        textMuted: Color(0xFF705844),
         gradient: [Color(0xFFE8C8A0), Color(0xFFF5E8D6)],
         income: incomeColor,
         expense: expenseColor,
       );
     case AppThemeStyle.aurora:
       return const FinanceThemePalette(
-        seed: Color(0xFF8C7EC8),
+        seed: Color(0xFF6656A2),
         background: Color(0xFFF5F3FA),
         backgroundTop: Color(0xFFFAF9FE),
         backgroundBottom: Color(0xFFEEEAF6),
@@ -184,14 +210,14 @@ FinanceThemePalette paletteForStyle(AppThemeStyle style) {
         cardTint: Color(0xFFF0EDFC),
         cardBorderStrong: Color(0xFFBEB4E4),
         textPrimary: Color(0xFF5C5098),
-        textMuted: Color(0xFF908AA4),
+        textMuted: Color(0xFF675C7B),
         gradient: [Color(0xFFA89EED), Color(0xFFD4CFFF)],
         income: incomeColor,
         expense: expenseColor,
       );
     case AppThemeStyle.night:
       return const FinanceThemePalette(
-        seed: Color(0xFF4A6FA5),
+        seed: Color(0xFF7197D1),
         background: Color(0xFF0A0A0A),
         backgroundTop: Color(0xFF101418),
         backgroundBottom: Color(0xFF080808),
@@ -225,7 +251,7 @@ FinanceThemePalette paletteForStyle(AppThemeStyle style) {
       );
     case AppThemeStyle.graphite:
       return const FinanceThemePalette(
-        seed: Color(0xFF888888),
+        seed: Color(0xFFA5A5A5),
         background: Color(0xFF1A1A1A),
         backgroundTop: Color(0xFF202020),
         backgroundBottom: Color(0xFF161616),
@@ -242,7 +268,7 @@ FinanceThemePalette paletteForStyle(AppThemeStyle style) {
       );
     case AppThemeStyle.darkGreen:
       return const FinanceThemePalette(
-        seed: Color(0xFF4A8B6E),
+        seed: Color(0xFF6CAC90),
         background: Color(0xFF0D1210),
         backgroundTop: Color(0xFF121816),
         backgroundBottom: Color(0xFF0A0E0C),
@@ -259,7 +285,7 @@ FinanceThemePalette paletteForStyle(AppThemeStyle style) {
       );
     case AppThemeStyle.darkWood:
       return const FinanceThemePalette(
-        seed: Color(0xFFA08060),
+        seed: Color(0xFFBB9574),
         background: Color(0xFF141010),
         backgroundTop: Color(0xFF1A1614),
         backgroundBottom: Color(0xFF100E0C),
@@ -277,24 +303,37 @@ FinanceThemePalette paletteForStyle(AppThemeStyle style) {
   }
 }
 
-ThemeData buildFinanceTheme(AppThemeStyle style) {
+ThemeData buildFinanceTheme(AppThemeStyle style, {Locale? locale}) {
+  final deviceLocale =
+      locale ?? WidgetsBinding.instance.platformDispatcher.locale;
+  final language = deviceLocale.languageCode;
+  final script = deviceLocale.scriptCode;
+  final isChinese = language == 'zh' || language == 'yue';
+  final prefersTraditional = isChinese &&
+      (script == 'Hant' ||
+          (script == null &&
+              (language == 'yue' ||
+                  const {'TW', 'HK', 'MO'}
+                      .contains(deviceLocale.countryCode))));
+  final fontFamily = prefersTraditional ? 'MiSans TC' : 'MiSans';
+  final fontFallback =
+      prefersTraditional ? const ['MiSans'] : const ['MiSans TC'];
   final palette = paletteForStyle(style);
-  final isDark = {
-    AppThemeStyle.night,
-    AppThemeStyle.abyss,
-    AppThemeStyle.graphite,
-    AppThemeStyle.darkGreen,
-    AppThemeStyle.darkWood,
-  }.contains(style);
+  final isDark = style.isDark;
   final generatedScheme = ColorScheme.fromSeed(
     seedColor: palette.seed,
     brightness: isDark ? Brightness.dark : Brightness.light,
+    dynamicSchemeVariant: palette.monochrome
+        ? DynamicSchemeVariant.monochrome
+        : DynamicSchemeVariant.tonalSpot,
   );
   final colorScheme = generatedScheme.copyWith(
     primary: palette.seed,
-    onPrimary: Colors.white,
+    onPrimary: financeForegroundOn(palette.seed),
     secondary: palette.income,
+    onSecondary: financeForegroundOn(palette.income),
     tertiary: palette.expense,
+    onTertiary: financeForegroundOn(palette.expense),
     surface: palette.surface,
     onSurface: palette.textPrimary,
     outline: palette.border,
@@ -303,6 +342,8 @@ ThemeData buildFinanceTheme(AppThemeStyle style) {
 
   return ThemeData(
     useMaterial3: true,
+    fontFamily: fontFamily,
+    fontFamilyFallback: fontFallback,
     colorScheme: colorScheme,
     extensions: [FinanceThemeTokens(palette: palette)],
     scaffoldBackgroundColor: palette.background,
@@ -373,6 +414,8 @@ ThemeData buildFinanceTheme(AppThemeStyle style) {
       surfaceTintColor: Colors.transparent,
       centerTitle: false,
       titleTextStyle: TextStyle(
+        fontFamily: fontFamily,
+        fontFamilyFallback: fontFallback,
         color: palette.textPrimary,
         fontSize: 21,
         fontWeight: FontWeight.w700,
@@ -416,7 +459,7 @@ ThemeData buildFinanceTheme(AppThemeStyle style) {
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
         backgroundColor: palette.seed,
-        foregroundColor: isDark ? Colors.white : Colors.white,
+        foregroundColor: colorScheme.onPrimary,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
         elevation: 0,
@@ -443,6 +486,8 @@ ThemeData buildFinanceTheme(AppThemeStyle style) {
       shadowColor: Colors.transparent,
       surfaceTintColor: Colors.transparent,
       labelTextStyle: WidgetStateProperty.resolveWith((states) => TextStyle(
+            fontFamily: fontFamily,
+            fontFamilyFallback: fontFallback,
             color: states.contains(WidgetState.selected)
                 ? palette.seed
                 : palette.textMuted,
@@ -463,6 +508,8 @@ ThemeData buildFinanceTheme(AppThemeStyle style) {
           ? palette.surfaceAlt.withValues(alpha: 0.95)
           : palette.textPrimary.withValues(alpha: 0.88),
       contentTextStyle: TextStyle(
+        fontFamily: fontFamily,
+        fontFamilyFallback: fontFallback,
         color: isDark ? palette.textPrimary : Colors.white,
       ),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),

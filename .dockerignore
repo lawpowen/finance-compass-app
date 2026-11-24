@@ -16,3 +16,4 @@ app-*.apk
 *.jks
 *.keystore
 android/key.properties
+server/node_modules

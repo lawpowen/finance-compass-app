@@ -6,7 +6,14 @@ import '../../core/theme/finance_colors.dart';
 import '../../core/theme/finance_theme.dart';
 
 const compassPagePadding = EdgeInsets.fromLTRB(20, 16, 20, 28);
+const compassDesktopPagePadding = EdgeInsets.fromLTRB(28, 24, 28, 32);
+const compassDesktopMinWidth = 960.0;
 const compassHairline = Divider(height: 1, thickness: .7);
+
+EdgeInsets compassScrollPadding(BuildContext context, EdgeInsets padding) =>
+    padding.copyWith(
+      bottom: padding.bottom + MediaQuery.paddingOf(context).bottom,
+    );
 bool _compassUseCurrencyCode = true;
 bool _compassUseEuropeanSeparators = false;
 
@@ -18,7 +25,12 @@ void setCompassMoneyStyle({
   _compassUseEuropeanSeparators = useEuropeanSeparators;
 }
 
-String compassMoney(double value, {String currency = 'MYR', int decimals = 2}) {
+String compassMoney(
+  double value, {
+  String currency = 'MYR',
+  int decimals = 2,
+  bool showCurrency = true,
+}) {
   final negative = value < 0;
   final parts = value.abs().toStringAsFixed(decimals).split('.');
   final grouped = parts.first.replaceAllMapped(
@@ -27,6 +39,7 @@ String compassMoney(double value, {String currency = 'MYR', int decimals = 2}) {
   );
   final decimalMark = _compassUseEuropeanSeparators ? ',' : '.';
   final fraction = decimals == 0 ? '' : '$decimalMark${parts.last}';
+  if (!showCurrency) return '${negative ? '-' : ''}$grouped$fraction';
   final prefix = _compassUseCurrencyCode
       ? currency
       : switch (currency.toUpperCase()) {
@@ -277,7 +290,7 @@ class CompassActionBubble extends StatelessWidget {
         heroTag: heroTag,
         onPressed: onPressed,
         backgroundColor: resolvedColor,
-        foregroundColor: Colors.white,
+        foregroundColor: financeForegroundOn(resolvedColor),
         elevation: 8,
         shape: const CircleBorder(),
         child: Icon(icon, size: size * .48),
@@ -421,7 +434,7 @@ class CompassPrimaryButton extends StatelessWidget {
     required this.onPressed,
     this.icon,
     this.outlined = false,
-    this.color = FinanceColors.compassOrange,
+    this.color,
     this.height = 54,
   });
 
@@ -429,11 +442,12 @@ class CompassPrimaryButton extends StatelessWidget {
   final VoidCallback? onPressed;
   final IconData? icon;
   final bool outlined;
-  final Color color;
+  final Color? color;
   final double height;
 
   @override
   Widget build(BuildContext context) {
+    final resolvedColor = color ?? financePaletteOf(context).expense;
     final child = Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
@@ -448,8 +462,8 @@ class CompassPrimaryButton extends StatelessWidget {
           ? OutlinedButton(
               onPressed: onPressed,
               style: OutlinedButton.styleFrom(
-                foregroundColor: color,
-                side: BorderSide(color: color),
+                foregroundColor: resolvedColor,
+                side: BorderSide(color: resolvedColor),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8),
                 ),
@@ -459,8 +473,8 @@ class CompassPrimaryButton extends StatelessWidget {
           : FilledButton(
               onPressed: onPressed,
               style: FilledButton.styleFrom(
-                backgroundColor: color,
-                foregroundColor: Colors.white,
+                backgroundColor: resolvedColor,
+                foregroundColor: financeForegroundOn(resolvedColor),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8),
                 ),
@@ -505,8 +519,8 @@ class CompassDistributionBar extends StatelessWidget {
                     : Center(
                         child: Text(
                           labels![index],
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: financeForegroundOn(colors[index]),
                             fontSize: 11,
                             fontWeight: FontWeight.w700,
                           ),
@@ -574,10 +588,15 @@ class _CompassAreaChartPainter extends CustomPainter {
     final minValue = values.reduce(math.min);
     final maxValue = values.reduce(math.max);
     final range = math.max(1, maxValue - minValue);
-    Offset pointAt(int index) => Offset(
-          size.width * index / (values.length - 1),
-          size.height * (.1 + .72 * (1 - (values[index] - minValue) / range)),
-        );
+    Offset pointAt(int index) {
+      final fraction =
+          minValue == maxValue ? .5 : (values[index] - minValue) / range;
+      return Offset(
+        size.width * index / (values.length - 1),
+        size.height * (.1 + .72 * (1 - fraction)),
+      );
+    }
+
     final path = Path()..moveTo(pointAt(0).dx, pointAt(0).dy);
     for (var i = 1; i < values.length; i++) {
       final previous = pointAt(i - 1);

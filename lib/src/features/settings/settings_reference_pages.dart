@@ -12,29 +12,55 @@ import '../../core/providers/mutations/export_mutations.dart';
 import '../../core/providers/repository_provider.dart';
 import '../../core/services/ai_analysis_service.dart';
 import '../../core/settings/app_settings_controller.dart';
-import '../../core/settings/app_theme_style.dart';
+import '../../core/sync/ledger_sync.dart';
+import '../../core/sync/push_notifications.dart';
 import '../../core/theme/finance_colors.dart';
 import '../../core/theme/finance_theme.dart';
 import '../../core/utils/month_range.dart';
 import '../categories/category_manage_screen.dart';
 import '../shared/compass_ui.dart';
 import '../transactions/transaction_automation_pages.dart';
+import 'import_ledger_dialog.dart';
 import 'settings_screen.dart';
 
-class AccountSyncPage extends StatefulWidget {
+class AccountSyncPage extends ConsumerStatefulWidget {
   const AccountSyncPage({super.key, required this.repository});
 
   final FinanceRepository repository;
 
   @override
-  State<AccountSyncPage> createState() => _AccountSyncPageState();
+  ConsumerState<AccountSyncPage> createState() => _AccountSyncPageState();
 }
 
-class _AccountSyncPageState extends State<AccountSyncPage> {
-  final enabled = <bool>[false, false, false, false];
-
+class _AccountSyncPageState extends ConsumerState<AccountSyncPage> {
   @override
-  Widget build(BuildContext context) => _SettingsDetailShell(
+  Widget build(BuildContext context) {
+    if (ref.watch(ledgerSyncSessionProvider) != null) {
+      return _SettingsDetailShell(
+        title: '账户与同步',
+        children: [
+          const ListTile(
+            leading: Icon(Icons.cloud_done_outlined),
+            title: Text('已登录同步账本'),
+          ),
+          CompassSettingsRow(
+            icon: Icons.download_outlined,
+            title: '备份当前账本',
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) =>
+                    BackupRestorePage(repository: widget.repository),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+    return _buildLocal(context);
+  }
+
+  Widget _buildLocal(BuildContext context) => _SettingsDetailShell(
         title: '账户与同步',
         children: [
           Row(
@@ -52,71 +78,12 @@ class _AccountSyncPageState extends State<AccountSyncPage> {
                     Text('本地模式', style: Theme.of(context).textTheme.titleLarge),
                     Text('${widget.repository.transactions.length} 条交易仅保存在此设备',
                         style: Theme.of(context).textTheme.bodySmall),
-                    const Text(
-                      '● 离线可用',
-                      style: TextStyle(color: FinanceColors.compassTeal),
-                    ),
                   ],
                 ),
               ),
             ],
           ),
           const SizedBox(height: 24),
-          OutlinedButton.icon(
-            onPressed: null,
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size.fromHeight(58),
-              foregroundColor: FinanceColors.compassText,
-            ),
-            icon: const Icon(Icons.cloud_outlined,
-                color: FinanceColors.compassTeal),
-            label: const Row(
-              children: [
-                Text('使用 Google 登录', style: TextStyle(fontSize: 18)),
-                Spacer(),
-                Text('计划中'),
-              ],
-            ),
-          ),
-          const SizedBox(height: 10),
-          Center(
-            child: Text(
-              '登录后可跨设备同步；不登录也能使用全部本地功能',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ),
-          const SizedBox(height: 30),
-          const CompassSectionLabel('计划同步的内容'),
-          ...[
-            (Icons.account_balance_wallet_outlined, '账户与交易'),
-            (Icons.pie_chart_outline_rounded, '预算与类别'),
-            (Icons.calendar_month_outlined, '模板与周期规则'),
-            (Icons.settings_outlined, '应用偏好'),
-          ].indexed.map(
-                (entry) => SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  secondary:
-                      Icon(entry.$2.$1, color: FinanceColors.compassTeal),
-                  title: Text(entry.$2.$2),
-                  value: enabled[entry.$1],
-                  onChanged: null,
-                ),
-              ),
-          const SizedBox(height: 20),
-          const CompassSectionLabel('首次同步'),
-          const CompassSettingsRow(
-            icon: Icons.cloud_upload_outlined,
-            title: '同步前自动备份',
-            value: '随 Google 同步开放',
-          ),
-          const CompassSettingsRow(
-            icon: Icons.warning_amber_rounded,
-            title: '发现冲突',
-            value: '保留两份并提醒选择',
-          ),
-          Text('ⓘ  仅同步应用数据，不上传导出的 JSON / CSV 文件',
-              style: Theme.of(context).textTheme.bodySmall),
-          const SizedBox(height: 22),
           CompassPrimaryButton(
             label: '备份当前数据',
             icon: Icons.cloud_upload_outlined,
@@ -312,19 +279,25 @@ class _CurrencyDisplayPageState extends ConsumerState<CurrencyDisplayPage> {
       );
 
   Future<void> _saveDisplayPreferences() async {
-    await widget.repository.database.setMetaValue(
-      'currency_symbol_style',
-      symbol == 0 ? 'symbol' : 'code',
-    );
-    await widget.repository.database.setMetaValue(
-      'number_separator_style',
-      separator == 1 ? 'space_comma' : 'comma_dot',
-    );
+    await ref
+        .read(financeRepositoryProvider.notifier)
+        .mutate((repository) async {
+      await repository.database.transaction(() async {
+        await repository.database.setMetaValue(
+          'currency_symbol_style',
+          symbol == 0 ? 'symbol' : 'code',
+        );
+        await repository.database.setMetaValue(
+          'number_separator_style',
+          separator == 1 ? 'space_comma' : 'comma_dot',
+        );
+      });
+      return repository.refresh();
+    });
     setCompassMoneyStyle(
       useCurrencyCode: symbol == 1,
       useEuropeanSeparators: separator == 1,
     );
-    ref.invalidate(financeRepositoryProvider);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('金额显示方式已保存。')),
@@ -339,38 +312,12 @@ class FinanceRulesCenterPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final total = repository.categories.length +
-        repository.transactionTemplates.length +
-        repository.recurringTransactionRules.length;
-    final activeRules = repository.recurringTransactionRules
-        .where((rule) => rule.isActive)
-        .length;
     return _SettingsDetailShell(
       title: '规则中心',
       children: [
-        Text(
-          '$total',
-          style: const TextStyle(
-            color: FinanceColors.compassTeal,
-            fontSize: 42,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        Text('项财务规则', style: Theme.of(context).textTheme.headlineSmall),
-        const SizedBox(height: 6),
-        Text(
-            '${repository.categories.length} 类别 · '
-            '${repository.transactionTemplates.length} 模板 · '
-            '${repository.recurringTransactionRules.length} 周期规则',
-            style: Theme.of(context).textTheme.bodySmall),
-        const SizedBox(height: 28),
-        compassHairline,
-        const SizedBox(height: 26),
-        const CompassSectionLabel('管理规则'),
         _LargeRuleRow(
           icon: Icons.sell_outlined,
           title: '类别管理',
-          subtitle: '支出、收入、投资与转账',
           value: '${repository.categories.length} 个',
           onTap: () => Navigator.push(
             context,
@@ -382,7 +329,6 @@ class FinanceRulesCenterPage extends StatelessWidget {
         _LargeRuleRow(
           icon: Icons.bolt_rounded,
           title: '快速模板',
-          subtitle: '前 5 个显示在闪电快捷面板',
           value: '${repository.transactionTemplates.length} 个',
           onTap: () => Navigator.push(
             context,
@@ -394,7 +340,6 @@ class FinanceRulesCenterPage extends StatelessWidget {
         _LargeRuleRow(
           icon: Icons.event_repeat_outlined,
           title: '周期交易',
-          subtitle: '自动生成未来计划',
           value: '${repository.recurringTransactionRules.length} 条',
           onTap: () => Navigator.push(
             context,
@@ -403,36 +348,6 @@ class FinanceRulesCenterPage extends StatelessWidget {
             ),
           ),
         ),
-        const SizedBox(height: 26),
-        const CompassSectionLabel('需要关注'),
-        _LargeRuleRow(
-          icon: Icons.notifications_none_rounded,
-          title: '$activeRules 条周期规则正在运行',
-          subtitle: '',
-          value: '查看',
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => RecurringPlanPage(repository: repository),
-            ),
-          ),
-        ),
-        _LargeRuleRow(
-          icon: Icons.format_list_numbered_rounded,
-          title:
-              '快捷入口已使用 ${repository.transactionTemplates.length.clamp(0, 5)} / 5 个位置',
-          subtitle: '',
-          value: '调整顺序',
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => QuickTemplateManagerPage(repository: repository),
-            ),
-          ),
-        ),
-        const SizedBox(height: 18),
-        Text('ⓘ  类别会被模板和周期规则共同引用',
-            style: Theme.of(context).textTheme.bodySmall),
       ],
     );
   }
@@ -459,7 +374,10 @@ class _BackupRestorePageState extends ConsumerState<BackupRestorePage> {
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('操作失败：$error')),
+          SnackBar(
+              content: Text(
+            '操作失败：${error is FormatException ? error.message : error}',
+          )),
         );
       }
     } finally {
@@ -484,58 +402,34 @@ class _BackupRestorePageState extends ConsumerState<BackupRestorePage> {
       });
 
   Future<void> _restoreBackup() => _run(() async {
-        final imported = await _pickPreviewAndImport(context, ref);
+        final imported = await pickPreviewAndImportLedger(context, ref);
         if (!mounted || !imported) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('恢复完成，当前数据已重新载入。')),
         );
-        Navigator.of(context, rootNavigator: true)
-            .popUntil((route) => route.isFirst);
+        Navigator.of(context).popUntil((route) => route.isFirst);
       });
 
   @override
-  Widget build(BuildContext context) => _SettingsDetailShell(
+  Widget build(BuildContext context) => _buildBackup(
+        context,
+        syncing: ref.watch(ledgerSyncSessionProvider) != null,
+      );
+
+  Widget _buildBackup(BuildContext context, {required bool syncing}) =>
+      _SettingsDetailShell(
         title: '备份、恢复与迁移',
-        help: true,
         children: [
-          Row(
-            children: [
-              const Icon(Icons.verified_user_outlined,
-                  size: 80, color: FinanceColors.compassTeal),
-              const SizedBox(width: 20),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _lastBackupName == null ? '可以创建本地备份' : '最近备份已保存',
-                      style:
-                          Theme.of(context).textTheme.headlineSmall?.copyWith(
-                                color: FinanceColors.compassTeal,
-                              ),
-                    ),
-                    Text(_lastBackupName ?? '尚未在本次会话中手动备份',
-                        style: Theme.of(context).textTheme.bodySmall),
-                  ],
-                ),
-              ),
-            ],
+          Text(
+            syncing ? '账本保存在同步服务器' : '仅保存在此设备',
+            style: Theme.of(context).textTheme.bodySmall,
           ),
-          const SizedBox(height: 20),
-          Center(
-            child: Text(
-              '${widget.repository.transactions.length} 条交易 · '
-              '${widget.repository.categories.length} 个类别 · '
-              '${widget.repository.transactionTemplates.length} 个模板 · '
-              '${widget.repository.recurringTransactionRules.length} 条周期规则',
-            ),
-          ),
-          const SizedBox(height: 6),
-          const Center(
-            child: Text('仅保存在此设备',
-                style: TextStyle(color: FinanceColors.compassTeal)),
-          ),
-          const SizedBox(height: 20),
+          if (_lastBackupName != null) ...[
+            const SizedBox(height: 8),
+            Text(_lastBackupName!,
+                style: Theme.of(context).textTheme.bodySmall),
+          ],
+          const SizedBox(height: 14),
           CompassPrimaryButton(
             label: '立即备份',
             icon: Icons.cloud_upload_outlined,
@@ -544,21 +438,10 @@ class _BackupRestorePageState extends ConsumerState<BackupRestorePage> {
           ),
           const SizedBox(height: 26),
           const CompassSectionLabel('自动保护'),
-          const CompassSettingsRow(
+          CompassSettingsRow(
             icon: Icons.verified_user_outlined,
-            title: '导入前自动恢复点',
-            subtitle: '每次替换资料前，应用会先保留当前数据库',
-            value: '已开启',
-          ),
-          const CompassSettingsRow(
-            icon: Icons.folder_outlined,
-            title: '保存位置',
-            value: '由系统文件选择器决定',
-          ),
-          const CompassSettingsRow(
-            icon: Icons.history_rounded,
-            title: '备份格式',
-            value: 'Finance Compass JSON',
+            title: kIsWeb ? '导入前手动备份' : '导入前自动恢复点',
+            subtitle: kIsWeb ? '替换账本前，请下载当前完整 JSON' : '每次替换资料前，应用会先保留当前数据库',
           ),
           const SizedBox(height: 24),
           const CompassSectionLabel('恢复与迁移'),
@@ -574,9 +457,6 @@ class _BackupRestorePageState extends ConsumerState<BackupRestorePage> {
             subtitle: '导出完整 JSON，再在新设备导入',
             onTap: _busy ? null : _createBackup,
           ),
-          const SizedBox(height: 18),
-          Text('ⓘ  备份不会上传到云端；Google 同步功能仍在计划中',
-              style: Theme.of(context).textTheme.bodySmall),
         ],
       );
 }
@@ -602,7 +482,10 @@ class _ImportExportPageState extends ConsumerState<ImportExportPage> {
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('操作失败：$error')),
+          SnackBar(
+              content: Text(
+            '操作失败：${error is FormatException ? error.message : error}',
+          )),
         );
       }
     } finally {
@@ -656,637 +539,55 @@ class _ImportExportPageState extends ConsumerState<ImportExportPage> {
       );
 
   Future<void> _import() => _run(() async {
-        final imported = await _pickPreviewAndImport(context, ref);
+        final imported = await pickPreviewAndImportLedger(context, ref);
         if (!mounted || !imported) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('导入完成，当前数据已重新载入。')),
         );
-        Navigator.of(context, rootNavigator: true)
-            .popUntil((route) => route.isFirst);
+        Navigator.of(context).popUntil((route) => route.isFirst);
       });
 
   @override
   Widget build(BuildContext context) => _SettingsDetailShell(
         title: '导入与导出',
-        help: true,
         children: [
-          Row(
-            children: [
-              const Icon(Icons.compare_arrows_rounded,
-                  color: FinanceColors.compassTeal, size: 92),
-              const SizedBox(width: 18),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '你的数据可以自由带走',
-                      style:
-                          Theme.of(context).textTheme.headlineSmall?.copyWith(
-                                color: FinanceColors.compassTeal,
-                              ),
-                    ),
-                    Text('文件由你保存，不会自动上传',
-                        style: Theme.of(context).textTheme.bodySmall),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 28),
           const CompassSectionLabel('完整资料'),
           CompassSettingsRow(
             icon: Icons.upload_file_outlined,
             title: '导出完整数据',
-            subtitle: 'JSON · 账户、交易、预算、类别、模板与周期规则',
-            value: '导出',
+            value: 'JSON',
             onTap: _busy ? null : _exportFull,
           ),
           CompassSettingsRow(
             icon: Icons.download_for_offline_outlined,
             title: '导入数据文件',
-            subtitle: '选择 Finance Compass JSON',
+            subtitle: '确认后替换当前账本',
             onTap: _busy ? null : _import,
-          ),
-          const Padding(
-            padding: EdgeInsets.only(left: 48, top: 2),
-            child: Text(
-              'ⓘ  导入前会先预览；确认后将替换当前资料，并自动创建恢复点',
-              style: TextStyle(color: FinanceColors.compassOrange),
-            ),
           ),
           const SizedBox(height: 30),
           const CompassSectionLabel('分析与规划'),
           CompassSettingsRow(
             icon: Icons.query_stats_rounded,
             title: 'AI 分析摘要',
-            subtitle: '去除不必要资料的分析用 JSON',
-            value: '导出',
+            value: 'JSON',
             onTap: _busy ? null : _exportAiSummary,
           ),
           CompassSettingsRow(
             icon: Icons.table_chart_outlined,
             title: '未来规划表',
-            subtitle: '未来 24 个月 · CSV',
-            value: '导出',
+            subtitle: '未来 24 个月',
+            value: 'CSV',
             onTap: _busy ? null : _exportFuturePlan,
           ),
-          const SizedBox(height: 30),
-          const CompassSectionLabel('最近导出'),
-          CompassSettingsRow(
-            icon: Icons.description_outlined,
-            title: _lastExport ?? '本次会话尚未导出',
-            subtitle: _lastExport == null ? '导出后会在这里显示文件名' : '已通过系统文件选择器保存',
-          ),
-          const SizedBox(height: 22),
-          Text('ⓘ  备份与恢复请前往上一项设置；导出文件不会自动加入备份',
-              style: Theme.of(context).textTheme.bodySmall),
-          const SizedBox(height: 18),
-          CompassPrimaryButton(
-            label: '导出完整数据',
-            icon: Icons.file_upload_outlined,
-            outlined: true,
-            onPressed: _busy ? null : () => _exportFull(),
-          ),
-        ],
-      );
-}
-
-class AppearancePage extends StatefulWidget {
-  const AppearancePage({super.key, required this.settingsController});
-  final AppSettingsController settingsController;
-
-  @override
-  State<AppearancePage> createState() => _AppearancePageState();
-}
-
-class _AppearancePageState extends State<AppearancePage> {
-  late final PageController _themePageController;
-  late AppThemeStyle _previewStyle;
-  late int mode;
-  int preview = 0;
-  int? _pageAnimationTarget;
-  int _pageAnimationGeneration = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    _previewStyle = widget.settingsController.themeStyle;
-    mode = _isDarkTheme(_previewStyle) ? 2 : 1;
-    _themePageController = PageController(
-      initialPage: AppThemeStyle.values.indexOf(_previewStyle),
-      viewportFraction: .84,
-    );
-  }
-
-  @override
-  void dispose() {
-    _themePageController.dispose();
-    super.dispose();
-  }
-
-  void _setPreviewStyle(AppThemeStyle style) {
-    _previewStyle = style;
-    mode = _isDarkTheme(style) ? 2 : 1;
-  }
-
-  void _previewTheme(AppThemeStyle style, {bool animate = true}) {
-    final index = AppThemeStyle.values.indexOf(style);
-    setState(() => _setPreviewStyle(style));
-    if (!animate || !_themePageController.hasClients) return;
-    final generation = ++_pageAnimationGeneration;
-    _pageAnimationTarget = index;
-    _themePageController
-        .animateToPage(
-      index,
-      duration: const Duration(milliseconds: 320),
-      curve: Curves.easeOutCubic,
-    )
-        .whenComplete(() {
-      if (!mounted || generation != _pageAnimationGeneration) return;
-      _pageAnimationTarget = null;
-      if (!_themePageController.hasClients) return;
-      final settled = _themePageController.page?.round();
-      if (settled != null && settled != index) {
-        setState(() => _setPreviewStyle(AppThemeStyle.values[settled]));
-      }
-    });
-  }
-
-  void _handlePageChanged(int index) {
-    final target = _pageAnimationTarget;
-    if (target != null && index != target) return;
-    setState(() => _setPreviewStyle(AppThemeStyle.values[index]));
-  }
-
-  Future<void> _applyPreviewTheme() async {
-    final style = _previewStyle;
-    await widget.settingsController.setThemeStyle(style);
-    if (!mounted) return;
-    setState(() {});
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('已应用「${_themeLabel(style)}」主题')),
-    );
-  }
-
-  Future<void> _showThemePicker() async {
-    final selected = await showModalBottomSheet<AppThemeStyle>(
-      context: context,
-      showDragHandle: true,
-      builder: (sheetContext) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-          children: [
-            Text('选择主题', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 8),
-            ...AppThemeStyle.values.map(
-              (style) => ListTile(
-                title: Text(_themeLabel(style)),
-                trailing: _previewStyle == style
-                    ? const Icon(Icons.check_rounded)
-                    : null,
-                onTap: () => Navigator.pop(sheetContext, style),
-              ),
+          if (_lastExport != null) ...[
+            const SizedBox(height: 24),
+            const CompassSectionLabel('最近导出'),
+            CompassSettingsRow(
+              icon: Icons.description_outlined,
+              title: _lastExport!,
             ),
           ],
-        ),
-      ),
-    );
-    if (selected != null) {
-      _previewTheme(selected);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final selectedIndex = AppThemeStyle.values.indexOf(_previewStyle);
-    final previewPalette = paletteForStyle(_previewStyle);
-    final isCurrent = widget.settingsController.themeStyle == _previewStyle;
-    return _SettingsDetailShell(
-      title: '外观与主题',
-      help: true,
-      children: [
-        const CompassSectionLabel('显示模式'),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
-          children: [
-            _ModeChoice(
-                label: '跟随系统（计划中）', icon: Icons.phone_android, selected: false),
-            _ModeChoice(
-                label: '浅色',
-                icon: Icons.light_mode_outlined,
-                selected: mode == 1,
-                onTap: () => _previewTheme(AppThemeStyle.tide)),
-            _ModeChoice(
-                label: '深色',
-                icon: Icons.dark_mode_outlined,
-                selected: mode == 2,
-                onTap: () => _previewTheme(AppThemeStyle.abyss)),
-          ],
-        ),
-        const SizedBox(height: 26),
-        const CompassSectionLabel('选择主题'),
-        const SizedBox(height: 4),
-        SizedBox(
-          height: 340,
-          child: PageView.builder(
-            controller: _themePageController,
-            itemCount: AppThemeStyle.values.length,
-            onPageChanged: _handlePageChanged,
-            itemBuilder: (context, index) {
-              final style = AppThemeStyle.values[index];
-              return AnimatedPadding(
-                duration: const Duration(milliseconds: 180),
-                padding: EdgeInsets.fromLTRB(
-                  6,
-                  index == selectedIndex ? 2 : 12,
-                  6,
-                  index == selectedIndex ? 2 : 12,
-                ),
-                child: _ThemePreviewCard(
-                  key: ValueKey('theme-preview-${style.name}'),
-                  style: style,
-                  previewIndex: preview,
-                  selected: index == selectedIndex,
-                  onTap: () => _previewTheme(style),
-                ),
-              );
-            },
-          ),
-        ),
-        const SizedBox(height: 8),
-        Center(
-          child: Text(
-            '${isCurrent ? '✓' : '左右拖动预览'}  ${_themeLabel(_previewStyle)}${isCurrent ? ' · 当前使用' : ''}',
-            style: TextStyle(color: previewPalette.seed),
-          ),
-        ),
-        const SizedBox(height: 10),
-        Center(
-          child: Wrap(
-            spacing: 5,
-            children: List.generate(
-              AppThemeStyle.values.length,
-              (index) => AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                width: index == selectedIndex ? 18 : 6,
-                height: 6,
-                decoration: BoxDecoration(
-                  color: index == selectedIndex
-                      ? previewPalette.seed
-                      : Theme.of(context).colorScheme.outline,
-                  borderRadius: BorderRadius.circular(99),
-                ),
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(height: 14),
-        CompassSettingsRow(
-          icon: Icons.grid_view_rounded,
-          title: '查看全部 12 款主题',
-          onTap: _showThemePicker,
-        ),
-        const SizedBox(height: 16),
-        const CompassSectionLabel('自动切换'),
-        const SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          secondary: Icon(Icons.schedule_rounded),
-          title: Text('日落后使用深色主题'),
-          subtitle: Text('计划中'),
-          value: false,
-          onChanged: null,
-        ),
-        CompassSettingsRow(
-          icon: Icons.light_mode_outlined,
-          title: '浅色主题',
-          value: '潮汐',
-          onTap: () => _previewTheme(AppThemeStyle.tide),
-        ),
-        CompassSettingsRow(
-          icon: Icons.dark_mode_outlined,
-          title: '深色主题',
-          value: '墨绿',
-          onTap: () => _previewTheme(AppThemeStyle.abyss),
-        ),
-        const SizedBox(height: 18),
-        const CompassSectionLabel('预览内容'),
-        _ChoiceSetting(
-          icon: Icons.preview_outlined,
-          labels: const ['总览', '交易'],
-          selected: preview,
-          onChanged: (value) => setState(() => preview = value),
-        ),
-        const SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          title: Text('增强文字对比度'),
-          subtitle: Text('计划中'),
-          value: false,
-          onChanged: null,
-        ),
-        const SizedBox(height: 12),
-        CompassPrimaryButton(
-          label: isCurrent ? '当前正在使用' : '设为当前主题',
-          color: previewPalette.seed,
-          onPressed: _applyPreviewTheme,
-        ),
-      ],
-    );
-  }
-}
-
-class _ThemePreviewCard extends StatelessWidget {
-  const _ThemePreviewCard({
-    super.key,
-    required this.style,
-    required this.previewIndex,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final AppThemeStyle style;
-  final int previewIndex;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = paletteForStyle(style);
-    final borderColor = selected ? palette.seed : palette.border;
-    final card = DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            palette.backgroundTop,
-            palette.background,
-            palette.backgroundBottom,
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(17),
-        border: Border.all(color: borderColor, width: selected ? 1.4 : .8),
-        boxShadow: selected
-            ? [
-                BoxShadow(
-                  color: palette.seed.withValues(alpha: .16),
-                  blurRadius: 20,
-                  spreadRadius: 1,
-                ),
-              ]
-            : null,
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(16),
-        child: DefaultTextStyle(
-          style: TextStyle(color: palette.textPrimary, fontSize: 11),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(15, 14, 15, 10),
-            child: previewIndex == 0
-                ? _ThemeDashboardPreview(palette: palette)
-                : _ThemeTransactionsPreview(palette: palette),
-          ),
-        ),
-      ),
-    );
-    return Semantics(
-      container: true,
-      button: true,
-      selected: selected,
-      label: '${_themeLabel(style)}主题预览',
-      hint: selected ? null : '点击预览，不会立即应用',
-      onTap: onTap,
-      excludeSemantics: true,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        excludeFromSemantics: true,
-        onTap: onTap,
-        child: card,
-      ),
-    );
-  }
-}
-
-class _ThemeDashboardPreview extends StatelessWidget {
-  const _ThemeDashboardPreview({required this.palette});
-
-  final FinanceThemePalette palette;
-
-  @override
-  Widget build(BuildContext context) => Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Text('总览', style: TextStyle(fontWeight: FontWeight.w700)),
-              const Spacer(),
-              Icon(Icons.notifications_none_rounded,
-                  size: 17, color: palette.textMuted),
-            ],
-          ),
-          const SizedBox(height: 13),
-          Text('总资产 (MYR)', style: TextStyle(color: palette.textMuted)),
-          const SizedBox(height: 2),
-          const Text('168,888.00',
-              style: TextStyle(fontSize: 23, fontWeight: FontWeight.w500)),
-          Text('今日收益  +1,234.56 (+0.74%)',
-              style: TextStyle(color: palette.seed)),
-          const SizedBox(height: 7),
-          CompassAreaChart(
-            values: const [10, 9, 11, 10, 12, 11, 14],
-            lineColor: palette.seed,
-            height: 42,
-          ),
-          Divider(color: palette.border, height: 15),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _MiniMetric(label: '收入', value: '+28,600', color: palette.seed),
-              _MiniMetric(
-                  label: '支出', value: '-16,320', color: palette.expense),
-              _MiniMetric(label: '净流入', value: '+12,280', color: palette.seed),
-            ],
-          ),
-          const SizedBox(height: 9),
-          _MiniAccountRow(
-              icon: Icons.account_balance_wallet_outlined,
-              label: '现金账户',
-              value: '12,338',
-              palette: palette),
-          _MiniAccountRow(
-              icon: Icons.savings_outlined,
-              label: '储蓄账户',
-              value: '56,800',
-              palette: palette),
-          const Spacer(),
-          _MiniNavigation(palette: palette, selected: 0),
         ],
-      );
-}
-
-class _ThemeTransactionsPreview extends StatelessWidget {
-  const _ThemeTransactionsPreview({required this.palette});
-
-  final FinanceThemePalette palette;
-
-  @override
-  Widget build(BuildContext context) => Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('交易', style: TextStyle(fontWeight: FontWeight.w700)),
-          const SizedBox(height: 13),
-          Text('7月净现金流', style: TextStyle(color: palette.textMuted)),
-          Text('MYR 5,380',
-              style: TextStyle(
-                color: palette.seed,
-                fontSize: 23,
-                fontWeight: FontWeight.w600,
-              )),
-          const SizedBox(height: 12),
-          _MiniTransactionRow(
-              icon: Icons.work_outline_rounded,
-              label: '薪资收入',
-              value: '+ 8,800',
-              color: palette.seed,
-              palette: palette),
-          _MiniTransactionRow(
-              icon: Icons.shopping_cart_outlined,
-              label: '超市购物',
-              value: '- 156.80',
-              color: palette.expense,
-              palette: palette),
-          _MiniTransactionRow(
-              icon: Icons.restaurant_outlined,
-              label: '午餐',
-              value: '- 18.00',
-              color: palette.expense,
-              palette: palette),
-          _MiniTransactionRow(
-              icon: Icons.local_gas_station_outlined,
-              label: '加油',
-              value: '- 120.00',
-              color: palette.expense,
-              palette: palette),
-          const Spacer(),
-          _MiniNavigation(palette: palette, selected: 2),
-        ],
-      );
-}
-
-class _MiniMetric extends StatelessWidget {
-  const _MiniMetric(
-      {required this.label, required this.value, required this.color});
-
-  final String label;
-  final String value;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) => Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(label, style: const TextStyle(fontSize: 9)),
-          Text(value, style: TextStyle(color: color, fontSize: 10)),
-        ],
-      );
-}
-
-class _MiniAccountRow extends StatelessWidget {
-  const _MiniAccountRow({
-    required this.icon,
-    required this.label,
-    required this.value,
-    required this.palette,
-  });
-
-  final IconData icon;
-  final String label;
-  final String value;
-  final FinanceThemePalette palette;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Row(
-          children: [
-            Container(
-              width: 25,
-              height: 25,
-              decoration: BoxDecoration(
-                color: palette.seed.withValues(alpha: .14),
-                borderRadius: BorderRadius.circular(7),
-              ),
-              child: Icon(icon, size: 14, color: palette.seed),
-            ),
-            const SizedBox(width: 8),
-            Text(label),
-            const Spacer(),
-            Text(value),
-          ],
-        ),
-      );
-}
-
-class _MiniTransactionRow extends StatelessWidget {
-  const _MiniTransactionRow({
-    required this.icon,
-    required this.label,
-    required this.value,
-    required this.color,
-    required this.palette,
-  });
-
-  final IconData icon;
-  final String label;
-  final String value;
-  final Color color;
-  final FinanceThemePalette palette;
-
-  @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        decoration: BoxDecoration(
-          border: Border(bottom: BorderSide(color: palette.border)),
-        ),
-        child: Row(
-          children: [
-            Icon(icon, size: 17, color: color),
-            const SizedBox(width: 9),
-            Text(label),
-            const Spacer(),
-            Text(value, style: TextStyle(color: color)),
-          ],
-        ),
-      );
-}
-
-class _MiniNavigation extends StatelessWidget {
-  const _MiniNavigation({required this.palette, required this.selected});
-
-  final FinanceThemePalette palette;
-  final int selected;
-
-  static const icons = [
-    Icons.home_outlined,
-    Icons.account_balance_wallet_outlined,
-    Icons.swap_horiz_rounded,
-    Icons.pie_chart_outline_rounded,
-    Icons.bar_chart_rounded,
-    Icons.settings_outlined,
-  ];
-
-  @override
-  Widget build(BuildContext context) => Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: List.generate(
-          icons.length,
-          (index) => Icon(
-            icons[index],
-            size: 16,
-            color: index == selected ? palette.seed : palette.textMuted,
-          ),
-        ),
       );
 }
 
@@ -1300,134 +601,277 @@ class NotificationsPage extends ConsumerStatefulWidget {
 
 class _NotificationsPageState extends ConsumerState<NotificationsPage> {
   bool enabled = true;
+  bool _loanReminders = true;
+  bool _preferencesReady = false;
+  bool _saving = false;
+  bool _pushBusy = false;
+  BrowserPushStatus? _pushStatus;
+  String? _pushError;
+  String? _saveError;
   final switches = <bool>[true, true, true, true, true, false, true];
+
+  DevicePushNotifications? get _push {
+    final session = ref.read(ledgerSyncSessionProvider);
+    return kIsWeb && session != null ? DevicePushNotifications(session) : null;
+  }
 
   @override
   void initState() {
     super.initState();
     _load();
+    _inspectPush();
   }
 
   Future<void> _load() async {
-    final enabledRaw =
-        await widget.repository.database.getMetaValue('notifications_enabled');
-    final switchesRaw = await widget.repository.database
-        .getMetaValue('notification_preferences_json');
-    if (!mounted) return;
-    setState(() {
-      if (enabledRaw != null) enabled = enabledRaw == 'true';
-      if (switchesRaw != null) {
-        final decoded = jsonDecode(switchesRaw);
-        if (decoded is List && decoded.length == switches.length) {
-          for (var i = 0; i < switches.length; i++) {
-            switches[i] = decoded[i] == true;
+    try {
+      final database = widget.repository.database;
+      final prefs = await Future.wait([
+        database.getMetaValue('notifications_enabled'),
+        database.getMetaValue('notification_preferences_json'),
+        database.getMetaValue('loan_payment_push_enabled'),
+      ]);
+      Object? decoded;
+      try {
+        decoded = jsonDecode(prefs[1] ?? 'null');
+      } on FormatException {
+        // Imported ledgers can contain an older or invalid preference value.
+      }
+      if (!mounted) return;
+      setState(() {
+        enabled = prefs[0] != 'false';
+        _loanReminders = prefs[2] != 'false';
+        if (decoded is List) {
+          final values = decoded;
+          for (var i = 0; i < switches.length && i < values.length; i++) {
+            if (values[i] is bool) switches[i] = values[i] as bool;
           }
         }
+        _preferencesReady = true;
+        _saveError = null;
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() => _saveError = '无法加载提醒设置。');
       }
-    });
-  }
-
-  Future<void> _save() async {
-    await widget.repository.database
-        .setMetaValue('notifications_enabled', '$enabled');
-    await widget.repository.database.setMetaValue(
-      'notification_preferences_json',
-      jsonEncode(switches),
-    );
-    ref.invalidate(financeRepositoryProvider);
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('提醒偏好已保存。')),
-      );
     }
   }
 
-  @override
-  Widget build(BuildContext context) => _SettingsDetailShell(
-        title: '通知与提醒',
-        help: true,
+  Future<void> _save() async {
+    if (!_preferencesReady || _saving) return;
+    setState(() {
+      _saving = true;
+      _saveError = null;
+    });
+    try {
+      await ref
+          .read(financeRepositoryProvider.notifier)
+          .mutate((repository) async {
+        final database = repository.database;
+        await database.transaction(() async {
+          await database.setMetaValue('notifications_enabled', '$enabled');
+          await database.setMetaValue(
+            'notification_preferences_json',
+            jsonEncode(switches),
+          );
+          await database.setMetaValue(
+            'loan_payment_push_enabled',
+            '$_loanReminders',
+          );
+        });
+        return repository.refresh();
+      });
+      if (mounted) _showMessage('提醒偏好已保存。');
+    } on SyncException catch (error) {
+      if (mounted) setState(() => _saveError = error.message);
+    } catch (_) {
+      if (mounted) setState(() => _saveError = '无法保存提醒偏好，请重试。');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _inspectPush() async {
+    final push = _push;
+    if (push == null || _pushBusy) return;
+    await _runPush(push, () async {});
+  }
+
+  Future<void> _runPush(
+    DevicePushNotifications push,
+    Future<void> Function() action, {
+    String? message,
+  }) async {
+    if (_pushBusy) return;
+    setState(() {
+      _pushBusy = true;
+      _pushError = null;
+    });
+    String? errorMessage;
+    try {
+      await action();
+      if (mounted && message != null) _showMessage(message);
+    } on SyncException catch (error) {
+      errorMessage = error.message;
+    } catch (_) {
+      errorMessage = '本设备通知操作未完成。请检查浏览器通知权限后重试。';
+    }
+    if (!mounted) return;
+    BrowserPushStatus? status;
+    try {
+      status = await push.inspect();
+    } catch (_) {
+      errorMessage ??= '无法检查设备通知。请刷新通知状态后重试。';
+    }
+    if (!mounted) return;
+    setState(() {
+      _pushStatus = status;
+      _pushError = errorMessage ?? status?.error;
+      _pushBusy = false;
+    });
+  }
+
+  void _showMessage(String text) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  List<Widget> _devicePushControls(DevicePushNotifications push) {
+    final status = _pushStatus;
+    final isEnabled = status?.enabled == true;
+    final endpoint = status?.endpoint;
+    final publicKey = status?.publicKey;
+    return [
+      const CompassSectionLabel('本设备的系统通知'),
+      Text(
+        _pushBusy
+            ? '正在更新通知状态…'
+            : switch (status) {
+                BrowserPushStatus(supported: false) =>
+                  '此浏览器不支持系统通知。iPhone 或 iPad 请把应用添加至主屏幕，再从主屏幕打开。',
+                BrowserPushStatus(permission: 'denied') =>
+                  '浏览器已阻止通知。允许本站发送通知后，请刷新通知状态。',
+                BrowserPushStatus(enabled: true) => '系统通知已启用。',
+                null => '通知状态暂不可用。',
+                _ => '系统通知未启用。',
+              },
+      ),
+      if (_pushError case final error?)
+        Semantics(liveRegion: true, child: Text(error)),
+      const SizedBox(height: 8),
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
         children: [
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            secondary: const Icon(Icons.notifications_active_outlined,
-                size: 56, color: FinanceColors.compassTeal),
-            title: const Text('应用内提醒已开启'),
-            subtitle: const Text('控制总览“需要关注”；系统推送尚未开放'),
-            value: enabled,
-            onChanged: (value) => setState(() => enabled = value),
-          ),
-          const SizedBox(height: 16),
-          const CompassSectionLabel('信用卡'),
-          _NotificationToggle(
-              icon: Icons.credit_card_rounded,
-              title: '还款提醒',
-              subtitle: '在总览“需要关注”显示待还账单',
-              value: switches[0],
-              onChanged: (v) => setState(() => switches[0] = v)),
-          _NotificationToggle(
-              icon: Icons.calendar_month_outlined,
-              title: '账单结算提醒',
-              subtitle: '结算后在总览显示账单状态',
-              value: switches[1],
-              onChanged: (v) => setState(() => switches[1] = v)),
-          _NotificationToggle(
-              icon: Icons.percent_rounded,
-              title: '额度使用提醒',
-              subtitle: '系统推送排程计划中',
-              value: false,
-              onChanged: null),
-          const SizedBox(height: 16),
-          const CompassSectionLabel('计划与预算'),
-          _NotificationToggle(
-              icon: Icons.repeat_rounded,
-              title: '周期交易提醒',
-              subtitle: '系统推送排程计划中',
-              value: false,
-              onChanged: null),
-          _NotificationToggle(
-              icon: Icons.pie_chart_outline_rounded,
-              title: '预算临界提醒',
-              subtitle: '在总览“需要关注”显示预算状态',
-              value: switches[4],
-              onChanged: (v) => setState(() => switches[4] = v)),
-          _NotificationToggle(
-              icon: Icons.description_outlined,
-              title: '每周现金流摘要',
-              subtitle: '系统推送排程计划中',
-              value: false,
-              onChanged: null),
-          const SizedBox(height: 16),
-          const CompassSectionLabel('安静时间'),
-          CompassSettingsRow(
-              icon: Icons.dark_mode_outlined,
-              title: '免打扰时段',
-              subtitle: '系统通知排程完成后开放',
-              value: '计划中'),
-          _NotificationToggle(
-              icon: Icons.notification_important_outlined,
-              title: '紧急还款提醒',
-              subtitle: '系统推送排程计划中',
-              value: false,
-              onChanged: null),
-          const SizedBox(height: 14),
-          const CompassCard(
-            child: Row(
-              children: [
-                Icon(Icons.info_outline_rounded,
-                    color: FinanceColors.compassTeal),
-                SizedBox(width: 12),
-                Expanded(child: Text('这些设置会立即控制应用内“需要关注”；Android 系统通知排程尚未实现。')),
-              ],
+          if (isEnabled && endpoint != null) ...[
+            OutlinedButton(
+              onPressed: _pushBusy
+                  ? null
+                  : () => _runPush(push, () => push.sendTest(endpoint),
+                      message: '测试已发送，请查看本设备的系统通知。'),
+              child: const Text('发送测试通知'),
             ),
+            OutlinedButton(
+              onPressed: _pushBusy
+                  ? null
+                  : () => _runPush(push, push.disable, message: '已停用本设备的系统通知。'),
+              child: const Text('停用系统通知'),
+            ),
+          ] else if (publicKey != null)
+            FilledButton(
+              onPressed: _pushBusy
+                  ? null
+                  : () => _runPush(push, () => push.enable(publicKey),
+                      message: '已启用本设备的系统通知。'),
+              child: const Text('启用系统通知'),
+            )
+          else
+            OutlinedButton(
+              onPressed: _pushBusy ? null : _inspectPush,
+              child: const Text('刷新通知状态'),
+            ),
+        ],
+      ),
+      const SizedBox(height: 16),
+    ];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final push = _push;
+    final canEdit = _preferencesReady && !_saving;
+    return _SettingsDetailShell(
+      title: '通知与提醒',
+      children: [
+        if (push != null) ..._devicePushControls(push),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          secondary: Icon(Icons.notifications_active_outlined,
+              color: financePaletteOf(context).seed),
+          title: const Text('账本提醒'),
+          subtitle: Text(push == null
+              ? '控制总览“需要关注”的提示。'
+              : '控制应用内提醒和定时系统通知。系统通知按订阅设备时区在上午 9:00 发送。'),
+          value: enabled,
+          onChanged:
+              canEdit ? (value) => setState(() => enabled = value) : null,
+        ),
+        const SizedBox(height: 16),
+        const CompassSectionLabel('信用卡'),
+        _NotificationToggle(
+            icon: Icons.credit_card_rounded,
+            title: '还款提醒',
+            subtitle:
+                push == null ? '在总览“需要关注”显示待还账单' : '未还账单到期前 3 天提醒，也可开启到期当天提醒',
+            value: switches[0],
+            onChanged: canEdit ? (v) => setState(() => switches[0] = v) : null),
+        _NotificationToggle(
+            icon: Icons.calendar_month_outlined,
+            title: '账单结算提醒',
+            subtitle: push == null ? '结算后在总览显示账单状态' : '在信用卡设定的结算日发送提醒',
+            value: switches[1],
+            onChanged: canEdit ? (v) => setState(() => switches[1] = v) : null),
+        if (push != null) ...[
+          const SizedBox(height: 16),
+          const CompassSectionLabel('贷款与到期'),
+          _NotificationToggle(
+            icon: Icons.account_balance_outlined,
+            title: '贷款还款提醒',
+            subtitle: '未还分期到期前 3 天提醒，也可开启到期当天提醒',
+            value: _loanReminders,
+            onChanged: canEdit
+                ? (value) => setState(() => _loanReminders = value)
+                : null,
           ),
-          const SizedBox(height: 12),
-          CompassPrimaryButton(
-            label: '保存提醒设置',
-            color: FinanceColors.compassTeal,
-            onPressed: _save,
+          _NotificationToggle(
+            icon: Icons.notification_important_outlined,
+            title: '到期当天提醒',
+            subtitle: '在还款日提醒立即缴付未还的信用卡账单和贷款分期',
+            value: switches[6],
+            onChanged: canEdit ? (v) => setState(() => switches[6] = v) : null,
           ),
         ],
-      );
+        const SizedBox(height: 16),
+        const CompassSectionLabel('预算'),
+        _NotificationToggle(
+            icon: Icons.pie_chart_outline_rounded,
+            title: '预算临界提醒',
+            subtitle: '在总览“需要关注”显示预算状态',
+            value: switches[4],
+            onChanged: canEdit ? (v) => setState(() => switches[4] = v) : null),
+        const SizedBox(height: 12),
+        if (_saveError case final error?) ...[
+          Semantics(liveRegion: true, child: Text(error)),
+          if (!_preferencesReady)
+            TextButton(onPressed: _load, child: const Text('重试加载')),
+          const SizedBox(height: 8),
+        ],
+        CompassPrimaryButton(
+          label: _saving ? '正在保存…' : '保存提醒设置',
+          color: financePaletteOf(context).seed,
+          onPressed: canEdit ? _save : null,
+        ),
+      ],
+    );
+  }
 }
 
 class AiGatewayPage extends StatefulWidget {
@@ -1489,32 +933,7 @@ class _AiGatewayPageState extends State<AiGatewayPage> {
   @override
   Widget build(BuildContext context) => _SettingsDetailShell(
         title: '外部 AI 分析',
-        help: true,
         children: [
-          Row(
-            children: [
-              const Icon(Icons.smart_toy_outlined,
-                  size: 74, color: FinanceColors.compassTeal),
-              const SizedBox(width: 18),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '由你选择 AI App',
-                      style:
-                          Theme.of(context).textTheme.headlineSmall?.copyWith(
-                                color: FinanceColors.compassTeal,
-                              ),
-                    ),
-                    Text('应用只生成分析文字，不会自动上传资料',
-                        style: Theme.of(context).textTheme.bodySmall),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 24),
           const CompassSectionLabel('分析范围'),
           const CompassSettingsRow(
               icon: Icons.calendar_month_outlined,
@@ -1529,17 +948,14 @@ class _AiGatewayPageState extends State<AiGatewayPage> {
           const SizedBox(height: 18),
           const CompassSectionLabel('发送前检查'),
           CompassSettingsRow(
-              icon: Icons.search_rounded,
-              title: '预览分析资料',
-              value: '${_analysisText.length} 字符',
-              onTap: _preview),
+              icon: Icons.search_rounded, title: '预览分析资料', onTap: _preview),
           const CompassCard(
             child: Row(
               children: [
                 Icon(Icons.verified_user_outlined,
                     color: FinanceColors.compassTeal),
                 SizedBox(width: 12),
-                Expanded(child: Text('不会自动发送完整备份；只有点下方按钮后才会打开系统分享面板')),
+                Expanded(child: Text('只会在你选择分享后发送已预览的摘要。')),
               ],
             ),
           ),
@@ -1557,11 +973,9 @@ class _SettingsDetailShell extends StatelessWidget {
   const _SettingsDetailShell({
     required this.title,
     required this.children,
-    this.help = false,
   });
   final String title;
   final List<Widget> children;
-  final bool help;
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -1577,28 +991,7 @@ class _SettingsDetailShell extends StatelessWidget {
                     const Spacer(),
                     Text(title, style: Theme.of(context).textTheme.titleLarge),
                     const Spacer(),
-                    if (help)
-                      IconButton(
-                        tooltip: '本页说明',
-                        onPressed: () => showDialog<void>(
-                          context: context,
-                          builder: (dialogContext) => AlertDialog(
-                            title: Text('$title说明'),
-                            content: const Text(
-                              '可操作项目会显示箭头、按钮或开关；标记“计划中”的项目当前不会响应点击。',
-                            ),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.pop(dialogContext),
-                                child: const Text('知道了'),
-                              ),
-                            ],
-                          ),
-                        ),
-                        icon: const Icon(Icons.help_outline_rounded),
-                      )
-                    else
-                      const SizedBox(width: 24),
+                    const SizedBox(width: 24),
                   ],
                 ),
                 const SizedBox(height: 24),
@@ -1665,13 +1058,11 @@ class _LargeRuleRow extends StatelessWidget {
   const _LargeRuleRow({
     required this.icon,
     required this.title,
-    required this.subtitle,
     required this.value,
     required this.onTap,
   });
   final IconData icon;
   final String title;
-  final String subtitle;
   final String value;
   final VoidCallback onTap;
 
@@ -1689,15 +1080,8 @@ class _LargeRuleRow extends StatelessWidget {
               CompassIconBadge(icon: icon, size: 48),
               const SizedBox(width: 16),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
+                child:
                     Text(title, style: Theme.of(context).textTheme.titleLarge),
-                    if (subtitle.isNotEmpty)
-                      Text(subtitle,
-                          style: Theme.of(context).textTheme.bodySmall),
-                  ],
-                ),
               ),
               Text(value,
                   style: const TextStyle(color: FinanceColors.compassTeal)),
@@ -1706,45 +1090,6 @@ class _LargeRuleRow extends StatelessWidget {
           ),
         ),
       );
-}
-
-class _ModeChoice extends StatelessWidget {
-  const _ModeChoice({
-    required this.label,
-    required this.icon,
-    required this.selected,
-    this.onTap,
-  });
-  final String label;
-  final IconData icon;
-  final bool selected;
-  final VoidCallback? onTap;
-  @override
-  Widget build(BuildContext context) {
-    final content = Opacity(
-      opacity: onTap == null ? .5 : 1,
-      child: Column(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              border: Border.all(
-                color: selected
-                    ? FinanceColors.compassTeal
-                    : FinanceColors.compassBorder,
-              ),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(icon),
-          ),
-          const SizedBox(height: 6),
-          Text(label),
-        ],
-      ),
-    );
-    if (onTap == null) return content;
-    return InkWell(onTap: onTap, child: content);
-  }
 }
 
 class _NotificationToggle extends StatelessWidget {
@@ -1780,29 +1125,6 @@ String _datedFileName(String prefix) {
   return '${prefix}_${now.year}-$month-${day}_$hour$minute';
 }
 
-bool _isDarkTheme(AppThemeStyle style) => {
-      AppThemeStyle.night,
-      AppThemeStyle.abyss,
-      AppThemeStyle.graphite,
-      AppThemeStyle.darkGreen,
-      AppThemeStyle.darkWood,
-    }.contains(style);
-
-String _themeLabel(AppThemeStyle style) => switch (style) {
-      AppThemeStyle.tide => '潮汐',
-      AppThemeStyle.ocean => '海洋',
-      AppThemeStyle.sky => '晴空',
-      AppThemeStyle.ember => '余烬',
-      AppThemeStyle.forest => '森林',
-      AppThemeStyle.dune => '沙丘',
-      AppThemeStyle.aurora => '极光',
-      AppThemeStyle.night => '夜色',
-      AppThemeStyle.abyss => '墨绿',
-      AppThemeStyle.graphite => '石墨',
-      AppThemeStyle.darkGreen => '深林',
-      AppThemeStyle.darkWood => '沉木',
-    };
-
 Future<String?> _saveBytes({
   required String name,
   required String extension,
@@ -1818,83 +1140,4 @@ Future<String?> _saveBytes({
     allowedExtensions: [extension],
     bytes: bytes,
   );
-}
-
-Future<bool> _pickPreviewAndImport(
-  BuildContext context,
-  WidgetRef ref,
-) async {
-  final picked = await FilePicker.platform.pickFiles(
-    allowMultiple: false,
-    withData: true,
-    type: FileType.custom,
-    allowedExtensions: const ['json'],
-  );
-  final file = picked?.files.single;
-  if (file == null || !context.mounted) return false;
-  final path = file.path;
-  final bytes = file.bytes;
-  if ((path == null || path.isEmpty) && (bytes == null || bytes.isEmpty)) {
-    return false;
-  }
-  final mutations = ref.read(exportMutationsProvider.notifier);
-  final preview = path != null && path.isNotEmpty
-      ? await mutations.previewImport(path)
-      : await mutations.previewImportBytes(bytes!);
-  if (!context.mounted) return false;
-  final total = preview.accounts +
-      preview.categories +
-      preview.budgets +
-      preview.transactions +
-      preview.assetSnapshots;
-  if (total == 0) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('这个 JSON 没有可导入的 Finance Compass 数据。')),
-    );
-    return false;
-  }
-
-  final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('导入预览'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('导出时间：${preview.exportedAt ?? '-'}'),
-              Text('账户：${preview.accounts}'),
-              Text('类别：${preview.categories}'),
-              Text('预算：${preview.budgets}'),
-              Text('交易：${preview.transactions}'),
-              Text('资产快照：${preview.assetSnapshots}'),
-              const SizedBox(height: 12),
-              Text(
-                kIsWeb
-                    ? '确认会替换当前资料。请先下载当前完整 JSON；Web 浏览器不会在服务器保留隐藏恢复点。'
-                    : '确认后会先建立恢复点，再用此文件替换当前资料。',
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: const Text('确认导入'),
-            ),
-          ],
-        ),
-      ) ??
-      false;
-  if (!confirmed || !context.mounted) return false;
-
-  if (path != null && path.isNotEmpty) {
-    await mutations.importJson(path);
-  } else {
-    await mutations.importJsonBytes(bytes!);
-  }
-  return true;
 }

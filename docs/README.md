@@ -13,6 +13,7 @@
 - [接口与导入导出](INTERFACES.md)
 - [安全与运维](SECURITY_AND_OPERATIONS.md)
 - [公开发布、测试版与数据恢复作业](RELEASE_WORKFLOW.md)
+- [Homelab Web 17 部署归档](HOMELAB_WEB17_ARCHIVE.md)
 - [自托管 Web / PWA](SELF_HOSTING.md)
 - [v0.10.1 公开发布 QA（2026-09-29）](public-release-qa-v0.10.1-2026-09-29.md)
 - [v0.10.0 公开发布 QA（2026-09-25）](public-release-qa-v0.10.0-2026-09-25.md)

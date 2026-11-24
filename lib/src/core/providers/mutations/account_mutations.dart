@@ -21,14 +21,13 @@ class AccountMutations extends Notifier<void> {
 
   /// Creates a new account.
   Future<void> addAccount(Account account) async {
-    final updated = await (await _repo).addAccount(account);
-    _repoNotifier.setRepository(updated);
+    await _repoNotifier.mutate((repository) => repository.addAccount(account));
   }
 
   /// Updates an existing account.
   Future<void> updateAccount(Account account) async {
-    final updated = await (await _repo).updateExistingAccount(account);
-    _repoNotifier.setRepository(updated);
+    await _repoNotifier
+        .mutate((repository) => repository.updateExistingAccount(account));
   }
 
   /// Deletes an account only if it has no linked transactions or snapshots.
@@ -36,12 +35,9 @@ class AccountMutations extends Notifier<void> {
   /// Returns `true` if the account was deleted, `false` if it was kept
   /// because linked data exists.
   Future<bool> deleteAccount(String accountId) async {
-    final updated = await (await _repo).deleteAccountIfSafe(accountId);
-    if (updated != null) {
-      _repoNotifier.setRepository(updated);
-      return true;
-    }
-    return false;
+    return await _repoNotifier.mutate(
+            (repository) => repository.deleteAccountIfSafe(accountId)) !=
+        null;
   }
 
   /// Checks whether an account can be safely deleted.
@@ -54,23 +50,22 @@ class AccountMutations extends Notifier<void> {
     required String name,
     required double amount,
   }) async {
-    final updated = await (await _repo).addAssetGoal(
-      name: name,
-      amount: amount,
-    );
-    _repoNotifier.setRepository(updated);
+    await _repoNotifier.mutate((repository) => repository.addAssetGoal(
+          name: name,
+          amount: amount,
+        ));
   }
 
   /// Updates an existing asset goal.
   Future<void> updateAssetGoal(AssetGoal goal) async {
-    final updated = await (await _repo).updateAssetGoal(goal);
-    _repoNotifier.setRepository(updated);
+    await _repoNotifier
+        .mutate((repository) => repository.updateAssetGoal(goal));
   }
 
   /// Deletes an asset goal by id.
   Future<void> deleteAssetGoal(String goalId) async {
-    final updated = await (await _repo).deleteAssetGoal(goalId);
-    _repoNotifier.setRepository(updated);
+    await _repoNotifier
+        .mutate((repository) => repository.deleteAssetGoal(goalId));
   }
 
   /// Sets the reconciled month for an account.
@@ -78,11 +73,11 @@ class AccountMutations extends Notifier<void> {
     String accountId,
     String monthKey,
   ) async {
-    final updated = await (await _repo).setAccountReconciledMonth(
-      accountId,
-      monthKey,
-    );
-    _repoNotifier.setRepository(updated);
+    await _repoNotifier
+        .mutate((repository) => repository.setAccountReconciledMonth(
+              accountId,
+              monthKey,
+            ));
   }
 
   /// Updates exchange rates and currency priority.
@@ -90,11 +85,10 @@ class AccountMutations extends Notifier<void> {
     Map<String, double> ratesToBase,
     List<String> currencyPriority,
   ) async {
-    final updated = await (await _repo).updateExchangeRates(
-      ratesToBase,
-      currencyPriority,
-    );
-    _repoNotifier.setRepository(updated);
+    await _repoNotifier.mutate((repository) => repository.updateExchangeRates(
+          ratesToBase,
+          currencyPriority,
+        ));
   }
 }
 

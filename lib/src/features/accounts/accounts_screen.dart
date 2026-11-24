@@ -1,6 +1,8 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+
+import '../shared/finance_amount_field.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/data/finance_repository.dart';
@@ -490,10 +492,8 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
               ),
             ),
             const SizedBox(height: 12),
-            TextField(
+            FinanceAmountField(
               controller: amountController,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
               decoration: const InputDecoration(
                 labelText: '目标金额',
                 border: OutlineInputBorder(),
@@ -798,7 +798,7 @@ class _GoalStatusLine extends StatelessWidget {
       final date = summary.reachedAt;
       final dateStr = date == null ? '' : '${date.year}年${date.month}月';
       return Text(
-        '🎉 已达成 $dateStr',
+        '已达成 $dateStr',
         style: Theme.of(context).textTheme.bodySmall?.copyWith(
               color: const Color(0xFF15803D),
               fontWeight: FontWeight.w600,

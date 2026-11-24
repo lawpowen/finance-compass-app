@@ -9,9 +9,17 @@ class FinanceApp extends ConsumerWidget {
   const FinanceApp({
     super.key,
     required this.settingsController,
+    this.navigatorKey,
+    this.builder,
+    this.syncSettings,
+    this.workspaceNavigation,
   });
 
   final AppSettingsController settingsController;
+  final GlobalKey<NavigatorState>? navigatorKey;
+  final TransitionBuilder? builder;
+  final Widget? syncSettings;
+  final FinanceWorkspaceNavigation? workspaceNavigation;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -20,9 +28,15 @@ class FinanceApp extends ConsumerWidget {
       builder: (context, _) {
         return MaterialApp(
           title: 'Finance Compass',
+          navigatorKey: navigatorKey,
+          builder: builder,
           debugShowCheckedModeBanner: false,
           theme: buildFinanceTheme(settingsController.themeStyle),
-          home: HomeScreen(settingsController: settingsController),
+          home: HomeScreen(
+            settingsController: settingsController,
+            syncSettings: syncSettings,
+            workspaceNavigation: workspaceNavigation,
+          ),
         );
       },
     );

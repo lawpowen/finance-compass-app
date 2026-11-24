@@ -83,6 +83,20 @@ Remove-Item -LiteralPath 'web/drift_worker.js.deps','web/drift_worker.js.map' -F
 # files it has just written (main.dart.js, flutter_bootstrap.js, assets/, and
 # every copied web/ file). A clean directory also keeps stale files from older
 # builds out of the release.
+function Assert-LockedUiFonts([string]$Folder) {
+  foreach ($line in Get-Content -LiteralPath 'assets/fonts/SHA256SUMS') {
+    if ($line -notmatch '^([0-9a-f]{64})  ([A-Za-z0-9-]+\.ttf)$') {
+      throw 'Invalid entry in assets/fonts/SHA256SUMS.'
+    }
+    $expected = $Matches[1]
+    $path = Join-Path $Folder $Matches[2]
+    if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ine $expected) {
+      throw "Font does not match assets/fonts/SHA256SUMS: $path"
+    }
+  }
+}
+Assert-LockedUiFonts 'assets/fonts'
+
 $webOut = Join-Path $root 'build/web'
 if (Test-Path -LiteralPath $webOut) { Remove-Item -LiteralPath $webOut -Recurse -Force }
 # A failed build or check must not leave a partial webroot that
@@ -103,6 +117,7 @@ foreach ($required in 'index.html', 'flutter_bootstrap.js', 'manifest.json', 'se
   $path = Join-Path 'build/web' $required
   if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing web release asset: $required" }
 }
+Assert-LockedUiFonts 'build/web/assets/assets/fonts'
 
 # Every service-worker precache entry must exist, otherwise cache.addAll()
 # rejects and the PWA never installs its offline shell.

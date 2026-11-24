@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../../core/models/category.dart';
+import '../../core/models/category_hierarchy.dart';
 import '../../core/theme/finance_colors.dart';
+import '../../core/theme/finance_theme.dart';
 import '../../core/utils/id_generator.dart';
 import '../shared/compass_ui.dart';
 
@@ -12,7 +14,13 @@ class CategoryFormResult {
 }
 
 class CategoryFormDialog extends StatefulWidget {
-  const CategoryFormDialog({super.key, this.initialCategory});
+  const CategoryFormDialog({
+    super.key,
+    required this.categories,
+    this.initialCategory,
+  });
+
+  final List<Category> categories;
   final Category? initialCategory;
 
   @override
@@ -22,7 +30,8 @@ class CategoryFormDialog extends StatefulWidget {
 class _CategoryFormDialogState extends State<CategoryFormDialog> {
   final formKey = GlobalKey<FormState>();
   late final TextEditingController nameController;
-  late final TextEditingController parentIdController;
+  late final String categoryId;
+  String? parentId;
   late CategoryType categoryType;
   late String iconKey;
   late int colorValue;
@@ -54,7 +63,8 @@ class _CategoryFormDialogState extends State<CategoryFormDialog> {
     super.initState();
     final initial = widget.initialCategory;
     nameController = TextEditingController(text: initial?.name ?? '');
-    parentIdController = TextEditingController(text: initial?.parentId ?? '');
+    categoryId = initial?.id ?? buildId('cat');
+    parentId = initial?.parentId;
     categoryType = initial?.type ?? CategoryType.expense;
     iconKey = initial?.iconKey ?? 'other';
     colorValue = initial?.colorValue ?? FinanceColors.compassTeal.toARGB32();
@@ -64,13 +74,26 @@ class _CategoryFormDialogState extends State<CategoryFormDialog> {
   @override
   void dispose() {
     nameController.dispose();
-    parentIdController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final color = Color(colorValue);
+    final parentsById = {
+      for (final category in widget.categories) category.id: category.parentId,
+    };
+    final parentOptions = <Category?>[
+      null,
+      for (final category in widget.categories)
+        if ((!category.isArchived ||
+                category.id == widget.initialCategory?.parentId) &&
+            !categoryParentWouldCycle(categoryId, category.id, parentsById))
+          category,
+    ];
+    final selectedParent =
+        parentOptions.indexWhere((category) => category?.id == parentId);
+    final invalidParent = selectedParent < 0;
     return Dialog.fullscreen(
       backgroundColor: Colors.transparent,
       child: CompassBackground(
@@ -93,7 +116,10 @@ class _CategoryFormDialogState extends State<CategoryFormDialog> {
                         style: Theme.of(context).textTheme.headlineSmall,
                       ),
                     ),
-                    TextButton(onPressed: _submit, child: const Text('保存')),
+                    TextButton(
+                      onPressed: invalidParent ? null : _submit,
+                      child: const Text('保存'),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 28),
@@ -160,11 +186,47 @@ class _CategoryFormDialogState extends State<CategoryFormDialog> {
                 _CategoryEditorRow(
                   icon: Icons.folder_outlined,
                   title: '父类别',
-                  child: _CategoryTextField(
-                    controller: parentIdController,
-                    hintText: '可选父类别 ID',
+                  child: Semantics(
+                    label: '选择父类别',
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<int>(
+                        key: const Key('category-parent-picker'),
+                        value: invalidParent ? null : selectedParent,
+                        hint: const Text('请选择'),
+                        alignment: AlignmentDirectional.centerEnd,
+                        isExpanded: true,
+                        menuMaxHeight: 360,
+                        items: [
+                          for (final (index, category) in parentOptions.indexed)
+                            DropdownMenuItem(
+                              value: index,
+                              child: Text(
+                                category == null
+                                    ? '无父类别'
+                                    : '${category.name}${category.isArchived ? '（已归档）' : ''}',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                        ],
+                        onChanged: (index) {
+                          if (index != null) {
+                            setState(() => parentId = parentOptions[index]?.id);
+                          }
+                        },
+                      ),
+                    ),
                   ),
                 ),
+                if (invalidParent)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6, bottom: 8),
+                    child: Text(
+                      '原父类别无效，请选择现有类别或设为无父类别。',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Theme.of(context).colorScheme.error,
+                          ),
+                    ),
+                  ),
                 _CategoryEditorRow(
                   icon: Icons.palette_outlined,
                   title: '图标与颜色',
@@ -218,9 +280,6 @@ class _CategoryFormDialogState extends State<CategoryFormDialog> {
                     );
                   }).toList(),
                 ),
-                const SizedBox(height: 18),
-                Text('ⓘ  修改名称、图标或父类别不会影响已有记录',
-                    style: Theme.of(context).textTheme.bodySmall),
                 if (isEdit)
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
@@ -230,7 +289,10 @@ class _CategoryFormDialogState extends State<CategoryFormDialog> {
                     onChanged: (value) => setState(() => isArchived = value),
                   ),
                 const SizedBox(height: 24),
-                CompassPrimaryButton(label: '保存更改', onPressed: _submit),
+                CompassPrimaryButton(
+                  label: '保存更改',
+                  onPressed: invalidParent ? null : _submit,
+                ),
               ],
             ),
           ),
@@ -247,12 +309,10 @@ class _CategoryFormDialogState extends State<CategoryFormDialog> {
       CategoryFormResult(
         isEdit: isEdit,
         category: Category(
-          id: initial?.id ?? buildId('cat'),
+          id: categoryId,
           name: nameController.text.trim(),
           type: categoryType,
-          parentId: parentIdController.text.trim().isEmpty
-              ? null
-              : parentIdController.text.trim(),
+          parentId: parentId,
           iconKey: iconKey,
           colorValue: colorValue,
           sortOrder: initial?.sortOrder ?? 0,
@@ -294,16 +354,16 @@ class _CategoryEditorRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
         constraints: const BoxConstraints(minHeight: 56),
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           border: Border(
-            bottom: BorderSide(color: FinanceColors.compassBorder),
+            bottom: BorderSide(color: financePaletteOf(context).border),
           ),
         ),
         child: Row(
           children: [
             SizedBox(
               width: 38,
-              child: Icon(icon, color: FinanceColors.compassTeal),
+              child: Icon(icon, color: financePaletteOf(context).seed),
             ),
             const SizedBox(width: 8),
             Expanded(child: Text(title)),
@@ -317,19 +377,16 @@ class _CategoryTextField extends StatelessWidget {
   const _CategoryTextField({
     required this.controller,
     this.validator,
-    this.hintText,
   });
   final TextEditingController controller;
   final FormFieldValidator<String>? validator;
-  final String? hintText;
 
   @override
   Widget build(BuildContext context) => TextFormField(
         controller: controller,
         validator: validator,
         textAlign: TextAlign.right,
-        decoration: InputDecoration(
-          hintText: hintText,
+        decoration: const InputDecoration(
           border: InputBorder.none,
           enabledBorder: InputBorder.none,
           focusedBorder: InputBorder.none,

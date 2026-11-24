@@ -1,6 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../data/finance_repository.dart';
 import '../../models/asset_snapshot.dart';
 import '../repository_provider.dart';
 
@@ -15,25 +14,22 @@ class AssetMutations extends Notifier<void> {
   FinanceRepositoryNotifier get _repoNotifier =>
       ref.read(financeRepositoryProvider.notifier);
 
-  Future<FinanceRepository> get _repo =>
-      ref.read(financeRepositoryProvider.future);
-
   /// Creates a new asset snapshot for an account.
   Future<void> addSnapshot(AssetSnapshot snapshot) async {
-    final updated = await (await _repo).addAssetSnapshot(snapshot);
-    _repoNotifier.setRepository(updated);
+    await _repoNotifier
+        .mutate((repository) => repository.addAssetSnapshot(snapshot));
   }
 
   /// Updates an existing asset snapshot.
   Future<void> updateSnapshot(AssetSnapshot snapshot) async {
-    final updated = await (await _repo).updateExistingAssetSnapshot(snapshot);
-    _repoNotifier.setRepository(updated);
+    await _repoNotifier.mutate(
+        (repository) => repository.updateExistingAssetSnapshot(snapshot));
   }
 
   /// Deletes an asset snapshot by its id.
   Future<void> deleteSnapshot(String snapshotId) async {
-    final updated = await (await _repo).deleteExistingAssetSnapshot(snapshotId);
-    _repoNotifier.setRepository(updated);
+    await _repoNotifier.mutate(
+        (repository) => repository.deleteExistingAssetSnapshot(snapshotId));
   }
 }
 

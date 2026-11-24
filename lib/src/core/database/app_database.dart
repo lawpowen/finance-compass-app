@@ -6,6 +6,7 @@ import '../models/account.dart' as model;
 import '../models/asset_snapshot.dart' as model;
 import '../models/budget.dart' as model;
 import '../models/category.dart' as model;
+import '../models/category_hierarchy.dart';
 import '../models/transaction.dart' as model;
 import '../models/transaction_preset.dart' as model;
 import 'enum_codec.dart';
@@ -35,6 +36,8 @@ part 'app_database.g.dart';
 )
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(openDatabaseConnection());
+
+  AppDatabase.withExecutor(super.executor);
 
   AppDatabase.forTesting(super.executor);
 
@@ -855,36 +858,66 @@ class AppDatabase extends _$AppDatabase {
   }
 
   Future<void> insertCategory(model.Category category) {
-    return into(categories).insert(
-      CategoriesCompanion.insert(
-        id: category.id,
-        name: category.name,
-        type: category.type.name,
-        parentId: Value(category.parentId),
-        iconKey: Value(category.iconKey),
-        colorValue: Value(category.colorValue),
-        sortOrder: Value(category.sortOrder),
-        isArchived: Value(category.isArchived),
-      ),
-    );
+    return super.transaction(() async {
+      await _validateCategoryParent(category);
+      await into(categories).insert(
+        CategoriesCompanion.insert(
+          id: category.id,
+          name: category.name,
+          type: category.type.name,
+          parentId: Value(category.parentId),
+          iconKey: Value(category.iconKey),
+          colorValue: Value(category.colorValue),
+          sortOrder: Value(category.sortOrder),
+          isArchived: Value(category.isArchived),
+        ),
+      );
+    });
   }
 
   Future<void> updateCategory(model.Category category) {
-    return (update(categories)..where((tbl) => tbl.id.equals(category.id)))
-        .write(
-      CategoriesCompanion(
-        name: Value(category.name),
-        type: Value(category.type.name),
-        parentId: Value(category.parentId),
-        iconKey: Value(category.iconKey),
-        colorValue: Value(category.colorValue),
-        sortOrder: Value(category.sortOrder),
-        isArchived: Value(category.isArchived),
-      ),
-    );
+    return super.transaction(() async {
+      await _validateCategoryParent(category);
+      await (update(categories)..where((tbl) => tbl.id.equals(category.id)))
+          .write(
+        CategoriesCompanion(
+          name: Value(category.name),
+          type: Value(category.type.name),
+          parentId: Value(category.parentId),
+          iconKey: Value(category.iconKey),
+          colorValue: Value(category.colorValue),
+          sortOrder: Value(category.sortOrder),
+          isArchived: Value(category.isArchived),
+        ),
+      );
+    });
+  }
+
+  Future<void> _validateCategoryParent(model.Category category) async {
+    final parentId = category.parentId;
+    if (parentId == null) return;
+    final rows = await (selectOnly(categories)
+          ..addColumns([categories.id, categories.parentId]))
+        .get();
+    final parents = {
+      for (final row in rows)
+        row.read(categories.id)!: row.read(categories.parentId),
+    };
+    if (!parents.containsKey(parentId)) {
+      throw ArgumentError.value(parentId, 'parentId', 'Parent does not exist');
+    }
+    if (categoryParentWouldCycle(category.id, parentId, parents)) {
+      throw ArgumentError.value(parentId, 'parentId', 'Cyclic category parent');
+    }
   }
 
   Future<bool> categoryHasLinkedData(String categoryId) async {
+    final child = await (select(categories)
+          ..where((tbl) => tbl.parentId.equals(categoryId))
+          ..limit(1))
+        .getSingleOrNull();
+    if (child != null) return true;
+
     final linkedTransaction = await ((select(transactions)
           ..where((tbl) => tbl.categoryId.equals(categoryId))
           ..limit(1)))
@@ -909,12 +942,13 @@ class AppDatabase extends _$AppDatabase {
     return linkedRule != null;
   }
 
-  Future<bool> deleteCategoryIfSafe(String categoryId) async {
-    if (await categoryHasLinkedData(categoryId)) {
-      return false;
-    }
-    await (delete(categories)..where((tbl) => tbl.id.equals(categoryId))).go();
-    return true;
+  Future<bool> deleteCategoryIfSafe(String categoryId) {
+    return super.transaction(() async {
+      if (await categoryHasLinkedData(categoryId)) return false;
+      await (delete(categories)..where((tbl) => tbl.id.equals(categoryId)))
+          .go();
+      return true;
+    });
   }
 
   Future<void> upsertBudget(model.Budget budget) async {

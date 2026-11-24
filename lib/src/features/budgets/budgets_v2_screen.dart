@@ -7,11 +7,12 @@ import '../../core/models/category.dart';
 import '../../core/models/transaction.dart';
 import '../../core/providers/mutations/budget_mutations.dart';
 import '../../core/providers/repository_provider.dart';
-import '../../core/theme/finance_colors.dart';
 import '../../core/theme/finance_theme.dart';
 import '../../core/utils/id_generator.dart';
 import '../../core/utils/month_key.dart';
 import '../shared/compass_ui.dart';
+import '../shared/finance_amount_field.dart';
+import '../shared/finance_donut.dart';
 
 class BudgetsV2Screen extends ConsumerStatefulWidget {
   const BudgetsV2Screen({super.key, required this.repository});
@@ -27,133 +28,93 @@ class _BudgetsV2ScreenState extends ConsumerState<BudgetsV2Screen> {
 
   @override
   Widget build(BuildContext context) {
-    final palette = financePaletteOf(context);
     final repository =
         ref.watch(financeRepositoryProvider).valueOrNull ?? widget.repository;
     final month = monthKeyFromDate(selectedMonth);
     final rows = _budgetRows(repository, month);
     final total = rows.fold<double>(0, (sum, row) => sum + row.budget);
+    final allocationTotal = rows.where((row) => row.hasAllocation).fold(
+          0.0,
+          (sum, row) => sum + row.budget,
+        );
     final used = rows.fold<double>(0, (sum, row) => sum + row.actual);
     final planned = rows.fold<double>(0, (sum, row) => sum + row.planned);
     final rollover = rows.fold<double>(0, (sum, row) => sum + row.rollover);
+    final textTheme = Theme.of(context).textTheme;
+    final mono = financePaletteOf(context).monochrome;
+    final allocation = FinanceDonutPanel(
+      title: '预算分配',
+      totalLabel: '已分配',
+      totalValue: compassMoney(
+        total,
+        currency: repository.baseCurrency,
+        decimals: 0,
+      ),
+      slices: _budgetAllocationSlices(context, rows),
+      formatLegendAmount: mono
+          ? (value) => compassMoney(value, decimals: 0, showCurrency: false)
+          : null,
+      footer: _BudgetUsageSummary(
+        actual: used,
+        planned: planned,
+        remaining: total + rollover - used - planned,
+      ),
+    );
+    final monthControls = [
+      IconButton(
+        tooltip: '上个月',
+        onPressed: () => _changeMonth(-1),
+        icon: const Icon(Icons.chevron_left_rounded),
+      ),
+      Text(
+        '${selectedMonth.year}年${selectedMonth.month}月',
+        style: textTheme.titleMedium,
+      ),
+      IconButton(
+        tooltip: '下个月',
+        onPressed: () => _changeMonth(1),
+        icon: const Icon(Icons.chevron_right_rounded),
+      ),
+    ];
+    void openEditor() => _openEditor(context, repository, null);
 
-    return Stack(
-      children: [
-        ListView(
-          padding: compassPagePadding.copyWith(bottom: 104),
-          children: [
-            Row(
-              children: [
-                Text('预算', style: Theme.of(context).textTheme.headlineSmall),
-                const Spacer(),
-                IconButton(
-                  onPressed: () => setState(() {
-                    selectedMonth = DateTime(
-                      selectedMonth.year,
-                      selectedMonth.month - 1,
-                    );
-                  }),
-                  icon: const Icon(Icons.chevron_left_rounded),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final desktop = constraints.maxWidth >= compassDesktopMinWidth;
+        final details = [
+          Row(
+            children: [
+              Expanded(
+                flex: 6,
+                child: Semantics(
+                  container: true,
+                  header: true,
+                  child: Text('预算明细', style: textTheme.titleMedium),
                 ),
-                Text(
-                  '${selectedMonth.year}年${selectedMonth.month}月',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                IconButton(
-                  onPressed: () => setState(() {
-                    selectedMonth = DateTime(
-                      selectedMonth.year,
-                      selectedMonth.month + 1,
-                    );
-                  }),
-                  icon: const Icon(Icons.chevron_right_rounded),
-                ),
-                const Spacer(),
-                TextButton(
-                  onPressed: () => _openEditor(context, repository, null),
-                  child: const Text('调整'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 18),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('本月已分配',
-                          style: Theme.of(context).textTheme.bodySmall),
-                      const SizedBox(height: 5),
-                      Text(
-                        compassMoney(total, decimals: 0),
-                        style: const TextStyle(
-                          fontSize: 26,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text('剩余预算池', style: Theme.of(context).textTheme.bodySmall),
-                    const SizedBox(height: 5),
-                    Text(
-                      compassMoney(
-                        total - used + rollover < 0
-                            ? 0
-                            : total - used + rollover,
-                        decimals: 0,
-                      ),
-                      style: const TextStyle(
-                        fontSize: 21,
-                        fontWeight: FontWeight.w600,
-                      ).copyWith(color: palette.seed),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
-            _BudgetComposition(rows: rows),
-            const SizedBox(height: 14),
-            Wrap(
-              spacing: 20,
-              runSpacing: 8,
-              children: [
-                _BudgetLegend(
-                  color: palette.expense,
-                  label: '实际 ${compassMoney(used, decimals: 0)}',
-                ),
-                _BudgetLegend(
-                  color: palette.expense,
-                  label: '预计 ${compassMoney(planned, decimals: 0)}',
-                  striped: true,
-                ),
-                _BudgetLegend(
-                  color: palette.seed,
-                  label: '结转净额 +${compassMoney(rollover, decimals: 0)}',
-                ),
-              ],
-            ),
-            const SizedBox(height: 28),
-            Row(
-              children: [
-                Expanded(
-                  flex: 6,
-                  child: Text('预算分配',
-                      style: Theme.of(context).textTheme.titleMedium),
-                ),
+              ),
+              const SizedBox(width: 48),
+              if (!mono || desktop) ...[
                 const Expanded(
                   flex: 2,
-                  child: _BudgetColumnLabel('分配比例'),
+                  child: _BudgetColumnLabel('占比'),
                 ),
-                const Expanded(
-                  flex: 3,
-                  child: _BudgetColumnLabel('实际 / 预计'),
+                Expanded(
+                  flex: desktop ? 5 : 3,
+                  child: _BudgetSpendColumns(
+                    desktop: desktop,
+                    actual: _BudgetColumnLabel(
+                      desktop ? '实际支出' : '实际',
+                      alignment: desktop
+                          ? Alignment.centerRight
+                          : Alignment.centerLeft,
+                    ),
+                    planned: _BudgetColumnLabel(
+                      desktop ? '预计支出' : '预计',
+                      alignment: desktop
+                          ? Alignment.centerRight
+                          : Alignment.centerLeft,
+                    ),
+                  ),
                 ),
                 const Expanded(
                   flex: 2,
@@ -161,66 +122,147 @@ class _BudgetsV2ScreenState extends ConsumerState<BudgetsV2Screen> {
                 ),
                 const Expanded(
                   flex: 3,
-                  child: _BudgetColumnLabel('剩余 / 状态'),
+                  child: _BudgetColumnLabel(
+                    '剩余',
+                    alignment: Alignment.centerRight,
+                  ),
                 ),
                 const SizedBox(width: 20),
               ],
-            ),
-            const SizedBox(height: 8),
-            compassHairline,
-            if (rows.isEmpty)
+            ],
+          ),
+          const SizedBox(height: 8),
+          compassHairline,
+          if (rows.isEmpty)
+            if (desktop)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Center(child: Text('本月还没有预算')),
+              )
+            else
               const CompassCard(
                 child: Padding(
                   padding: EdgeInsets.symmetric(vertical: 24),
-                  child: Center(child: Text('这个月份还没有预算，点右下角加号建立。')),
+                  child: Center(child: Text('本月还没有预算')),
                 ),
               ),
-            ...rows.map(
-              (row) => Column(
-                children: [
-                  _BudgetRow(
-                    row: row,
-                    total: total,
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => BudgetCategoryDetailPage(
-                          repository: repository,
-                          row: row,
-                          monthKey: month,
-                        ),
+          for (final row in rows)
+            Column(
+              children: [
+                _BudgetRow(
+                  row: row,
+                  allocationTotal: allocationTotal,
+                  desktop: desktop,
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => BudgetCategoryDetailPage(
+                        repository: repository,
+                        row: row,
+                        monthKey: month,
                       ),
                     ),
                   ),
-                  compassHairline,
-                ],
-              ),
+                ),
+                compassHairline,
+              ],
             ),
-            const SizedBox(height: 22),
-            OutlinedButton.icon(
-              onPressed: () => _openEditor(context, repository, null),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: FinanceColors.compassTeal,
-                minimumSize: const Size.fromHeight(48),
-              ),
-              icon: const Icon(Icons.swap_horiz_rounded),
-              label: const Text('重新分配预算'),
-            ),
-          ],
-        ),
-        Positioned(
-          right: 18,
-          bottom: 16,
-          child: CompassActionBubble(
-            heroTag: 'budget_add',
-            icon: Icons.add_rounded,
-            color: FinanceColors.compassOrange,
-            onPressed: () => _openEditor(context, repository, null),
+        ];
+        return ListView(
+          padding: compassScrollPadding(
+            context,
+            desktop ? compassDesktopPagePadding : compassPagePadding,
           ),
-        ),
-      ],
+          children: [
+            Row(
+              children: [
+                Text('预算', style: textTheme.headlineSmall),
+                if (mono && !desktop) ...[
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        monthControls.first,
+                        Flexible(
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: monthControls[1],
+                          ),
+                        ),
+                        monthControls.last,
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                ] else ...[
+                  const Spacer(),
+                  ...monthControls,
+                ],
+                if (desktop) ...[
+                  const SizedBox(width: 16),
+                  FilledButton.icon(
+                    onPressed: openEditor,
+                    icon: const Icon(Icons.tune_rounded, size: 18),
+                    label: const Text('调整预算'),
+                  ),
+                ] else ...[
+                  if (mono)
+                    FilledButton(
+                      style: FilledButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                      ),
+                      onPressed: openEditor,
+                      child: const Text('调整'),
+                    )
+                  else ...[
+                    const Spacer(),
+                    TextButton(onPressed: openEditor, child: const Text('调整')),
+                  ],
+                ],
+              ],
+            ),
+            const SizedBox(height: 18),
+            if (desktop)
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width:
+                        (constraints.maxWidth * .28).clamp(320, 360).toDouble(),
+                    child: allocation,
+                  ),
+                  const SizedBox(width: 24),
+                  Expanded(
+                    child: CompassCard(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                      radius: 14,
+                      child: Column(children: details),
+                    ),
+                  ),
+                ],
+              )
+            else ...[
+              Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 460),
+                  child: allocation,
+                ),
+              ),
+              const SizedBox(height: 28),
+              ...details,
+            ],
+          ],
+        );
+      },
     );
   }
+
+  void _changeMonth(int offset) => setState(() {
+        selectedMonth =
+            DateTime(selectedMonth.year, selectedMonth.month + offset);
+      });
 
   Future<void> _openEditor(
     BuildContext context,
@@ -293,7 +335,7 @@ class _BudgetCategoryDetailPageState
                 children: [
                   const CompassBackButton(),
                   const Spacer(),
-                  Icon(row.icon, color: FinanceColors.compassTeal),
+                  Icon(row.icon, color: financePaletteOf(context).seed),
                   const SizedBox(width: 8),
                   Text(row.name, style: Theme.of(context).textTheme.titleLarge),
                   const Spacer(),
@@ -319,8 +361,8 @@ class _BudgetCategoryDetailPageState
                     const SizedBox(height: 6),
                     Text(
                       compassMoney(remaining, decimals: 0),
-                      style: const TextStyle(
-                        color: FinanceColors.compassTeal,
+                      style: TextStyle(
+                        color: financePaletteOf(context).seed,
                         fontSize: 36,
                         fontWeight: FontWeight.w600,
                       ),
@@ -334,48 +376,24 @@ class _BudgetCategoryDetailPageState
                 ),
               ),
               const SizedBox(height: 18),
-              LinearProgressIndicator(
-                value: effective <= 0
-                    ? 0
-                    : ((row.actual + row.planned) / effective).clamp(0, 1),
-                minHeight: 26,
-                borderRadius: BorderRadius.circular(8),
-                color: FinanceColors.compassOrange,
-                backgroundColor: Colors.transparent,
-              ),
-              const SizedBox(height: 10),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  _BudgetLegend(
-                    color: FinanceColors.compassOrange,
-                    label: '实际 ${row.actual.toStringAsFixed(0)}',
-                  ),
-                  _BudgetLegend(
-                    color: FinanceColors.compassOrange,
-                    label: '预计 ${row.planned.toStringAsFixed(0)}',
-                    striped: true,
-                  ),
-                  _BudgetLegend(
-                    color: FinanceColors.compassTeal,
-                    label: '剩余 ${remaining.toStringAsFixed(0)}',
-                  ),
-                ],
+              _BudgetUsageSummary(
+                actual: row.actual,
+                planned: row.planned,
               ),
               const SizedBox(height: 28),
               Row(
                 children: [
                   Text('预算构成', style: Theme.of(context).textTheme.titleMedium),
                   const Spacer(),
-                  const Icon(
+                  Icon(
                     Icons.check_circle_outline_rounded,
-                    color: FinanceColors.compassTeal,
+                    color: financePaletteOf(context).seed,
                     size: 18,
                   ),
                   const SizedBox(width: 6),
                   Text(
                     row.source?.rolloverEnabled == true ? '结转已开启' : '结转未开启',
-                    style: const TextStyle(color: FinanceColors.compassTeal),
+                    style: TextStyle(color: financePaletteOf(context).seed),
                   ),
                 ],
               ),
@@ -536,11 +554,6 @@ class _BudgetEditorPageState extends State<BudgetEditorPage> {
     final categoryName = categoryId == null
         ? '请选择'
         : _translatedBudgetName(widget.repository.categoryName(categoryId!));
-    final usage = effective <= 0
-        ? 0.0
-        : ((widget.presentation?.actual ?? 0) +
-                (widget.presentation?.planned ?? 0)) /
-            effective;
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: CompassBackground(
@@ -576,8 +589,8 @@ class _BudgetEditorPageState extends State<BudgetEditorPage> {
                     const SizedBox(height: 5),
                     Text(
                       compassMoney(effective, decimals: 0),
-                      style: const TextStyle(
-                        color: FinanceColors.compassTeal,
+                      style: TextStyle(
+                        color: financePaletteOf(context).seed,
                         fontSize: 44,
                         fontWeight: FontWeight.w600,
                       ),
@@ -588,15 +601,15 @@ class _BudgetEditorPageState extends State<BudgetEditorPage> {
                   ],
                 ),
               ),
+              if (widget.presentation case final row?) ...[
+                const SizedBox(height: 16),
+                _BudgetUsageSummary(
+                  actual: row.actual,
+                  planned: row.planned,
+                  remaining: effective - row.actual - row.planned,
+                ),
+              ],
               const SizedBox(height: 26),
-              LinearProgressIndicator(
-                value: usage.clamp(0, 1),
-                minHeight: 10,
-                borderRadius: BorderRadius.circular(8),
-                color: FinanceColors.compassOrange,
-                backgroundColor: Colors.transparent,
-              ),
-              const SizedBox(height: 20),
               _BudgetEditorRow(
                 icon: Icons.shield_outlined,
                 title: '支出类别',
@@ -631,21 +644,14 @@ class _BudgetEditorPageState extends State<BudgetEditorPage> {
               ),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
-                secondary: const Icon(
+                secondary: Icon(
                   Icons.refresh_rounded,
-                  color: FinanceColors.compassTeal,
+                  color: financePaletteOf(context).seed,
                 ),
                 title: const Text('结转规则'),
                 subtitle: const Text('未用与超支都结转'),
                 value: rollover,
                 onChanged: (value) => setState(() => rollover = value),
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                child: Text(
-                  'ⓘ  实际与预计交易都会占用预算',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
               ),
               const SizedBox(height: 8),
               TextButton.icon(
@@ -654,7 +660,7 @@ class _BudgetEditorPageState extends State<BudgetEditorPage> {
                   carried: carried,
                 ),
                 icon: const Icon(Icons.trending_up_rounded),
-                label: const Text('预览下月预算  ›'),
+                label: const Text('预览下月预算'),
               ),
               const SizedBox(height: 28),
               CompassPrimaryButton(
@@ -808,6 +814,8 @@ class _BudgetPresentation {
   final double planned;
   final double rollover;
   final Budget? source;
+
+  bool get hasAllocation => budget.isFinite && budget > 0;
 }
 
 List<_BudgetPresentation> _budgetRows(
@@ -832,232 +840,111 @@ List<_BudgetPresentation> _budgetRows(
   }).toList();
 }
 
-class _BudgetComposition extends StatelessWidget {
-  const _BudgetComposition({required this.rows});
-  final List<_BudgetPresentation> rows;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = financePaletteOf(context);
-    final total = rows.fold<double>(0, (sum, row) => sum + row.budget);
-    if (rows.isEmpty || total <= 0) return const SizedBox.shrink();
-    final displayRows = [...rows]..sort((a, b) => b.budget.compareTo(a.budget));
-    final visibleRows = displayRows.take(5).toList();
-    final visibleTotal = visibleRows.fold<double>(
-      0,
-      (sum, row) => sum + row.budget,
-    );
-    final remainingBudget = (total - visibleTotal).clamp(0, total);
-    final actual = rows.fold<double>(0, (sum, row) => sum + row.actual);
-    final planned = rows.fold<double>(0, (sum, row) => sum + row.planned);
-    return Column(
-      children: [
-        ClipRRect(
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(9)),
-          child: Container(
-            height: 64,
-            decoration: BoxDecoration(
-              border: Border.all(color: palette.border),
-              color: palette.surface.withValues(alpha: .5),
-            ),
-            child: Row(
-              children: [
-                ...visibleRows.indexed.map(
-                  (entry) => Expanded(
-                    flex:
-                        (entry.$2.budget / total * 1000).round().clamp(1, 1000),
-                    child: _BudgetAllocationCell(
-                      row: entry.$2,
-                      share: entry.$2.budget / total,
-                      color: palette.seed.withValues(
-                        alpha: (.24 - entry.$1 * .028).clamp(.1, .24),
-                      ),
-                      borderColor: palette.border,
-                    ),
-                  ),
-                ),
-                if (remainingBudget > 0.01)
-                  Expanded(
-                    flex:
-                        (remainingBudget / total * 1000).round().clamp(1, 1000),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: palette.surfaceAlt.withValues(alpha: .35),
-                        border: Border(
-                          right: BorderSide(color: palette.border),
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ),
-        _BudgetUsageBar(
-          actualRatio: actual / total,
-          plannedRatio: planned / total,
-          actualColor: palette.expense,
-          borderColor: palette.border,
-          backgroundColor: palette.surfaceAlt.withValues(alpha: .35),
-        ),
-      ],
-    );
-  }
-}
-
-class _BudgetAllocationCell extends StatelessWidget {
-  const _BudgetAllocationCell({
-    required this.row,
-    required this.share,
-    required this.color,
-    required this.borderColor,
-  });
-
-  final _BudgetPresentation row;
-  final double share;
-  final Color color;
-  final Color borderColor;
-
-  @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 3),
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: color,
-          border: Border(right: BorderSide(color: borderColor)),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              row.name,
-              maxLines: 1,
-              overflow: TextOverflow.fade,
-              softWrap: false,
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.labelSmall,
-            ),
-            const SizedBox(height: 2),
-            FittedBox(
-              fit: BoxFit.scaleDown,
-              child: Text(
-                '${(share * 100).toStringAsFixed(1)}%',
-                style: Theme.of(context).textTheme.titleSmall,
-              ),
-            ),
-          ],
-        ),
-      );
-}
-
-class _BudgetUsageBar extends StatelessWidget {
-  const _BudgetUsageBar({
-    required this.actualRatio,
-    required this.plannedRatio,
-    required this.actualColor,
-    required this.borderColor,
-    required this.backgroundColor,
-  });
-
-  final double actualRatio;
-  final double plannedRatio;
-  final Color actualColor;
-  final Color borderColor;
-  final Color backgroundColor;
-
-  @override
-  Widget build(BuildContext context) => LayoutBuilder(
-        builder: (context, constraints) {
-          final actualWidth =
-              constraints.maxWidth * actualRatio.clamp(0.0, 1.0);
-          final plannedWidth = constraints.maxWidth *
-              plannedRatio.clamp(
-                0.0,
-                (1 - actualRatio.clamp(0.0, 1.0)).clamp(0.0, 1.0),
-              );
-          return ClipRRect(
-            borderRadius:
-                const BorderRadius.vertical(bottom: Radius.circular(9)),
-            child: SizedBox(
-              height: 22,
-              child: Stack(
-                children: [
-                  Positioned.fill(child: ColoredBox(color: backgroundColor)),
-                  Positioned(
-                    left: 0,
-                    top: 0,
-                    bottom: 0,
-                    width: actualWidth,
-                    child: ColoredBox(color: actualColor),
-                  ),
-                  if (plannedWidth > 0)
-                    Positioned(
-                      left: actualWidth,
-                      top: 0,
-                      bottom: 0,
-                      width: plannedWidth,
-                      child: CustomPaint(
-                        painter: _BudgetStripePainter(color: actualColor),
-                      ),
-                    ),
-                  Positioned.fill(
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        border: Border.all(color: borderColor),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
-      );
-}
-
-class _BudgetStripePainter extends CustomPainter {
-  const _BudgetStripePainter({required this.color});
-
-  final Color color;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    canvas.drawRect(
-      Offset.zero & size,
-      Paint()..color = color.withValues(alpha: .14),
-    );
-    final paint = Paint()
-      ..color = color
-      ..strokeWidth = 2;
-    for (double x = -size.height; x < size.width + size.height; x += 7) {
-      canvas.drawLine(
-          Offset(x, size.height), Offset(x + size.height, 0), paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _BudgetStripePainter oldDelegate) =>
-      oldDelegate.color != color;
+List<FinanceDonutSlice> _budgetAllocationSlices(
+  BuildContext context,
+  List<_BudgetPresentation> rows,
+) {
+  final colors = financeDonutSeries(context);
+  final allocations = rows.where((row) => row.hasAllocation).toList()
+    ..sort((a, b) {
+      final byAmount = b.budget.compareTo(a.budget);
+      return byAmount == 0 ? a.name.compareTo(b.name) : byAmount;
+    });
+  final top = allocations.take(3);
+  final other = allocations.skip(3).fold(0.0, (sum, row) => sum + row.budget);
+  final otherLabel = top.any((row) => row.name == '其他') ? '其余分类' : '其他';
+  return [
+    for (final (index, row) in top.indexed)
+      FinanceDonutSlice(
+          label: row.name, value: row.budget, color: colors[index]),
+    if (other > 0)
+      FinanceDonutSlice(label: otherLabel, value: other, color: colors[3]),
+  ];
 }
 
 class _BudgetRow extends StatelessWidget {
   const _BudgetRow({
     required this.row,
-    required this.total,
+    required this.allocationTotal,
+    required this.desktop,
     required this.onTap,
   });
   final _BudgetPresentation row;
-  final double total;
+  final double allocationTotal;
+  final bool desktop;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final palette = financePaletteOf(context);
     final remaining = row.budget + row.rollover - row.actual - row.planned;
+    final remainingAmount = remaining.abs().toStringAsFixed(0);
+    final share = row.hasAllocation && allocationTotal.isFinite
+        ? row.budget / allocationTotal * 100
+        : 0;
+    if (palette.monochrome && !desktop) {
+      String amount(double value) =>
+          compassMoney(value, decimals: 0, showCurrency: false);
+      final textTheme = Theme.of(context).textTheme;
+      return InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  CompassIconBadge(icon: row.icon, size: 36),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(row.name, style: textTheme.titleMedium),
+                        Text(
+                            '预算 ${amount(row.budget)} · ${share.toStringAsFixed(1)}%',
+                            style: textTheme.bodySmall),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 112),
+                    child: Text(
+                      '${remaining < 0 ? '超出' : '剩余'} ${amount(remaining.abs())}',
+                      textAlign: TextAlign.end,
+                      style: textTheme.titleSmall,
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right_rounded, size: 20),
+                ],
+              ),
+              Padding(
+                padding: const EdgeInsets.only(left: 46, top: 7),
+                child: Wrap(
+                  spacing: 12,
+                  runSpacing: 4,
+                  children: [
+                    Text('实际 ${amount(row.actual)}',
+                        style: textTheme.bodySmall),
+                    Text('预计 ${amount(row.planned)}',
+                        style: textTheme.bodySmall),
+                    if (row.rollover != 0)
+                      Text('结转 ${amount(row.rollover)}',
+                          style: textTheme.bodySmall),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     return InkWell(
       onTap: onTap,
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 18),
+        padding: EdgeInsets.symmetric(vertical: desktop ? 12 : 18),
         child: Row(
           children: [
             CompassIconBadge(icon: row.icon, size: 40),
@@ -1082,25 +969,22 @@ class _BudgetRow extends StatelessWidget {
               flex: 2,
               child: FittedBox(
                 fit: BoxFit.scaleDown,
-                child:
-                    Text('${(row.budget / total * 100).toStringAsFixed(1)}%'),
+                child: Text('${share.toStringAsFixed(1)}%'),
               ),
             ),
             Expanded(
-              flex: 3,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Text('● ${row.actual.toStringAsFixed(0)}'),
-                  ),
-                  FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Text('◉ ${row.planned.toStringAsFixed(0)}',
-                        style: Theme.of(context).textTheme.bodySmall),
-                  ),
-                ],
+              flex: desktop ? 5 : 3,
+              child: _BudgetSpendColumns(
+                desktop: desktop,
+                actual: _BudgetSpendValue(
+                  value: row.actual,
+                  showMarker: !desktop,
+                ),
+                planned: _BudgetSpendValue(
+                  value: row.planned,
+                  showMarker: !desktop,
+                  planned: true,
+                ),
               ),
             ),
             Expanded(
@@ -1108,9 +992,7 @@ class _BudgetRow extends StatelessWidget {
               child: FittedBox(
                 fit: BoxFit.scaleDown,
                 child: Text(
-                  row.rollover == 0
-                      ? '+ 0'
-                      : '+ ${row.rollover.toStringAsFixed(0)}',
+                  '${row.rollover > 0 ? '+' : ''}${row.rollover.toStringAsFixed(0)}',
                   style: TextStyle(color: palette.seed),
                 ),
               ),
@@ -1124,15 +1006,19 @@ class _BudgetRow extends StatelessWidget {
                     fit: BoxFit.scaleDown,
                     alignment: Alignment.centerRight,
                     child: Text(
-                      remaining.abs().toStringAsFixed(0),
+                      remainingAmount,
+                      semanticsLabel: desktop && remaining >= 0
+                          ? '剩余 $remainingAmount'
+                          : null,
                       style: TextStyle(
                         color: remaining < 0 ? palette.expense : palette.seed,
                         fontSize: 16,
                       ),
                     ),
                   ),
-                  Text(remaining < 0 ? '超出' : '剩余',
-                      style: Theme.of(context).textTheme.bodySmall),
+                  if (!desktop || remaining < 0)
+                    Text(remaining < 0 ? '超出' : '剩余',
+                        style: Theme.of(context).textTheme.bodySmall),
                 ],
               ),
             ),
@@ -1144,40 +1030,127 @@ class _BudgetRow extends StatelessWidget {
   }
 }
 
+class _BudgetSpendColumns extends StatelessWidget {
+  const _BudgetSpendColumns({
+    required this.desktop,
+    required this.actual,
+    required this.planned,
+  });
+
+  final bool desktop;
+  final Widget actual;
+  final Widget planned;
+
+  @override
+  Widget build(BuildContext context) => desktop
+      ? Row(
+          children: [
+            Expanded(child: actual),
+            const SizedBox(width: 8),
+            Expanded(child: planned),
+          ],
+        )
+      : Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [actual, planned],
+        );
+}
+
+class _BudgetSpendValue extends StatelessWidget {
+  const _BudgetSpendValue({
+    required this.value,
+    required this.showMarker,
+    this.planned = false,
+  });
+
+  final double value;
+  final bool showMarker;
+  final bool planned;
+
+  @override
+  Widget build(BuildContext context) {
+    final amount = value.toStringAsFixed(0);
+    return Semantics(
+      label: '${planned ? '预计' : '实际'} $amount',
+      excludeSemantics: true,
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: showMarker ? Alignment.centerLeft : Alignment.centerRight,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (showMarker) ...[
+              _BudgetMarker(
+                color: financePaletteOf(context).expense,
+                outlined: planned,
+              ),
+              const SizedBox(width: 4),
+            ],
+            Text(amount,
+                style: planned && showMarker
+                    ? Theme.of(context).textTheme.bodySmall
+                    : null),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _BudgetColumnLabel extends StatelessWidget {
-  const _BudgetColumnLabel(this.label);
+  const _BudgetColumnLabel(this.label, {this.alignment = Alignment.center});
 
   final String label;
+  final Alignment alignment;
 
   @override
   Widget build(BuildContext context) => FittedBox(
         fit: BoxFit.scaleDown,
-        alignment: Alignment.center,
+        alignment: alignment,
         child: Text(label, style: Theme.of(context).textTheme.bodySmall),
       );
 }
 
-class _BudgetLegend extends StatelessWidget {
-  const _BudgetLegend({
-    required this.color,
-    required this.label,
-    this.striped = false,
+class _BudgetUsageSummary extends StatelessWidget {
+  const _BudgetUsageSummary({
+    required this.actual,
+    required this.planned,
+    this.remaining,
   });
-  final Color color;
-  final String label;
-  final bool striped;
+
+  final double actual;
+  final double planned;
+  final double? remaining;
 
   @override
-  Widget build(BuildContext context) => Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            striped ? '◉' : '●',
-            style: TextStyle(color: color, fontSize: 12),
-          ),
-          const SizedBox(width: 5),
-          Text(label, style: Theme.of(context).textTheme.bodySmall),
-        ],
+  Widget build(BuildContext context) {
+    String amount(double value) =>
+        compassMoney(value, decimals: 0, showCurrency: false);
+
+    final labels = [
+      '已用 ${amount(actual)}',
+      '预计 ${amount(planned)}',
+      if (remaining case final value?) '剩余 ${amount(value)}',
+    ];
+    return Text(labels.join(' · '), style: const TextStyle(fontSize: 12));
+  }
+}
+
+class _BudgetMarker extends StatelessWidget {
+  const _BudgetMarker({required this.color, required this.outlined});
+
+  final Color color;
+  final bool outlined;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        width: 8,
+        height: 8,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: outlined ? null : color,
+          border: outlined ? Border.all(color: color) : null,
+        ),
       );
 }
 
@@ -1204,8 +1177,8 @@ class _AmountLine extends StatelessWidget {
               '${positive ? '+ ' : emphasized ? '= ' : ''}${compassMoney(amount, decimals: 0)}',
               style: TextStyle(
                 color: positive || emphasized
-                    ? FinanceColors.compassTeal
-                    : FinanceColors.compassMuted,
+                    ? financePaletteOf(context).seed
+                    : financePaletteOf(context).textMuted,
               ),
             ),
           ],
@@ -1244,7 +1217,7 @@ class _BudgetExpenseRow extends StatelessWidget {
             ),
             Text(
               '- ${compassMoney(amount, decimals: 0)}',
-              style: const TextStyle(color: FinanceColors.compassOrange),
+              style: TextStyle(color: financePaletteOf(context).expense),
             ),
           ],
         ),
@@ -1287,26 +1260,24 @@ class _BudgetEditorInputRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
         constraints: const BoxConstraints(minHeight: 52),
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           border: Border(
-            bottom: BorderSide(color: FinanceColors.compassBorder),
+            bottom: BorderSide(color: financePaletteOf(context).border),
           ),
         ),
         child: Row(
           children: [
             SizedBox(
               width: 38,
-              child: Icon(icon, color: FinanceColors.compassTeal),
+              child: Icon(icon, color: financePaletteOf(context).seed),
             ),
             const SizedBox(width: 10),
             Expanded(child: Text(title)),
             SizedBox(
               width: 128,
-              child: TextField(
+              child: FinanceAmountField(
                 controller: controller,
                 textAlign: TextAlign.right,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
                 onChanged: onChanged,
                 decoration: const InputDecoration(
                   prefixText: 'MYR ',

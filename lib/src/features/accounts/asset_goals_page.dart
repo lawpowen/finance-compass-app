@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+
+import '../shared/finance_amount_field.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/data/finance_repository.dart';
 import '../../core/providers/mutations/account_mutations.dart';
 import '../../core/providers/repository_provider.dart';
-import '../../core/theme/finance_colors.dart';
+import '../../core/theme/finance_theme.dart';
 import '../shared/compass_ui.dart';
 
 class AssetGoalsPage extends ConsumerWidget {
@@ -58,8 +60,8 @@ class AssetGoalsPage extends ConsumerWidget {
                     const SizedBox(height: 5),
                     Text(
                       compassMoney(currentAssets),
-                      style: const TextStyle(
-                        color: FinanceColors.compassTeal,
+                      style: TextStyle(
+                        color: financePaletteOf(context).seed,
                         fontSize: 30,
                         fontWeight: FontWeight.w600,
                       ),
@@ -158,11 +160,9 @@ class AssetGoalsPage extends ConsumerWidget {
               decoration: const InputDecoration(labelText: '目标名称'),
             ),
             const SizedBox(height: 12),
-            TextField(
+            FinanceAmountField(
               key: const Key('asset-goal-amount'),
               controller: amountController,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
               decoration: const InputDecoration(labelText: '目标金额'),
             ),
           ],
@@ -270,8 +270,8 @@ class _AssetGoalCard extends StatelessWidget {
                     : Icons.flag_outlined,
                 size: 40,
                 color: summary.isReached
-                    ? FinanceColors.compassTeal
-                    : FinanceColors.compassOrange,
+                    ? financePaletteOf(context).seed
+                    : financePaletteOf(context).expense,
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -303,9 +303,9 @@ class _AssetGoalCard extends StatelessWidget {
             minHeight: 9,
             borderRadius: BorderRadius.circular(8),
             color: summary.isReached
-                ? FinanceColors.compassTeal
-                : FinanceColors.compassOrange,
-            backgroundColor: FinanceColors.compassBorder,
+                ? financePaletteOf(context).seed
+                : financePaletteOf(context).expense,
+            backgroundColor: financePaletteOf(context).border,
           ),
           const SizedBox(height: 10),
           Row(

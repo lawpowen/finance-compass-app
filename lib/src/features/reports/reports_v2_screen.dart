@@ -1,14 +1,16 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../core/data/finance_repository.dart';
 import '../../core/models/account.dart';
 import '../../core/models/category.dart';
-import '../../core/theme/finance_colors.dart';
+import '../../core/theme/finance_theme.dart';
 import '../../core/utils/month_key.dart';
 import '../shared/compass_ui.dart';
+import '../shared/finance_donut.dart';
 
 enum _ReportOverviewRange { yearToDate, last12Months, allTime }
 
@@ -98,15 +100,17 @@ class _ReportsV2ScreenState extends State<ReportsV2Screen> {
     final topExpenses = rankedExpenses.take(5).toList();
 
     // Point-in-time figures: they do not follow the selected range.
-    final cash = repository.totalAssetsByGroup(ReportGroup.cash);
-    final investment = repository.totalAssetsByGroup(ReportGroup.investment);
-    final retirement = repository.totalAssetsByGroup(ReportGroup.retirement);
-    final creditBalance = repository.totalAssetsByGroup(ReportGroup.credit);
-    final debt = creditBalance < 0 ? -creditBalance : 0.0;
+    double positiveBalance(ReportGroup group) =>
+        repository.displayTotalAssetsByGroup(group, positiveOnly: true);
+    final cash = positiveBalance(ReportGroup.cash);
+    final investment = positiveBalance(ReportGroup.investment);
+    final retirement = positiveBalance(ReportGroup.retirement);
+    final liabilities = repository.accountLiabilities();
+    final debt = liabilities.credit + liabilities.loans;
+    final cardCredit = repository.totalCreditCardCredit();
     final positiveTotal = cash + investment + retirement;
-    final hasComposition = positiveTotal > 0 || debt > 0;
-    String percent(double value) =>
-        positiveTotal <= 0 ? '0%' : '${(value / positiveTotal * 100).round()}%';
+    final hasComposition = positiveTotal > 0 || debt > 0 || cardCredit > 0;
+    final assetColors = financeDonutSeries(context);
     final budget = repository.totalEffectiveBudgetForMonth(currentMonthKey);
     final budgetActual = repository.totalBudgetExpenseForMonth(currentMonthKey);
     final budgetPlanned =
@@ -115,8 +119,8 @@ class _ReportsV2ScreenState extends State<ReportsV2Screen> {
     final budgetRate = budget <= 0 ? 0.0 : budgetUsed / budget;
     final budgetRemaining = budget - budgetUsed;
     final budgetColor = budgetRate >= .8
-        ? FinanceColors.compassOrange
-        : FinanceColors.compassTeal;
+        ? financePaletteOf(context).expense
+        : financePaletteOf(context).seed;
     final investmentAccounts = repository.investmentAccounts();
     var marketValue = 0.0;
     var remainingCost = 0.0;
@@ -141,7 +145,7 @@ class _ReportsV2ScreenState extends State<ReportsV2Screen> {
             ' · ${monthKeys.length} 个月';
     final shareText = [
       'Finance Compass 报表 · $rangeLabel（$periodLabel）',
-      '当前净资产 ${compassMoney(netWorth)}',
+      '月末净资产 ${compassMoney(netWorth)}（${cutoff.month}月${cutoff.day}日）',
       '$rangeLabel净资产变化 ${_signedMoney(growth)}',
       hasCashFlow
           ? '$rangeLabel实际现金净流入 ${_signedMoney(cashFlow.net)}'
@@ -149,469 +153,533 @@ class _ReportsV2ScreenState extends State<ReportsV2Screen> {
               ' / 流出 ${compassMoney(cashFlow.outflow)}）'
           : '$rangeLabel没有实际现金流记录',
     ].join('\n');
-    return ListView(
-      padding: compassPagePadding.copyWith(bottom: 28),
-      children: [
-        CompassPageHeader(
-          title: '报表',
-          actions: [
-            PopupMenuButton<_ReportOverviewRange>(
-              initialValue: range,
-              tooltip: '选择报表范围',
-              onSelected: (value) => setState(() => range = value),
-              itemBuilder: (_) => const [
-                PopupMenuItem(
-                  value: _ReportOverviewRange.yearToDate,
-                  child: Text('今年至今'),
-                ),
-                PopupMenuItem(
-                  value: _ReportOverviewRange.last12Months,
-                  child: Text('最近 12 个月'),
-                ),
-                PopupMenuItem(
-                  value: _ReportOverviewRange.allTime,
-                  child: Text('全部时间'),
-                ),
-              ],
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-                decoration: BoxDecoration(
-                  border: Border.all(color: FinanceColors.compassBorder),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(
-                  children: [
-                    Text(rangeLabel),
-                    const Icon(Icons.keyboard_arrow_down_rounded),
-                  ],
-                ),
-              ),
+    final header = CompassPageHeader(
+      title: '报表',
+      actions: [
+        PopupMenuButton<_ReportOverviewRange>(
+          initialValue: range,
+          tooltip: '选择报表范围',
+          onSelected: (value) => setState(() => range = value),
+          itemBuilder: (_) => const [
+            PopupMenuItem(
+              value: _ReportOverviewRange.yearToDate,
+              child: Text('今年至今'),
             ),
-            const SizedBox(width: 12),
-            IconButton(
-              tooltip: '分享所选期间报表',
-              onPressed: () => SharePlus.instance.share(
-                ShareParams(
-                  text: shareText,
-                  subject: 'Finance Compass $rangeLabel 报表',
-                ),
-              ),
-              icon: const Icon(Icons.ios_share_rounded),
+            PopupMenuItem(
+              value: _ReportOverviewRange.last12Months,
+              child: Text('最近 12 个月'),
+            ),
+            PopupMenuItem(
+              value: _ReportOverviewRange.allTime,
+              child: Text('全部时间'),
             ),
           ],
-        ),
-        const SizedBox(height: 6),
-        Text(
-          '所选期间：$periodLabel',
-          key: const Key('reports-period-label'),
-          style: textTheme.bodySmall,
-        ),
-        const SizedBox(height: 14),
-        Text('净资产 · 当前（$asOfLabel）', style: textTheme.bodySmall),
-        const SizedBox(height: 4),
-        Text(
-          compassMoney(netWorth, decimals: 0),
-          style: const TextStyle(
-            color: FinanceColors.compassTeal,
-            fontSize: 31,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        const SizedBox(height: 4),
-        if (!hasAccounts)
-          Text(
-            '尚未添加账户，添加账户后可查看净资产变化。',
-            style: textTheme.bodySmall,
-          )
-        else ...[
-          Text.rich(
-            TextSpan(
-              text: '$rangeLabel 变化 ',
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+            decoration: BoxDecoration(
+              border: Border.all(color: financePaletteOf(context).border),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Row(
               children: [
-                TextSpan(
-                  text: _signedMoney(growth, decimals: 0),
-                  style: TextStyle(color: _signColor(growth, decimals: 0)),
-                ),
-                const TextSpan(text: ' · '),
-                TextSpan(
-                  text: growthRate == null ? '—' : _signedPercent(growthRate),
-                  style: TextStyle(color: _signColor(growth, decimals: 0)),
-                ),
+                Text(rangeLabel),
+                const Icon(Icons.keyboard_arrow_down_rounded),
               ],
             ),
-            key: const Key('reports-net-worth-change'),
           ),
-          if (growthRate == null)
-            Text(
-              '期初净资产不为正，变化率不适用。',
-              style: textTheme.bodySmall,
+        ),
+        const SizedBox(width: 12),
+        IconButton(
+          tooltip: '分享所选期间报表',
+          onPressed: () => SharePlus.instance.share(
+            ShareParams(
+              text: shareText,
+              subject: 'Finance Compass $rangeLabel 报表',
             ),
-          const SizedBox(height: 12),
-          Stack(
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(26, 16, 4, 12),
-                child: CompassAreaChart(
-                  key: const Key('reports-net-worth-trend'),
-                  values: chartValues,
-                  height: 176,
-                ),
-              ),
-              Positioned(
-                right: 0,
-                top: 0,
-                child: Text(
-                  '当前  ${compassMoney(netWorth, decimals: 0)}',
-                  style: const TextStyle(
-                    color: FinanceColors.compassTeal,
-                    fontSize: 10,
-                  ),
-                ),
-              ),
-            ],
           ),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                '${_monthLabel(monthKeys.first)}期初',
-                style: const TextStyle(fontSize: 10),
-              ),
-              const Text('当前', style: TextStyle(fontSize: 10)),
-            ],
-          ),
-        ],
-        const SizedBox(height: 24),
-        _SectionHeader(
-          title: '实际现金流',
-          scope: '$periodLabel · 仅统计已发生交易，不含预计交易',
-        ),
-        const SizedBox(height: 10),
-        CompassCard(
-          child: !hasCashFlow
-              ? Text(
-                  '所选期间没有实际现金流记录',
-                  style: textTheme.bodySmall,
-                )
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _Metric(
-                            label: '流入',
-                            value: compassMoney(cashFlow.inflow),
-                            valueKey: const Key('reports-cash-inflow'),
-                            color: FinanceColors.compassTeal,
-                          ),
-                        ),
-                        Expanded(
-                          child: _Metric(
-                            label: '流出',
-                            value: compassMoney(cashFlow.outflow),
-                            valueKey: const Key('reports-cash-outflow'),
-                            color: FinanceColors.compassOrange,
-                          ),
-                        ),
-                        Expanded(
-                          child: _Metric(
-                            label: '净流入',
-                            value: _signedMoney(cashFlow.net),
-                            valueKey: const Key('reports-cash-net'),
-                            color: _signColor(cashFlow.net),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 14),
-                    _NetFlowBars(
-                      key: const Key('reports-cash-flow-trend'),
-                      values: monthlyNet,
-                    ),
-                    const SizedBox(height: 4),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          _monthLabel(monthKeys.first),
-                          style: const TextStyle(fontSize: 10),
-                        ),
-                        Text(
-                          _monthLabel(monthKeys.last),
-                          style: const TextStyle(fontSize: 10),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      '现金结余率 $savingsRateLabel · 月均净流入 '
-                      '${_signedMoney(averageMonthlyNet, decimals: 0)}',
-                      style: textTheme.bodySmall,
-                    ),
-                  ],
-                ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          '口径：只统计现金类账户的实际进出。信用卡消费在还款时才计入；'
-          '信用卡和贷款还款按实际支付的全额计为现金流出；现金账户之间的转账相互抵消。',
-          style: textTheme.bodySmall,
-        ),
-        const SizedBox(height: 24),
-        _SectionHeader(
-          title: '支出分类排行 · 前 5',
-          scope: '$periodLabel · 按交易发生口径（非现金流）：'
-              '信用卡消费按消费日计入，不含预计交易',
-        ),
-        const SizedBox(height: 10),
-        CompassCard(
-          child: topExpenses.isEmpty
-              ? Text(
-                  '所选期间没有已分类支出',
-                  style: textTheme.bodySmall,
-                )
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    for (var index = 0; index < topExpenses.length; index++)
-                      _CategoryRankRow(
-                        index: index,
-                        name: repository.categoryName(topExpenses[index].key),
-                        amount: topExpenses[index].value,
-                        share: expenseTotal <= 0
-                            ? 0.0
-                            : topExpenses[index].value / expenseTotal,
-                      ),
-                    const SizedBox(height: 6),
-                    Text(
-                      '已分类支出合计 ${compassMoney(expenseTotal)}'
-                      '${rankedExpenses.length > 5 ? ' · 共 ${rankedExpenses.length} 个分类' : ''}',
-                      key: const Key('reports-category-total'),
-                      style: textTheme.bodySmall,
-                    ),
-                  ],
-                ),
-        ),
-        const SizedBox(height: 24),
-        _SectionHeader(
-          title: '资产构成',
-          scope: '当前时点 · $asOfLabel，不随所选期间变化',
-        ),
-        const SizedBox(height: 10),
-        if (!hasComposition)
-          Text('暂无资产余额', style: textTheme.bodySmall)
-        else ...[
-          CompassDistributionBar(
-            values: [cash, investment, retirement, -debt],
-            colors: [
-              FinanceColors.compassTeal,
-              Color(0xFF3F8795),
-              Color(0xFF376B50),
-              FinanceColors.compassOrange,
-            ],
-            labels: [
-              percent(cash),
-              percent(investment),
-              percent(retirement),
-              debt == 0 || positiveTotal <= 0
-                  ? '0%'
-                  : '-${(debt / positiveTotal * 100).round()}%',
-            ],
-            height: 24,
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: _AssetLegend(
-                  label: '现金',
-                  amount: compassMoney(cash, decimals: 0),
-                  color: FinanceColors.compassTeal,
-                ),
-              ),
-              Expanded(
-                child: _AssetLegend(
-                  label: '投资',
-                  amount: compassMoney(investment, decimals: 0),
-                  color: Color(0xFF3F8795),
-                ),
-              ),
-              Expanded(
-                child: _AssetLegend(
-                  label: '退休',
-                  amount: compassMoney(retirement, decimals: 0),
-                  color: Color(0xFF376B50),
-                ),
-              ),
-              Expanded(
-                child: _AssetLegend(
-                  label: '信用负债',
-                  amount: '-${compassMoney(debt, decimals: 0)}',
-                  color: FinanceColors.compassOrange,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Text('负债为负值，将从资产中扣除。', style: textTheme.bodySmall),
-        ],
-        const SizedBox(height: 24),
-        _SectionHeader(
-          title: '本月预算',
-          scope: '${now.year}年${now.month}月 · 不随所选期间变化',
-        ),
-        const SizedBox(height: 10),
-        CompassCard(
-          child: budget <= 0
-              ? Text('本月尚未设置预算', style: textTheme.bodySmall)
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            '已用（含预计交易）',
-                            style: textTheme.titleSmall,
-                          ),
-                        ),
-                        Text(
-                          '${(budgetRate * 100).toStringAsFixed(0)}%',
-                          key: const Key('reports-budget-rate'),
-                          style: TextStyle(color: budgetColor, fontSize: 20),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(3),
-                      child: LinearProgressIndicator(
-                        value: budgetRate.clamp(0.0, 1.0).toDouble(),
-                        minHeight: 6,
-                        color: budgetColor,
-                        backgroundColor: FinanceColors.compassBorder,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '已用 ${compassMoney(budgetUsed)} / 预算 ${compassMoney(budget)}',
-                      style: textTheme.bodySmall,
-                    ),
-                    Text(
-                      '其中预计 ${compassMoney(budgetPlanned)} · '
-                      '${budgetRemaining >= 0 ? '剩余 ${compassMoney(budgetRemaining)}' : '超支 ${compassMoney(-budgetRemaining)}'}',
-                      style: textTheme.bodySmall,
-                    ),
-                  ],
-                ),
-        ),
-        const SizedBox(height: 24),
-        _SectionHeader(
-          title: '投资与退休账户',
-          scope: '当前时点 · $asOfLabel 的市值与成本，不随所选期间变化',
-        ),
-        const SizedBox(height: 10),
-        CompassCard(
-          child: investmentAccounts.isEmpty
-              ? Text('尚未添加投资或退休账户', style: textTheme.bodySmall)
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _Metric(
-                            label: '当前市值',
-                            value: compassMoney(marketValue),
-                          ),
-                        ),
-                        Expanded(
-                          child: _Metric(
-                            label: '剩余成本',
-                            value: hasCost ? compassMoney(remainingCost) : '—',
-                          ),
-                        ),
-                        Expanded(
-                          child: _Metric(
-                            label: '未实现盈亏',
-                            value: hasCost ? _signedMoney(unrealizedPnl) : '—',
-                            valueKey: const Key('reports-investment-pnl'),
-                            color: hasCost
-                                ? _signColor(unrealizedPnl)
-                                : FinanceColors.compassMuted,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      hasCost
-                          ? '未实现收益率 ${_signedPercent(unrealizedPnl / remainingCost)}'
-                          : '尚无成本数据，无法计算未实现盈亏。',
-                      style: textTheme.bodySmall,
-                    ),
-                  ],
-                ),
+          icon: const Icon(Icons.ios_share_rounded),
         ),
       ],
+    );
+    final period = Text(
+      periodLabel,
+      key: const Key('reports-period-label'),
+      style: textTheme.bodySmall,
+    );
+    List<Widget> netWorthSection({required bool wide}) => [
+          if (wide)
+            _SectionHeader(
+              title: '净资产趋势',
+              scope: '月末净资产 · ${cutoff.month}月${cutoff.day}日',
+            )
+          else
+            Text(
+              '月末净资产 · ${cutoff.month}月${cutoff.day}日',
+              style: textTheme.bodySmall,
+            ),
+          const SizedBox(height: 4),
+          Text(
+            compassMoney(netWorth, decimals: 0),
+            style: TextStyle(
+              color: financePaletteOf(context).seed,
+              fontSize: 31,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 4),
+          if (!hasAccounts)
+            Text(
+              '尚未添加账户',
+              style: textTheme.bodySmall,
+            )
+          else ...[
+            Text.rich(
+              TextSpan(
+                text: '$rangeLabel 变化 ',
+                children: [
+                  TextSpan(
+                    text: _signedMoney(growth, decimals: 0),
+                    style: TextStyle(
+                        color: _signColor(context, growth, decimals: 0)),
+                  ),
+                  const TextSpan(text: ' · '),
+                  TextSpan(
+                    text: growthRate == null ? '—' : _signedPercent(growthRate),
+                    style: TextStyle(
+                        color: _signColor(context, growth, decimals: 0)),
+                  ),
+                ],
+              ),
+              key: const Key('reports-net-worth-change'),
+            ),
+            if (growthRate == null)
+              Text(
+                '期初净资产不为正，变化率不适用。',
+                style: textTheme.bodySmall,
+              ),
+            const SizedBox(height: 12),
+            Stack(
+              children: [
+                Padding(
+                  padding: wide
+                      ? const EdgeInsets.fromLTRB(2, 4, 2, 8)
+                      : const EdgeInsets.fromLTRB(26, 16, 4, 12),
+                  child: CompassAreaChart(
+                    key: const Key('reports-net-worth-trend'),
+                    values: chartValues,
+                    height: wide ? 160 : 176,
+                  ),
+                ),
+                if (!wide)
+                  Positioned(
+                    right: 0,
+                    top: 0,
+                    child: Text(
+                      '本月末  ${compassMoney(netWorth, decimals: 0)}',
+                      style: TextStyle(
+                        color: financePaletteOf(context).seed,
+                        fontSize: 10,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  wide
+                      ? '期初 ${compassMoney(startingNetWorth, decimals: 0)}'
+                      : '${_monthLabel(monthKeys.first)}期初',
+                  style: const TextStyle(fontSize: 10),
+                ),
+                const Text('本月末', style: TextStyle(fontSize: 10)),
+              ],
+            ),
+          ],
+        ];
+    const cashFlowHeading = _SectionHeader(
+      title: '实际现金流',
+      scope: '现金账户实际收付 · 信用卡和贷款还款计入全额',
+    );
+    Widget cashFlowContent({required bool wide}) => !hasCashFlow
+        ? Text(
+            '所选期间没有实际现金流记录',
+            style: textTheme.bodySmall,
+          )
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: _Metric(
+                      label: '流入',
+                      value: compassMoney(cashFlow.inflow),
+                      valueKey: const Key('reports-cash-inflow'),
+                      color: financePaletteOf(context).seed,
+                    ),
+                  ),
+                  Expanded(
+                    child: _Metric(
+                      label: '流出',
+                      value: compassMoney(cashFlow.outflow),
+                      valueKey: const Key('reports-cash-outflow'),
+                      color: financePaletteOf(context).expense,
+                    ),
+                  ),
+                  Expanded(
+                    child: _Metric(
+                      label: '净流入',
+                      value: _signedMoney(cashFlow.net),
+                      valueKey: const Key('reports-cash-net'),
+                      color: _signColor(context, cashFlow.net),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              _NetFlowLine(
+                key: const Key('reports-cash-flow-trend'),
+                values: monthlyNet,
+                height: wide ? 160 : 64,
+              ),
+              const SizedBox(height: 4),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    _monthLabel(monthKeys.first),
+                    style: const TextStyle(fontSize: 10),
+                  ),
+                  Text(
+                    _monthLabel(monthKeys.last),
+                    style: const TextStyle(fontSize: 10),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                '现金结余率 $savingsRateLabel · 月均净流入 '
+                '${_signedMoney(averageMonthlyNet, decimals: 0)}',
+                style: textTheme.bodySmall,
+              ),
+            ],
+          );
+    const spendingHeading = _SectionHeader(
+      title: '支出分类排行 · 前 5',
+      scope: '按交易发生日 · 含刷卡消费 · 不含预计交易',
+    );
+    Widget spendContent({required bool wide}) => topExpenses.isEmpty
+        ? Text(
+            '所选期间没有已分类支出',
+            style: textTheme.bodySmall,
+          )
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (wide) const _ExpenseTableHeader(),
+              for (var index = 0; index < topExpenses.length; index++)
+                _CategoryRankRow(
+                  index: index,
+                  name: repository.categoryName(topExpenses[index].key),
+                  amount: topExpenses[index].value,
+                  share: expenseTotal <= 0
+                      ? 0.0
+                      : topExpenses[index].value / expenseTotal,
+                  wide: wide,
+                ),
+              const SizedBox(height: 6),
+              Text(
+                '已分类支出合计 ${compassMoney(expenseTotal)}'
+                '${rankedExpenses.length > 5 ? ' · 共 ${rankedExpenses.length} 个分类' : ''}',
+                key: const Key('reports-category-total'),
+                style: textTheme.bodySmall,
+              ),
+            ],
+          );
+    Widget assetsSection({required bool wide}) => hasComposition
+        ? FinanceDonutPanel(
+            key: const Key('reports-asset-composition'),
+            title: '资产构成',
+            totalLabel: '总资产',
+            totalValue: compassMoney(positiveTotal,
+                currency: repository.baseCurrency, decimals: 0),
+            formatLegendAmount: wide
+                ? (amount) => compassMoney(amount,
+                    currency: repository.baseCurrency, decimals: 0)
+                : null,
+            slices: [
+              FinanceDonutSlice(
+                  label: '现金', value: cash, color: assetColors[0]),
+              FinanceDonutSlice(
+                  label: '投资', value: investment, color: assetColors[2]),
+              FinanceDonutSlice(
+                  label: '退休', value: retirement, color: assetColors[1]),
+            ],
+            footer: Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 8,
+              runSpacing: 2,
+              children: [
+                Text(
+                  '负债 ${compassMoney(debt, currency: repository.baseCurrency, decimals: 0)}',
+                ),
+                if (cardCredit > 0)
+                  Text(
+                    '信用卡溢缴款 ${compassMoney(cardCredit, currency: repository.baseCurrency, decimals: 0)}',
+                  ),
+                if (!wide) Text(asOfLabel, style: textTheme.bodySmall),
+              ],
+            ),
+          )
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _SectionHeader(title: '资产构成', scope: wide ? null : asOfLabel),
+              const SizedBox(height: 10),
+              Text('暂无资产余额', style: textTheme.bodySmall),
+            ],
+          );
+    final budgetHeading = _SectionHeader(
+      title: '本月预算',
+      scope: _monthLabel(currentMonthKey),
+    );
+    final budgetContent = budget <= 0
+        ? Text('本月尚未设置预算', style: textTheme.bodySmall)
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '已用（含预计交易）',
+                      style: textTheme.titleSmall,
+                    ),
+                  ),
+                  Text(
+                    '${(budgetRate * 100).toStringAsFixed(0)}%',
+                    key: const Key('reports-budget-rate'),
+                    style: TextStyle(color: budgetColor, fontSize: 20),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '已用 ${compassMoney(budgetUsed)} / 预算 ${compassMoney(budget)}',
+                style: textTheme.bodySmall,
+              ),
+              Text(
+                '其中预计 ${compassMoney(budgetPlanned)} · '
+                '${budgetRemaining >= 0 ? '剩余 ${compassMoney(budgetRemaining)}' : '超支 ${compassMoney(-budgetRemaining)}'}',
+                style: textTheme.bodySmall,
+              ),
+            ],
+          );
+    final investmentHeading = _SectionHeader(
+      title: '投资与退休账户',
+      scope: asOfLabel,
+    );
+    final investmentContent = investmentAccounts.isEmpty
+        ? Text('尚未添加投资或退休账户', style: textTheme.bodySmall)
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: _Metric(
+                      label: '当前市值',
+                      value: compassMoney(marketValue),
+                    ),
+                  ),
+                  Expanded(
+                    child: _Metric(
+                      label: '剩余成本',
+                      value: hasCost ? compassMoney(remainingCost) : '—',
+                    ),
+                  ),
+                  Expanded(
+                    child: _Metric(
+                      label: '未实现盈亏',
+                      value: hasCost ? _signedMoney(unrealizedPnl) : '—',
+                      valueKey: const Key('reports-investment-pnl'),
+                      color: hasCost
+                          ? _signColor(context, unrealizedPnl)
+                          : financePaletteOf(context).textMuted,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Text(
+                hasCost
+                    ? '未实现收益率 ${_signedPercent(unrealizedPnl / remainingCost)}'
+                    : '尚无成本数据，无法计算未实现盈亏。',
+                style: textTheme.bodySmall,
+              ),
+            ],
+          );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= compassDesktopMinWidth;
+        return ListView(
+          padding: compassScrollPadding(
+            context,
+            wide ? compassDesktopPagePadding : compassPagePadding,
+          ),
+          children: [
+            header,
+            if (wide) ...[
+              const SizedBox(height: 24),
+              _ReportScopeHeading(title: '所选期间', date: period),
+              const SizedBox(height: 12),
+              IntrinsicHeight(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(
+                      child: CompassCard(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: netWorthSection(wide: true),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 20),
+                    Expanded(
+                      child: _ReportPanel(
+                        heading: cashFlowHeading,
+                        content: cashFlowContent(wide: true),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              _ReportPanel(
+                heading: spendingHeading,
+                content: spendContent(wide: true),
+              ),
+              const SizedBox(height: 32),
+              _ReportScopeHeading(
+                title: '本月末快照',
+                date: Text(
+                  '${cutoff.year}年${cutoff.month}月${cutoff.day}日',
+                  style: textTheme.bodySmall,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(flex: 5, child: assetsSection(wide: true)),
+                  const SizedBox(width: 20),
+                  Expanded(
+                    flex: 6,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _ReportPanel(
+                          heading: const _SectionHeader(title: '本月预算'),
+                          content: budgetContent,
+                        ),
+                        const SizedBox(height: 16),
+                        _ReportPanel(
+                          heading: const _SectionHeader(title: '投资与退休账户'),
+                          content: investmentContent,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ] else ...[
+              const SizedBox(height: 6),
+              period,
+              const SizedBox(height: 14),
+              ...netWorthSection(wide: false),
+              const SizedBox(height: 24),
+              cashFlowHeading,
+              const SizedBox(height: 10),
+              CompassCard(child: cashFlowContent(wide: false)),
+              const SizedBox(height: 24),
+              spendingHeading,
+              const SizedBox(height: 10),
+              CompassCard(child: spendContent(wide: false)),
+              const SizedBox(height: 24),
+              assetsSection(wide: false),
+              const SizedBox(height: 24),
+              budgetHeading,
+              const SizedBox(height: 10),
+              CompassCard(child: budgetContent),
+              const SizedBox(height: 24),
+              investmentHeading,
+              const SizedBox(height: 10),
+              CompassCard(child: investmentContent),
+            ],
+          ],
+        );
+      },
     );
   }
 }
 
-class _AssetLegend extends StatelessWidget {
-  const _AssetLegend({
-    required this.label,
-    required this.amount,
-    required this.color,
-  });
-  final String label;
-  final String amount;
-  final Color color;
+class _ReportScopeHeading extends StatelessWidget {
+  const _ReportScopeHeading({required this.title, required this.date});
+
+  final String title;
+  final Widget date;
 
   @override
-  Widget build(BuildContext context) => Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+  Widget build(BuildContext context) => Wrap(
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 12,
+        runSpacing: 4,
         children: [
-          Row(
-            children: [
-              Container(
-                width: 7,
-                height: 7,
-                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-              ),
-              const SizedBox(width: 5),
-              Text(label, style: const TextStyle(fontSize: 10)),
-            ],
+          Semantics(
+            header: true,
+            child: Text(title, style: Theme.of(context).textTheme.titleLarge),
           ),
-          const SizedBox(height: 4),
-          FittedBox(
-            child: Text(
-              amount,
-              style: const TextStyle(
-                color: FinanceColors.compassMuted,
-                fontSize: 9,
-              ),
-            ),
-          ),
+          date,
         ],
       );
 }
 
+class _ReportPanel extends StatelessWidget {
+  const _ReportPanel({required this.heading, required this.content});
+
+  final Widget heading;
+  final Widget content;
+
+  @override
+  Widget build(BuildContext context) => CompassCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [heading, const SizedBox(height: 12), content],
+        ),
+      );
+}
+
 class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({required this.title, required this.scope});
+  const _SectionHeader({required this.title, this.scope});
 
   final String title;
-  final String scope;
+  final String? scope;
 
   @override
   Widget build(BuildContext context) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(title, style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 2),
-          Text(scope, style: Theme.of(context).textTheme.bodySmall),
+          if (scope case final scope?) ...[
+            const SizedBox(height: 2),
+            Text(scope, style: Theme.of(context).textTheme.bodySmall),
+          ],
         ],
       );
 }
@@ -637,8 +705,8 @@ class _Metric extends StatelessWidget {
           children: [
             Text(
               label,
-              style: const TextStyle(
-                color: FinanceColors.compassMuted,
+              style: TextStyle(
+                color: financePaletteOf(context).textMuted,
                 fontSize: 11,
               ),
             ),
@@ -661,138 +729,204 @@ class _Metric extends StatelessWidget {
       );
 }
 
+const _expenseAmountColumnWidth = 148.0;
+const _expenseShareColumnWidth = 64.0;
+
+class _ExpenseTableHeader extends StatelessWidget {
+  const _ExpenseTableHeader();
+
+  @override
+  Widget build(BuildContext context) => DefaultTextStyle.merge(
+        style: Theme.of(context).textTheme.bodySmall,
+        child: const Column(
+          children: [
+            Row(
+              children: [
+                SizedBox(width: 20),
+                Expanded(child: Text('分类')),
+                SizedBox(width: 8),
+                SizedBox(
+                  width: _expenseAmountColumnWidth,
+                  child: Text('金额', textAlign: TextAlign.end),
+                ),
+                SizedBox(
+                  width: _expenseShareColumnWidth,
+                  child: Text('占比', textAlign: TextAlign.end),
+                ),
+              ],
+            ),
+            SizedBox(height: 6),
+            Divider(height: 1),
+          ],
+        ),
+      );
+}
+
 class _CategoryRankRow extends StatelessWidget {
   const _CategoryRankRow({
     required this.index,
     required this.name,
     required this.amount,
     required this.share,
+    required this.wide,
   });
 
   final int index;
   final String name;
   final double amount;
   final double share;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 7),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                SizedBox(
-                  width: 20,
-                  child: Text(
-                    '${index + 1}',
-                    style: const TextStyle(
-                      color: FinanceColors.compassMuted,
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-                Expanded(
-                  child: Text(
-                    name,
-                    key: Key('reports-category-$index-name'),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  compassMoney(amount),
-                  key: Key('reports-category-$index-amount'),
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-                SizedBox(
-                  width: 52,
-                  child: Text(
-                    '${(share * 100).toStringAsFixed(1)}%',
-                    textAlign: TextAlign.right,
-                    style: const TextStyle(
-                      color: FinanceColors.compassMuted,
-                      fontSize: 11,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Padding(
-              padding: const EdgeInsets.only(left: 20),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(3),
-                child: LinearProgressIndicator(
-                  value: share.clamp(0.0, 1.0).toDouble(),
-                  minHeight: 5,
-                  color: FinanceColors.compassOrange,
-                  backgroundColor: FinanceColors.compassBorder,
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
-}
-
-class _NetFlowBars extends StatelessWidget {
-  const _NetFlowBars({super.key, required this.values});
-
-  final List<double> values;
+  final bool wide;
 
   @override
   Widget build(BuildContext context) {
-    final peak =
-        values.fold<double>(0, (max, value) => math.max(max, value.abs()));
-    final gap = values.length > 24 ? 0.5 : 2.0;
-    Widget bar(double value) => FractionallySizedBox(
-          heightFactor: peak <= 0 ? 0.0 : value.abs() / peak,
-          widthFactor: 1,
-          child: ColoredBox(
-            color: value >= 0
-                ? FinanceColors.compassTeal
-                : FinanceColors.compassOrange,
-          ),
-        );
-    return Semantics(
-      label: '所选期间每月实际现金净流入',
-      child: SizedBox(
-        height: 64,
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            for (final value in values)
-              Expanded(
-                child: Padding(
-                  padding: EdgeInsets.symmetric(horizontal: gap),
-                  child: Column(
-                    children: [
-                      Expanded(
-                        child: Align(
-                          alignment: Alignment.bottomCenter,
-                          child: value > 0 ? bar(value) : null,
-                        ),
-                      ),
-                      Container(
-                        height: 1,
-                        color: FinanceColors.compassBorder,
-                      ),
-                      Expanded(
-                        child: Align(
-                          alignment: Alignment.topCenter,
-                          child: value < 0 ? bar(value) : null,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+    final amountLabel = Text(
+      compassMoney(amount),
+      key: Key('reports-category-$index-amount'),
+      style: const TextStyle(fontWeight: FontWeight.w600),
+    );
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 7),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 20,
+            child: Text(
+              '${index + 1}',
+              style: TextStyle(
+                color: financePaletteOf(context).textMuted,
+                fontSize: 12,
               ),
-          ],
-        ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              name,
+              key: Key('reports-category-$index-name'),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 8),
+          if (wide)
+            SizedBox(
+              width: _expenseAmountColumnWidth,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerRight,
+                child: amountLabel,
+              ),
+            )
+          else
+            amountLabel,
+          SizedBox(
+            width: wide ? _expenseShareColumnWidth : 52,
+            child: Text(
+              '${(share * 100).toStringAsFixed(1)}%',
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                color: financePaletteOf(context).textMuted,
+                fontSize: 11,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
+}
+
+class _NetFlowLine extends StatelessWidget {
+  const _NetFlowLine({
+    super.key,
+    required this.values,
+    required this.height,
+  });
+
+  final List<double> values;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = financePaletteOf(context);
+    return Semantics(
+      label: '所选期间每月实际现金净流入',
+      value: '最新月份 ${_signedMoney(values.last)}',
+      child: Row(
+        children: [
+          Expanded(
+            child: SizedBox(
+              height: height,
+              child: CustomPaint(
+                painter: _NetFlowPainter(values, palette),
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+          ExcludeSemantics(
+            child: Text(
+              '0',
+              style: TextStyle(color: palette.textMuted, fontSize: 10),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NetFlowPainter extends CustomPainter {
+  const _NetFlowPainter(this.values, this.palette);
+
+  final List<double> values;
+  final FinanceThemePalette palette;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const inset = 3.0;
+    final width = size.width - inset * 2;
+    final zero = size.height / 2;
+    if (width <= 0 || zero <= inset) return;
+
+    canvas.drawLine(
+      Offset(0, zero),
+      Offset(size.width, zero),
+      Paint()..color = palette.border,
+    );
+
+    final peak =
+        values.fold<double>(0, (peak, value) => math.max(peak, value.abs()));
+    final points = [
+      for (var index = 0; index < values.length; index++)
+        Offset(
+          values.length == 1
+              ? size.width / 2
+              : inset + width * index / (values.length - 1),
+          peak == 0 ? zero : zero - values[index] / peak * (zero - inset),
+        ),
+    ];
+    final line = Path()..addPolygon(points, false);
+    canvas.drawPath(
+      line,
+      Paint()
+        ..color = palette.seed
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5
+        ..strokeJoin = StrokeJoin.round,
+    );
+    final pointPaint = Paint();
+    for (var index = 0; index < points.length; index++) {
+      if (points.length > 1 &&
+          (values[index] == 0 ||
+              (points.length > 24 && index != points.length - 1))) {
+        continue;
+      }
+      pointPaint.color = values[index] >= 0 ? palette.seed : palette.expense;
+      canvas.drawCircle(points[index], 2.5, pointPaint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_NetFlowPainter oldDelegate) =>
+      oldDelegate.palette != palette || !listEquals(oldDelegate.values, values);
 }
 
 List<String> _monthKeysBetween(DateTime start, DateTime end) {
@@ -823,11 +957,12 @@ String _signedMoney(double value, {int decimals = 2}) {
   return value > 0 ? '+ $formatted' : formatted;
 }
 
-Color _signColor(double value, {int decimals = 2}) {
+Color _signColor(BuildContext context, double value, {int decimals = 2}) {
+  final palette = financePaletteOf(context);
   if (_isZero(value, decimals)) {
-    return FinanceColors.compassMuted;
+    return palette.textMuted;
   }
-  return value > 0 ? FinanceColors.compassTeal : FinanceColors.compassOrange;
+  return value > 0 ? palette.income : palette.expense;
 }
 
 String _signedPercent(double ratio) {

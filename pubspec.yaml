@@ -32,3 +32,10 @@ flutter:
   uses-material-design: true
   assets:
     - assets/support/touch-n-go-support-qr.jpg
+  fonts:
+    - family: MiSans
+      fonts:
+        - asset: assets/fonts/MiSans-Regular.ttf
+    - family: MiSans TC
+      fonts:
+        - asset: assets/fonts/MisansTC-Regular.ttf

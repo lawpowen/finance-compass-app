@@ -1,12 +1,17 @@
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../core/data/finance_repository.dart';
 import '../../core/models/account.dart';
 import '../../core/models/category.dart';
 import '../../core/models/transaction.dart';
-import '../../core/theme/finance_colors.dart';
+import '../../core/theme/finance_theme.dart';
 import '../../core/utils/id_generator.dart';
 import '../shared/compass_ui.dart';
+import '../shared/finance_amount_field.dart';
 import 'transaction_form_dialog.dart';
 
 class TransactionComposerPage extends StatefulWidget {
@@ -43,6 +48,10 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
   late final TextEditingController noteController;
   bool _isAutoSettingToAmount = false;
   bool _toAmountEditedByUser = false;
+  bool _showValidation = false;
+  final _scrollController = ScrollController();
+  final _primaryErrorKey = GlobalKey();
+  final _transferErrorKey = GlobalKey();
   bool moreExpanded = true;
   int recurrenceMonths = 1;
 
@@ -77,10 +86,13 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
       force: draft?.toAmount == null ||
           (_isSameCurrencyTransfer && !_isStructuredLoanPayment),
     );
+    FocusManager.instance.addEarlyKeyEventHandler(_handleSaveShortcut);
   }
 
   @override
   void dispose() {
+    FocusManager.instance.removeEarlyKeyEventHandler(_handleSaveShortcut);
+    _scrollController.dispose();
     amountController.dispose();
     toAmountController.dispose();
     merchantController.dispose();
@@ -92,13 +104,16 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
   Widget build(BuildContext context) {
     final account = _account(accountId);
     final category = _category(categoryId);
-    final statementDay = account?.statementDay ?? 12;
+    final issue = _showValidation ? _validationIssue() : null;
+    final sidePadding =
+        math.max(20.0, (MediaQuery.sizeOf(context).width - 840) / 2);
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: CompassBackground(
         child: SafeArea(
           child: ListView(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+            controller: _scrollController,
+            padding: EdgeInsets.fromLTRB(sidePadding, 12, sidePadding, 28),
             children: [
               Row(
                 children: [
@@ -145,30 +160,25 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                   label: const Text('套用模板'),
                 ),
               ),
-              Text(
-                type == TransactionType.transfer ? '转出金额' : '金额',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 8),
               Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Expanded(
-                    child: TextField(
+                    child: FinanceAmountField(
                       controller: amountController,
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
-                        signed: true,
-                      ),
-                      style: const TextStyle(
-                        color: FinanceColors.compassTeal,
+                      onChanged: _refreshValidation,
+                      title: type == TransactionType.transfer ? '转出金额' : '金额',
+                      showTitle: true,
+                      style: TextStyle(
+                        color: financePaletteOf(context).seed,
                         fontSize: 40,
                         fontWeight: FontWeight.w600,
                       ),
                       decoration: InputDecoration(
+                        hintText: '0.00',
                         prefixText: '${account?.currency ?? 'MYR'} ',
-                        prefixStyle: const TextStyle(
-                          color: FinanceColors.compassTeal,
+                        prefixStyle: TextStyle(
+                          color: financePaletteOf(context).seed,
                           fontSize: 40,
                           fontWeight: FontWeight.w600,
                         ),
@@ -179,61 +189,45 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                       ),
                     ),
                   ),
-                  OutlinedButton(
+                  OutlinedButton.icon(
                     onPressed: _pickAccount,
+                    iconAlignment: IconAlignment.end,
+                    icon: const Icon(Icons.expand_more_rounded, size: 18),
                     style: OutlinedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 14,
                         vertical: 12,
                       ),
                     ),
-                    child: Text('${account?.currency ?? 'MYR'}⌄'),
+                    label: Text(account?.currency ?? 'MYR'),
                   ),
                 ],
               ),
+              if (issue != null && !issue.transferIn)
+                _ComposerError(key: _primaryErrorKey, message: issue.message),
               if (type == TransactionType.transfer) ...[
                 const SizedBox(height: 16),
                 Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Expanded(
-                      child: Text(
-                        '转入金额',
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                    ),
-                    if (toAccountId != null && !_isSameCurrencyTransfer)
-                      TextButton(
-                        onPressed: () {
-                          _toAmountEditedByUser = false;
-                          _updateTransferEstimate(force: true);
-                        },
-                        child: const Text('重新换算'),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Expanded(
-                      child: TextField(
+                      child: FinanceAmountField(
                         controller: toAmountController,
+                        onChanged: _refreshValidation,
+                        title: '转入金额',
+                        showTitle: true,
                         enabled: toAccountId != null,
                         readOnly: _isSameCurrencyTransfer,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                          signed: true,
-                        ),
-                        style: const TextStyle(
-                          color: FinanceColors.compassTeal,
+                        style: TextStyle(
+                          color: financePaletteOf(context).seed,
                           fontSize: 40,
                           fontWeight: FontWeight.w600,
                         ),
                         decoration: InputDecoration(
                           prefixText:
                               '${_account(toAccountId)?.currency ?? '---'} ',
-                          prefixStyle: const TextStyle(
-                            color: FinanceColors.compassTeal,
+                          prefixStyle: TextStyle(
+                            color: financePaletteOf(context).seed,
                             fontSize: 40,
                             fontWeight: FontWeight.w600,
                           ),
@@ -245,24 +239,43 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                         ),
                       ),
                     ),
-                    OutlinedButton(
+                    OutlinedButton.icon(
                       onPressed: _pickToAccount,
+                      iconAlignment: IconAlignment.end,
+                      icon: const Icon(Icons.expand_more_rounded, size: 18),
                       style: OutlinedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 14,
                           vertical: 12,
                         ),
                       ),
-                      child: Text(
-                        '${_account(toAccountId)?.currency ?? '选择'}⌄',
-                      ),
+                      label: Text(_account(toAccountId)?.currency ?? '选择'),
                     ),
                   ],
                 ),
+                if (issue != null && issue.transferIn)
+                  _ComposerError(
+                      key: _transferErrorKey, message: issue.message),
                 const SizedBox(height: 4),
-                Text(
-                  _transferConversionHint(),
-                  style: Theme.of(context).textTheme.bodySmall,
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _transferConversionHint(),
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
+                    if (toAccountId != null &&
+                        !_isSameCurrencyTransfer &&
+                        !_isStructuredLoanPayment)
+                      TextButton(
+                        onPressed: () {
+                          _toAmountEditedByUser = false;
+                          _updateTransferEstimate(force: true);
+                        },
+                        child: const Text('重新换算'),
+                      ),
+                  ],
                 ),
               ],
               const SizedBox(height: 12),
@@ -275,11 +288,10 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                       : TransactionStatus.planned;
                 }),
               ),
-              const SizedBox(height: 8),
-              Text(
-                'ⓘ  预计交易不会影响真实余额',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
+              if (status == TransactionStatus.planned) ...[
+                const SizedBox(height: 8),
+                Text('不计入账户余额', style: Theme.of(context).textTheme.bodySmall),
+              ],
               const SizedBox(height: 24),
               const CompassSectionLabel('基本信息'),
               _ComposerRow(
@@ -314,28 +326,6 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                 value: '${date.year}年${date.month}月${date.day}日',
                 onTap: _pickDate,
               ),
-              if (account?.accountType == AccountType.creditCard)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 13),
-                  child: Row(
-                    children: [
-                      const SizedBox(
-                        width: 38,
-                        child: Icon(
-                          Icons.credit_card_rounded,
-                          color: FinanceColors.compassTeal,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          '将自动归入下期账单 · 8月$statementDay日结算',
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
               const SizedBox(height: 18),
               InkWell(
                 onTap: () => setState(() => moreExpanded = !moreExpanded),
@@ -357,11 +347,6 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                   title: '说明',
                   controller: noteController,
                   hintText: '添加备注（选填）',
-                ),
-                _ComposerRow(
-                  icon: Icons.attach_file_rounded,
-                  title: '附件',
-                  value: '计划中（此版本尚未提供）',
                 ),
                 if (!widget.editExisting && widget.allowRecurringGeneration)
                   _ComposerRow(
@@ -386,9 +371,9 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                   icon: const Icon(Icons.delete_outline_rounded),
                   label: const Text('删除交易'),
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: FinanceColors.compassOrange,
-                    side: const BorderSide(
-                      color: FinanceColors.compassOrange,
+                    foregroundColor: financePaletteOf(context).expense,
+                    side: BorderSide(
+                      color: financePaletteOf(context).expense,
                     ),
                     minimumSize: const Size.fromHeight(52),
                   ),
@@ -442,9 +427,11 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
   bool get _isStructuredLoanPayment {
     final draft = widget.draft;
     return draft != null &&
+        type == TransactionType.transfer &&
         draft.type == TransactionType.transfer &&
-        draft.accountId == accountId &&
+        // Keep the principal from the installment when its payer changes.
         draft.toAccountId == toAccountId &&
+        _account(toAccountId)?.accountType == AccountType.loan &&
         draft.toAmount != null &&
         RegExp(r'^贷款月供 #\d+$').hasMatch(draft.description ?? '');
   }
@@ -481,6 +468,9 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
   }
 
   String _transferConversionHint() {
+    if (_isStructuredLoanPayment) {
+      return '贷款月供 · 转出为本息合计，转入仅偿还本金';
+    }
     final sourceCurrency = _account(accountId)?.currency ?? 'MYR';
     final targetCurrency = _account(toAccountId)?.currency;
     if (targetCurrency == null) {
@@ -647,10 +637,97 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
     }
   }
 
-  void _submit() {
+  KeyEventResult _handleSaveShortcut(KeyEvent event) {
+    final keyboard = HardwareKeyboard.instance;
+    if (event is! KeyDownEvent ||
+        (event.logicalKey != LogicalKeyboardKey.enter &&
+            event.logicalKey != LogicalKeyboardKey.numpadEnter) ||
+        (!keyboard.isControlPressed && !keyboard.isMetaPressed) ||
+        keyboard.isAltPressed ||
+        keyboard.isShiftPressed ||
+        !mounted ||
+        !TickerMode.of(context) ||
+        ModalRoute.of(context)?.isCurrent != true ||
+        _isComposing(merchantController) ||
+        _isComposing(noteController)) {
+      return KeyEventResult.ignored;
+    }
+    final navigator = Navigator.of(context);
+    final rootNavigator = Navigator.of(context, rootNavigator: true);
+    if (rootNavigator != navigator && rootNavigator.canPop()) {
+      return KeyEventResult.ignored;
+    }
+    _submit();
+    return KeyEventResult.handled;
+  }
+
+  bool _isComposing(TextEditingController controller) {
+    final value = controller.value;
+    return value.isComposingRangeValid && !value.composing.isCollapsed;
+  }
+
+  void _refreshValidation(String _) {
+    if (_showValidation) setState(() {});
+  }
+
+  ({bool transferIn, String message})? _validationIssue() {
+    final transfer = type == TransactionType.transfer;
     final amount = double.tryParse(amountController.text.trim());
-    if (amount == null || !amount.isFinite || accountId == null) return;
-    if (type == TransactionType.transfer && toAccountId == null) return;
+    if (amount == null || !amount.isFinite) {
+      return (
+        transferIn: false,
+        message: transfer ? '请输入有效的转出金额' : '请输入有效的金额',
+      );
+    }
+    if (_account(accountId) == null) {
+      return (
+        transferIn: false,
+        message: transfer ? '请选择转出账户' : '请选择账户',
+      );
+    }
+    if (!transfer) return null;
+    if (_account(toAccountId) == null) {
+      return (transferIn: true, message: '请选择转入账户');
+    }
+    if (!_isSameCurrencyTransfer || _isStructuredLoanPayment) {
+      final transferAmount = double.tryParse(toAmountController.text.trim());
+      if (transferAmount == null || !transferAmount.isFinite) {
+        return (transferIn: true, message: '请输入有效的转入金额');
+      }
+    }
+    return null;
+  }
+
+  void _revealValidationError() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || ModalRoute.of(context)?.isCurrent != true) return;
+      final issue = _validationIssue();
+      if (issue == null) return;
+      final key = issue.transferIn ? _transferErrorKey : _primaryErrorKey;
+      if (key.currentContext case final errorContext?) {
+        unawaited(Scrollable.ensureVisible(
+          errorContext,
+          alignment: .25,
+          duration: const Duration(milliseconds: 180),
+        ));
+      } else if (_scrollController.hasClients) {
+        unawaited(_scrollController.animateTo(
+          0,
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+        ));
+      }
+    });
+  }
+
+  void _submit() {
+    if (ModalRoute.of(context)?.isCurrent != true) return;
+    if (_validationIssue() != null) {
+      setState(() => _showValidation = true);
+      _revealValidationError();
+      return;
+    }
+    final amount = double.parse(amountController.text.trim());
     final draft = widget.draft;
     final sourceCurrency = _account(accountId)?.currency ?? 'MYR';
     final targetCurrency = _account(toAccountId)?.currency ?? draft?.toCurrency;
@@ -659,13 +736,8 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
             (targetCurrency ?? sourceCurrency).trim().toUpperCase();
     final transferInAmount = type == TransactionType.transfer &&
             (!isSameCurrencyTransfer || _isStructuredLoanPayment)
-        ? double.tryParse(toAmountController.text.trim())
+        ? double.parse(toAmountController.text.trim())
         : null;
-    if (type == TransactionType.transfer &&
-        (!isSameCurrencyTransfer || _isStructuredLoanPayment) &&
-        (transferInAmount == null || !transferInAmount.isFinite)) {
-      return;
-    }
     final transaction = FinanceTransaction(
       id: widget.editExisting && draft != null ? draft.id : buildId('txn'),
       type: type,
@@ -713,7 +785,9 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
               FilledButton(
                 onPressed: () => Navigator.of(dialogContext).pop(true),
                 style: FilledButton.styleFrom(
-                  backgroundColor: FinanceColors.compassOrange,
+                  backgroundColor: financePaletteOf(dialogContext).expense,
+                  foregroundColor: financeForegroundOn(
+                      financePaletteOf(dialogContext).expense),
                 ),
                 child: const Text('确认删除'),
               ),
@@ -724,6 +798,24 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
     if (!confirmed || !mounted) return;
     Navigator.of(context).pop(TransactionFormResult.deleted(transactionId));
   }
+}
+
+class _ComposerError extends StatelessWidget {
+  const _ComposerError({super.key, required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(top: 6),
+        child: Semantics(
+          liveRegion: true,
+          child: Text(
+            message,
+            style: TextStyle(color: Theme.of(context).colorScheme.error),
+          ),
+        ),
+      );
 }
 
 class _TypeTabs extends StatelessWidget {
@@ -744,7 +836,7 @@ class _TypeTabs extends StatelessWidget {
     return Container(
       height: 44,
       decoration: BoxDecoration(
-        border: Border.all(color: FinanceColors.compassBorder),
+        border: Border.all(color: financePaletteOf(context).border),
         borderRadius: BorderRadius.circular(22),
       ),
       child: Row(
@@ -757,14 +849,17 @@ class _TypeTabs extends StatelessWidget {
               child: Container(
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color:
-                      active ? FinanceColors.compassOrange : Colors.transparent,
+                  color: active
+                      ? financePaletteOf(context).expense
+                      : Colors.transparent,
                   borderRadius: BorderRadius.circular(21),
                 ),
                 child: Text(
                   labels[index],
                   style: TextStyle(
-                    color: active ? Colors.white : FinanceColors.compassMuted,
+                    color: active
+                        ? financeForegroundOn(financePaletteOf(context).expense)
+                        : financePaletteOf(context).textMuted,
                     fontWeight: active ? FontWeight.w600 : FontWeight.w400,
                   ),
                 ),
@@ -794,16 +889,16 @@ class _ComposerRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final content = Container(
       constraints: const BoxConstraints(minHeight: 50),
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         border: Border(
-          bottom: BorderSide(color: FinanceColors.compassBorder),
+          bottom: BorderSide(color: financePaletteOf(context).border),
         ),
       ),
       child: Row(
         children: [
           SizedBox(
             width: 38,
-            child: Icon(icon, color: FinanceColors.compassTeal),
+            child: Icon(icon, color: financePaletteOf(context).seed),
           ),
           const SizedBox(width: 8),
           Expanded(child: Text(title)),
@@ -840,16 +935,16 @@ class _ComposerInputRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
         constraints: const BoxConstraints(minHeight: 50),
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           border: Border(
-            bottom: BorderSide(color: FinanceColors.compassBorder),
+            bottom: BorderSide(color: financePaletteOf(context).border),
           ),
         ),
         child: Row(
           children: [
             SizedBox(
               width: 38,
-              child: Icon(icon, color: FinanceColors.compassTeal),
+              child: Icon(icon, color: financePaletteOf(context).seed),
             ),
             const SizedBox(width: 8),
             Expanded(child: Text(title)),

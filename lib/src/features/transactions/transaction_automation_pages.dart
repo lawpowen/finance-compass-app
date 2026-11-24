@@ -8,6 +8,7 @@ import '../../core/models/transaction.dart';
 import '../../core/providers/mutations/transaction_mutations.dart';
 import '../../core/providers/repository_provider.dart';
 import '../../core/theme/finance_colors.dart';
+import '../../core/theme/finance_theme.dart';
 import '../../core/utils/id_generator.dart';
 import '../shared/compass_ui.dart';
 import 'transaction_composer_page.dart';
@@ -84,7 +85,7 @@ class QuickTemplateManagerPage extends ConsumerWidget {
           child: CompassActionBubble(
             heroTag: 'quick_template_add',
             icon: Icons.add,
-            color: FinanceColors.compassOrange,
+            color: financePaletteOf(context).expense,
             onPressed: () => _createTemplate(context, ref, current),
           ),
         ),
@@ -239,7 +240,7 @@ class _TemplateEditorPageState extends ConsumerState<TemplateEditorPage> {
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
           secondary:
-              const Icon(Icons.bolt_rounded, color: FinanceColors.compassTeal),
+              Icon(Icons.bolt_rounded, color: financePaletteOf(context).seed),
           title: const Text('显示在闪电快捷面板'),
           subtitle: const Text('前 5 个位置'),
           value: pinned,
@@ -449,7 +450,7 @@ class _RecurringPlanPageState extends ConsumerState<RecurringPlanPage> {
           onTap: allRows.isEmpty ? null : () => _generateAll(allRows),
         ),
         const SizedBox(height: 18),
-        Text('ⓘ  规则生成的是预计交易；发生后可转为实际',
+        Text('生成预计交易，可转为实际',
             style: Theme.of(context).textTheme.bodySmall),
         const SizedBox(height: 18),
         Align(
@@ -459,7 +460,7 @@ class _RecurringPlanPageState extends ConsumerState<RecurringPlanPage> {
               CompassActionBubble(
                 heroTag: 'recurring_add',
                 icon: Icons.add,
-                color: FinanceColors.compassOrange,
+                color: financePaletteOf(context).expense,
                 onPressed: () => _createRule(repository),
               ),
               const SizedBox(height: 6),
@@ -648,8 +649,8 @@ class _RecurringRuleEditorPageState
             ),
             Column(
               children: [
-                const Text('运行中',
-                    style: TextStyle(color: FinanceColors.compassTeal)),
+                Text('运行中',
+                    style: TextStyle(color: financePaletteOf(context).seed)),
                 Switch(
                     value: active,
                     onChanged: (value) => setState(() => active = value)),
@@ -672,10 +673,10 @@ class _RecurringRuleEditorPageState
             TextSpan(
               text: '每 $intervalMonths 个月 · ${start.day} 日发生，生成',
               style: const TextStyle(fontSize: 22),
-              children: const [
+              children: [
                 TextSpan(
                   text: '未来 3 个月',
-                  style: TextStyle(color: FinanceColors.compassTeal),
+                  style: TextStyle(color: financePaletteOf(context).seed),
                 ),
               ],
             ),
@@ -686,9 +687,9 @@ class _RecurringRuleEditorPageState
           mainAxisAlignment: MainAxisAlignment.spaceAround,
           children: [
             _RuleDate(date: _futureRuleDate(start, intervalMonths, 1)),
-            const Expanded(child: Divider(color: FinanceColors.compassTeal)),
+            Expanded(child: Divider(color: financePaletteOf(context).seed)),
             _RuleDate(date: _futureRuleDate(start, intervalMonths, 2)),
-            const Expanded(child: Divider(color: FinanceColors.compassTeal)),
+            Expanded(child: Divider(color: financePaletteOf(context).seed)),
             _RuleDate(date: _futureRuleDate(start, intervalMonths, 3)),
           ],
         ),
@@ -745,7 +746,7 @@ class _RecurringRuleEditorPageState
           onPressed: _editDraft,
         ),
         const SizedBox(height: 12),
-        Text('ⓘ  将创建预计交易；发生后可转为实际',
+        Text('生成预计交易，可转为实际',
             style: Theme.of(context).textTheme.bodySmall),
         const SizedBox(height: 26),
         Row(
@@ -1053,16 +1054,16 @@ class _TemplateRow extends StatelessWidget {
         onTap: onTap,
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 13),
-          decoration: const BoxDecoration(
-            border:
-                Border(bottom: BorderSide(color: FinanceColors.compassBorder)),
+          decoration: BoxDecoration(
+            border: Border(
+                bottom: BorderSide(color: financePaletteOf(context).border)),
           ),
           child: Row(
             children: [
               if (index != null) ...[
                 CircleAvatar(
                   radius: 11,
-                  backgroundColor: FinanceColors.compassTeal,
+                  backgroundColor: financePaletteOf(context).seed,
                   child: Text('$index', style: const TextStyle(fontSize: 10)),
                 ),
                 const SizedBox(width: 12),
@@ -1125,9 +1126,9 @@ class _RecurringRow extends StatelessWidget {
         onTap: onTap,
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 14),
-          decoration: const BoxDecoration(
-            border:
-                Border(bottom: BorderSide(color: FinanceColors.compassBorder)),
+          decoration: BoxDecoration(
+            border: Border(
+                bottom: BorderSide(color: financePaletteOf(context).border)),
           ),
           child: Row(
             children: [
@@ -1196,7 +1197,8 @@ class _RuleDate extends StatelessWidget {
             height: 18,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              border: Border.all(color: FinanceColors.compassTeal, width: 2),
+              border:
+                  Border.all(color: financePaletteOf(context).seed, width: 2),
             ),
           ),
         ],
@@ -1412,13 +1414,13 @@ class _AutomationEmptyState extends StatelessWidget {
         margin: const EdgeInsets.symmetric(vertical: 18),
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
-          color: FinanceColors.compassSurface,
+          color: financePaletteOf(context).surface,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: FinanceColors.compassBorder),
+          border: Border.all(color: financePaletteOf(context).border),
         ),
         child: Column(
           children: [
-            Icon(icon, size: 42, color: FinanceColors.compassTeal),
+            Icon(icon, size: 42, color: financePaletteOf(context).seed),
             const SizedBox(height: 10),
             Text(title, style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 4),

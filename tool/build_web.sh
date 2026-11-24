@@ -27,6 +27,7 @@ assert_locked_wasm() {
   fi
 }
 assert_locked_wasm web/sqlite3.wasm
+(cd assets/fonts && tr -d '\r' < SHA256SUMS | sha256sum -c --quiet -)
 
 if [ "${SKIP_PUB_GET:-0}" != "1" ]; then
   "$FLUTTER" pub get
@@ -42,7 +43,8 @@ rm -f web/drift_worker.js.deps web/drift_worker.js.map
 rm -rf build/web
 # A failed build or check must not leave a partial webroot for packaging.
 trap 'status=$?; if [ "$status" -ne 0 ]; then rm -rf build/web; fi; exit "$status"' EXIT
-"$FLUTTER" build web --release --no-web-resources-cdn --base-href "$BASE_HREF"
+"$FLUTTER" build web --release --no-web-resources-cdn --base-href "$BASE_HREF" \
+  --dart-define="FINANCE_SYNC_WEB=${FINANCE_SYNC_WEB:-false}"
 # Debug-only sidecars and Flutter's build bookkeeping are not loaded at runtime
 # and are not published.
 rm -f build/web/.last_build_id build/web/drift_worker.dart build/web/drift_worker.js.deps build/web/drift_worker.js.map
@@ -51,6 +53,7 @@ find build/web -type f \( -name '*.symbols' -o -name '*.map' \) -exec rm -f {} +
 for file in index.html flutter_bootstrap.js manifest.json service-worker.js pwa_bootstrap.js sqlite3.wasm drift_worker.js main.dart.js flutter.js version.json favicon.png assets/AssetManifest.bin assets/FontManifest.json assets/fonts/MaterialIcons-Regular.otf canvaskit/canvaskit.js canvaskit/canvaskit.wasm canvaskit/chromium/canvaskit.js canvaskit/chromium/canvaskit.wasm canvaskit/skwasm.js canvaskit/skwasm.wasm canvaskit/skwasm_heavy.js canvaskit/skwasm_heavy.wasm canvaskit/wimp.js canvaskit/wimp.wasm; do
   test -f "build/web/$file" || { echo "Missing web release asset: $file" >&2; exit 1; }
 done
+(cd build/web/assets/assets/fonts && tr -d '\r' < "$ROOT/assets/fonts/SHA256SUMS" | sha256sum -c --quiet -)
 
 # Every service-worker precache entry must exist, otherwise cache.addAll()
 # rejects and the PWA never installs its offline shell.

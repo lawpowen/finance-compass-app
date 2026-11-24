@@ -1,5 +1,9 @@
 # 变更记录
 
+## 2026-11-24 Web 17 Homelab 托管基线
+
+归档同步 Web、账号隔离、提醒、离线同步队列和底部磨砂导航的线上构建输入。出处、运行镜像和源包校验见 [Homelab Web 17 部署归档](HOMELAB_WEB17_ARCHIVE.md)。
+
 ## 2026-09-29
 
 ### Finance Compass v0.10.1 公开版发布

@@ -1,0 +1,11 @@
+{
+  "name": "finance-compass-sync",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "web-push": "3.6.7"
+  }
+}

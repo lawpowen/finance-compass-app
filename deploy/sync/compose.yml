@@ -1,0 +1,42 @@
+name: finance-compass
+
+services:
+  web:
+    build:
+      context: ../..
+      dockerfile: deploy/sync/Dockerfile
+      target: web
+    ports:
+      - "127.0.0.1:${FINANCE_SYNC_PORT:-18765}:8080"
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      sync:
+        condition: service_healthy
+
+  sync:
+    build:
+      context: ../..
+      dockerfile: deploy/sync/Dockerfile
+      target: sync
+    environment:
+      FINANCE_SYNC_ORIGIN: "${FINANCE_SYNC_ORIGIN:?Set FINANCE_SYNC_ORIGIN to the public HTTPS origin}"
+      FINANCE_SYNC_DB: /data/finance-sync.sqlite3
+    volumes:
+      - ledger:/data
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8081/api/sync/v1/health').then(response => process.exit(response.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  ledger:

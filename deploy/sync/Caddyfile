@@ -1,0 +1,49 @@
+{
+  servers :8080 {
+    listener_wrappers {
+      proxy_protocol {
+        timeout 3s
+        fallback_policy use
+      }
+    }
+    timeouts {
+      read_header 10s
+      read_body 30s
+    }
+  }
+}
+
+:8080 {
+  root * /srv
+  encode zstd gzip
+
+  header {
+    -Server
+    X-Content-Type-Options "nosniff"
+    X-Frame-Options "DENY"
+    Referrer-Policy "no-referrer"
+    Strict-Transport-Security "max-age=31536000"
+    Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+    Content-Security-Policy "default-src 'self'; base-uri 'self'; connect-src 'self'; frame-ancestors 'none'; img-src 'self' data: blob:; manifest-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:"
+  }
+
+  handle /api/sync/v1/* {
+    header Cache-Control "no-store"
+    reverse_proxy sync:8081 {
+      header_up X-Finance-Client-IP {http.request.remote.host}
+    }
+  }
+
+  handle /api/* {
+    respond 404
+  }
+
+  handle {
+    @wasm path /sqlite3.wasm
+    header @wasm Content-Type application/wasm
+    @entry path / /index.html /service-worker.js /flutter_service_worker.js /pwa_bootstrap.js /flutter_bootstrap.js /main.dart.js
+    header @entry Cache-Control "no-cache, no-store, must-revalidate"
+    try_files {path} /index.html
+    file_server
+  }
+}
