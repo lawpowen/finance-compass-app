@@ -6,6 +6,7 @@ import '../../core/models/category.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../core/utils/id_generator.dart';
 import '../../core/utils/month_key.dart';
+import '../shared/compass_ui.dart';
 import '../shared/finance_form_fields.dart';
 
 class BudgetFormDialog extends StatefulWidget {
@@ -75,6 +76,7 @@ class _BudgetFormDialogState extends State<BudgetFormDialog> {
               children: [
                 DropdownButtonFormField<String>(
                   value: categoryId,
+                  isExpanded: true,
                   decoration: const InputDecoration(
                     labelText: '支出类别',
                     border: OutlineInputBorder(),
@@ -83,7 +85,8 @@ class _BudgetFormDialogState extends State<BudgetFormDialog> {
                       .map(
                         (category) => DropdownMenuItem(
                           value: category.id,
-                          child: Text(category.name),
+                          child: Text(category.name,
+                              overflow: TextOverflow.ellipsis),
                         ),
                       )
                       .toList(),
@@ -110,6 +113,7 @@ class _BudgetFormDialogState extends State<BudgetFormDialog> {
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
                   value: currency,
+                  isExpanded: true,
                   decoration: const InputDecoration(
                     labelText: '预算币种',
                     border: OutlineInputBorder(),
@@ -137,12 +141,22 @@ class _BudgetFormDialogState extends State<BudgetFormDialog> {
                   validator: _numberRequired,
                 ),
                 const SizedBox(height: 12),
-                SwitchListTile(
-                  value: rolloverEnabled,
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('启用结转'),
-                  subtitle: const Text('没用完会滚到下个月，超支也会扣下个月额度。'),
-                  onChanged: (value) => setState(() => rolloverEnabled = value),
+                Row(
+                  children: [
+                    Expanded(
+                      child: SwitchListTile(
+                        value: rolloverEnabled,
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('启用结转'),
+                        onChanged: (value) =>
+                            setState(() => rolloverEnabled = value),
+                      ),
+                    ),
+                    const CompassHelpButton(
+                      title: '预算结转',
+                      message: '未用完的预算会加到下个月。超支的金额会扣减下个月的预算。',
+                    ),
+                  ],
                 ),
               ],
             ),

@@ -261,8 +261,16 @@ void main() {
       statementDay: 25,
       paymentDueDay: 14,
     );
+    const undatedCard = Account(
+      id: 'undated',
+      name: 'Undated',
+      accountType: AccountType.creditCard,
+      reportGroup: ReportGroup.credit,
+      currency: 'MYR',
+      currentBalance: 0,
+    );
     final repository = await _repositoryWith(
-      [liveCard, gapCard, _overpaidCard],
+      [liveCard, gapCard, _overpaidCard, undatedCard],
       [
         _charge(
           'yesterday',
@@ -312,8 +320,12 @@ void main() {
     );
     expect(find.text('MYR 350.00'), findsOneWidget);
     expect(find.text('MYR 120.00'), findsOneWidget);
-    expect(find.text('MYR 80.00'), findsNothing);
+    expect(find.text('信用卡溢缴款'), findsOneWidget);
+    expect(find.text('MYR 80.00'), findsOneWidget);
     expect(find.text('暂无欠款'), findsOneWidget);
+    expect(find.text('账期待设置'), findsOneWidget);
+    expect(find.text('当前为估算提醒'), findsOneWidget);
+    expect(find.textContaining('账期日期待设置'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -367,6 +379,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('- MYR 440.00'), findsOneWidget);
+    expect(find.text('MYR 30.00'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('account-cutoff-selector')));
     await tester.pumpAndSettle();
@@ -387,6 +400,17 @@ void main() {
       reason: 'Historical net assets: 0 - 470 + 80 at the cutoff.',
     );
     expect(find.text('MYR 470.00'), findsWidgets);
+    expect(find.text('MYR 80.00'), findsOneWidget);
+    expect(find.text('MYR 30.00'), findsNothing);
+
+    tester.view.physicalSize = const Size(960, 844);
+    await tester.pumpAndSettle();
+    final creditLabel = find.text('信用卡溢缴款');
+    final creditAmount = find.text('MYR 80.00');
+    expect(creditLabel, findsOneWidget);
+    expect(creditAmount, findsOneWidget);
+    expect(tester.getTopLeft(creditAmount).dx,
+        greaterThan(tester.getTopRight(creditLabel).dx));
     expect(tester.takeException(), isNull);
   });
 }

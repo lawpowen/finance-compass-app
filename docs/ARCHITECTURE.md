@@ -1,5 +1,7 @@
 # Finance Compass 系统架构
 
+同步写入的前台路径只等待本机校验和待上传队列写入。后台使用服务器修订号及稳定操作 ID 顺序上传。成功后删除已确认的本机待上传数据；暂时失败重试，实际冲突保留本机版本并交由用户选择。服务端按账号隔离账本。
+
 公开分发层由 Flutter Android Release、Flutter Windows Release、Inno Setup 安装器、便携 ZIP 及可自托管的 Flutter Web/PWA 组成。`pubspec.yaml` 负责版本与静态支持二维码资产，Android Gradle 配置从被 Git 忽略的本机 `key.properties`/JKS 读取稳定发布签名，Windows CMake 输出 `FinanceCompass.exe`，`packaging/windows/FinanceCompass.iss` 只包装同一次 Windows Release 目录。`deploy/selfhost/` 用 Docker 多阶段构建 Flutter Web，再用 Caddy 仅提供静态文件；它没有 API、服务端数据库或同步。GitHub Release 只接收二进制与校验文件，不接收数据库、JSON 备份或签名密钥。
 
 ## 技术栈
@@ -9,7 +11,7 @@
 - Drift + SQLite：本地持久化，当前 schema 版本为 9
 - `file_picker`、`share_plus`：导入、导出与外部 AI 分享
 - Drift WASM + OPFS/IndexedDB：Web 的浏览器本地 SQLite；`web/sqlite3.wasm` 和编译后的 `drift_worker.js` 必须同源提供
-- Web 渲染：CanvasKit 随站点提供（`--no-web-resources-cdn`），正文回退字体 Roboto/Noto Sans SC 由 `web/fonts/` 同源提供；离线外壳由 `web/service-worker.js` 缓存，`web/flutter_bootstrap.js` 不注册 Flutter 生成的 Service Worker 存根
+- Web 渲染：CanvasKit 随站点提供（`--no-web-resources-cdn`）。正文使用应用包内的字型，缺字时由同源回退字体补齐。重要状态标记优先用组件绘制，图标沿用 Flutter 图标资源。PWA 的现行 Worker 提供同版入口与资源；新版下载到独立缓存，用户确认后切换。首次安装和关闭所有页面后的自然激活沿用浏览器行为。
 
 ## 运行结构
 
@@ -58,6 +60,6 @@ Repository 对信用卡提供两条明确分离的读取路径：账单、未出
 
 ## 已知边界
 
-- Google 登录与云同步尚未实现；当前仅创建稳定的 `local_profile_id`。
+- 同步版 Web 通过独立部署启用用户名密码登录，使用与本地账本隔离的 Drift 工作副本和带版本检查的服务端 SQLite。默认静态版与原生版继续走本地数据库。见 [账号同步架构和部署](SYNC_HOSTING.md)。
 - 贷款计划当前使用固定合同利率；浮动利率重定价、手续费、罚息、部分还款和提前还款重算尚未实现。
-- 通知偏好会保存，但系统级定时通知调度尚未实现。
+- 同步站点支持每台设备主动开启 Web Push。Homelab 按已启用设备的时区计算信用卡结算与还款提醒。原生离线应用仍使用应用内提醒。见 [系统提醒](SYNC_HOSTING.md#系统提醒)。

@@ -7,6 +7,7 @@ import '../../core/data/finance_repository.dart';
 import '../../core/platform/local_file_io.dart' as local_files;
 import '../../core/providers/mutations/export_mutations.dart';
 import '../../core/providers/repository_provider.dart';
+import '../shared/compass_ui.dart';
 
 Future<bool> pickPreviewAndImportLedger(
   BuildContext context,
@@ -75,6 +76,14 @@ class _ImportLedgerPreview extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Text(
+            syncing
+                ? '确认会替换同步账本，并更新其他设备。请先下载当前完整 JSON。'
+                : kIsWeb
+                    ? '确认会替换当前账本。请先下载完整 JSON，作为恢复备份。'
+                    : '确认后会先建立恢复点，再用此文件替换当前资料。',
+          ),
+          const SizedBox(height: 12),
           Text('导出时间 ${preview.exportedAt ?? '-'}'),
           Text('账户 ${preview.accounts}'),
           Text('类别 ${preview.categories}'),
@@ -83,7 +92,14 @@ class _ImportLedgerPreview extends StatelessWidget {
           Text('资产快照 ${preview.assetSnapshots}'),
           if (repairs.isNotEmpty) ...[
             const SizedBox(height: 12),
-            Text('上级分类修复', style: Theme.of(context).textTheme.titleSmall),
+            CompassHelpHeading(
+              title:
+                  Text('上级分类修复', style: Theme.of(context).textTheme.titleSmall),
+              label: '上级分类修复',
+              message: '旧备份中找不到上级分类编号时，会尝试匹配同类型的唯一同名分类，且确保关联不会形成循环。'
+                  '无法匹配的分类会成为顶层分类，其交易和预算会保留。',
+            ),
+            if (unresolved) const Text('无法确认的上级关系会移除。分类及其交易和预算会保留。'),
             for (final repair in repairs)
               Padding(
                 padding: const EdgeInsets.only(top: 4),
@@ -93,19 +109,7 @@ class _ImportLedgerPreview extends StatelessWidget {
                       : '「${repair.categoryName}」将归入「${repair.parentName}」',
                 ),
               ),
-            if (unresolved) ...[
-              const SizedBox(height: 8),
-              const Text('无法确认的上级关系会移除。分类及其交易和预算会保留。'),
-            ],
           ],
-          const SizedBox(height: 12),
-          Text(
-            syncing
-                ? '确认会替换同步账本，并更新其他设备。请先下载当前完整 JSON。'
-                : kIsWeb
-                    ? '确认会替换当前账本。请先下载完整 JSON，作为恢复备份。'
-                    : '确认后会先建立恢复点，再用此文件替换当前资料。',
-          ),
         ],
       ),
       actions: [

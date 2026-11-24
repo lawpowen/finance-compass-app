@@ -10,9 +10,219 @@ import 'package:finance_app/src/core/theme/finance_theme.dart';
 import 'package:finance_app/src/features/transactions/transaction_composer_page.dart';
 import 'package:finance_app/src/features/transactions/transaction_form_dialog.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/amount_entry.dart';
+
 void main() {
+  testWidgets('saving reveals each missing amount or account inline',
+      (tester) async {
+    final database = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(database.close);
+    final repository = await FinanceRepository.load(database);
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(MaterialApp(
+      home: TransactionComposerPage(repository: repository),
+    ));
+    final save = find.text('保存交易');
+    await tester.ensureVisible(save);
+    await tester.tap(save);
+    await tester.pumpAndSettle();
+    expect(find.text('请输入有效的金额').hitTestable(), findsOneWidget);
+
+    final field = find.byType(TextFormField).first;
+    await enterAmount(tester, field, '11.34');
+    expect(find.text('请输入有效的金额'), findsNothing);
+    expect(
+      find
+          .ancestor(
+            of: find.text('请选择账户'),
+            matching: find.byWidgetPredicate(
+              (widget) =>
+                  widget is Semantics && widget.properties.liveRegion == true,
+            ),
+          )
+          .hitTestable(),
+      findsOneWidget,
+    );
+    expect(amountController(tester, field).text, '11.34');
+    expect(find.byType(TransactionComposerPage), findsOneWidget);
+  });
+
+  testWidgets('transfer feedback distinguishes target account from amount',
+      (tester) async {
+    final database = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(database.close);
+    var repository = await FinanceRepository.load(database);
+    repository = await repository.addAccount(const Account(
+      id: 'local',
+      name: '本币账户',
+      accountType: AccountType.cash,
+      reportGroup: ReportGroup.cash,
+      currency: 'MYR',
+      currentBalance: 100,
+    ));
+    repository = await repository.addAccount(const Account(
+      id: 'foreign',
+      name: '外币账户',
+      accountType: AccountType.bankSaving,
+      reportGroup: ReportGroup.cash,
+      currency: 'USD',
+      currentBalance: 10,
+    ));
+    await tester.pumpWidget(MaterialApp(
+      home: TransactionComposerPage(
+        repository: repository,
+        draft: FinanceTransaction(
+          id: 'unassigned-transfer',
+          type: TransactionType.transfer,
+          accountId: 'local',
+          currency: 'MYR',
+          amount: 42,
+          transactionDate: DateTime(2026, 7, 18),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+    expect(find.text('请选择转入账户'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, '选择'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('外币账户 · USD'));
+    await tester.pumpAndSettle();
+    expect(find.text('请选择转入账户'), findsNothing);
+    await tester.tap(find.byType(TextFormField).at(1));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('amount-key-C')));
+    await tester.tap(find.byKey(const ValueKey('amount-key-完成')));
+    await tester.pumpAndSettle();
+    expect(find.text('请输入有效的转入金额').hitTestable(), findsOneWidget);
+    expect(amountController(tester, find.byType(TextFormField).first).text,
+        '42.00');
+    expect(find.byType(TransactionComposerPage), findsOneWidget);
+  });
+
+  for (final modifier in [
+    LogicalKeyboardKey.controlLeft,
+    LogicalKeyboardKey.metaLeft
+  ]) {
+    testWidgets(
+        'save shortcut respects keypad and IME with ${modifier.keyLabel}',
+        (tester) async {
+      final database = AppDatabase.forTesting(NativeDatabase.memory());
+      addTearDown(database.close);
+      var repository = await FinanceRepository.load(database);
+      repository = await repository.addAccount(const Account(
+        id: 'cash',
+        name: '现金账户',
+        accountType: AccountType.cash,
+        reportGroup: ReportGroup.cash,
+        currency: 'MYR',
+        currentBalance: 100,
+      ));
+      TransactionFormResult? saved;
+      await tester.pumpWidget(MaterialApp(
+        home: Builder(builder: (context) {
+          return Scaffold(
+            body: FilledButton(
+              onPressed: () async {
+                saved = await Navigator.of(context).push<TransactionFormResult>(
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        TransactionComposerPage(repository: repository),
+                  ),
+                );
+              },
+              child: const Text('打开交易'),
+            ),
+          );
+        }),
+      ));
+      await tester.tap(find.text('打开交易'));
+      await tester.pumpAndSettle();
+
+      Future<void> sendShortcut() async {
+        await tester.sendKeyDownEvent(modifier);
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.sendKeyUpEvent(modifier);
+        await tester.pumpAndSettle();
+      }
+
+      final field = find.byType(TextFormField).first;
+      await enterAmount(tester, field, '-1.25');
+      await tester.tap(field);
+      await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('amount-keyboard')), findsNothing);
+      expect(saved, isNull);
+
+      await tester.tap(field);
+      await tester.pumpAndSettle();
+      await sendShortcut();
+      expect(find.byKey(const Key('amount-keyboard')), findsNothing);
+      expect(saved, isNull);
+
+      final merchant = find.byWidgetPredicate(
+        (widget) =>
+            widget is TextField && widget.decoration?.hintText == '添加商户',
+      );
+      await tester.ensureVisible(merchant);
+      await tester.showKeyboard(merchant);
+      tester.testTextInput.updateEditingValue(const TextEditingValue(
+        text: '午餐',
+        composing: TextRange(start: 0, end: 2),
+        selection: TextSelection.collapsed(offset: 2),
+      ));
+      await tester.pump();
+
+      await sendShortcut();
+      expect(saved, isNull);
+      tester.testTextInput.updateEditingValue(const TextEditingValue(
+        text: '午餐',
+        selection: TextSelection.collapsed(offset: 2),
+      ));
+      await tester.pump();
+      await sendShortcut();
+      expect(saved?.transactions.single.amount, -1.25);
+      expect(saved?.transactions.single.merchant, '午餐');
+    });
+  }
+
+  testWidgets('new composer opens the amount keypad from its caption and icon',
+      (tester) async {
+    final database = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(database.close);
+    final repository = await FinanceRepository.load(database);
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(MaterialApp(
+      theme: buildFinanceTheme(AppThemeStyle.abyss),
+      home: TransactionComposerPage(repository: repository),
+    ));
+
+    final keypad = find.byKey(const Key('amount-keyboard'));
+    await tester.tap(find.text('金额'));
+    await tester.pumpAndSettle();
+    expect(keypad, findsOneWidget);
+    await tester.tap(find.byTooltip('关闭金额键盘'));
+    await tester.pumpAndSettle();
+    expect(keypad, findsNothing);
+
+    await tester.tap(find.byTooltip('打开金额键盘'));
+    await tester.pumpAndSettle();
+    expect(keypad, findsOneWidget);
+  });
+
   testWidgets('edit composer preserves the existing transaction identity', (
     tester,
   ) async {
@@ -83,12 +293,17 @@ void main() {
     await tester.tap(find.text('打开编辑'));
     await tester.pumpAndSettle();
     expect(find.text('编辑交易'), findsOneWidget);
+    await enterAmount(tester, find.byType(TextFormField).first, '11.34');
+    await tester.scrollUntilVisible(find.text('保存修改'), -250,
+        scrollable: find.byType(Scrollable).first);
+    await tester.pumpAndSettle();
 
     await tester.tap(find.text('保存修改').first);
     await tester.pumpAndSettle();
 
     expect(saved, isNotNull);
     expect(saved!.transactions.single.id, draft.id);
+    expect(saved!.transactions.single.amount, 11.34);
     expect(saved!.transactions.single.recordDate, originalRecordDate);
     expect(saved!.transactions.single.transactionDate, transactionDate);
   });
@@ -379,7 +594,13 @@ void main() {
 
       await tester.tap(find.text('编辑金额'));
       await tester.pumpAndSettle();
-      expect(find.text(amount.toStringAsFixed(2)), findsOneWidget);
+      expect(
+        tester
+            .widget<TextFormField>(find.byType(TextFormField).first)
+            .controller!
+            .text,
+        amount.toStringAsFixed(2),
+      );
       await tester.tap(find.text('保存修改').first);
       await tester.pumpAndSettle();
 

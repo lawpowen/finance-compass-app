@@ -1,8 +1,11 @@
-import 'dart:ui' show ImageFilter;
+import 'dart:math' as math;
+import 'dart:ui' show ImageFilter, PointerDeviceKind;
 
+import 'package:flutter/gestures.dart' show PointerEvent;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/data/finance_repository.dart';
 import '../../core/providers/repository_provider.dart';
 import '../../core/settings/app_settings_controller.dart';
 import '../../core/theme/finance_theme.dart';
@@ -85,10 +88,37 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       widget.workspaceNavigation ?? FinanceWorkspaceNavigation();
   bool _showedLoading = false;
   bool _openedWorkspace = false;
+  FinanceRepository? _cachedRepository;
+  bool? _cachedSyncing;
+  Widget? _cachedSyncSettings;
+  AppSettingsController? _cachedSettingsController;
+  final List<Widget?> _cachedTabScreens =
+      List<Widget?>.filled(_destinations.length, null);
+
+  Widget _tabScreenFor(int index, FinanceRepository repository, bool syncing) {
+    return _cachedTabScreens[index] ??= switch (index) {
+      0 => DashboardV2Screen(
+          repository: repository,
+          onOpenAccounts: () => _selectDestination(1),
+          onOpenTransactions: () => _selectDestination(2),
+          onOpenBudgets: () => _selectDestination(3),
+        ),
+      1 => AccountsV2Screen(repository: repository),
+      2 => TransactionsV2Screen(repository: repository),
+      3 => BudgetsV2Screen(repository: repository),
+      4 => ReportsV2Screen(repository: repository),
+      _ => SettingsV2Screen(
+          repository: repository,
+          settingsController: widget.settingsController,
+          syncing: syncing,
+          syncSettings: widget.syncSettings,
+        ),
+    };
+  }
 
   void _selectDestination(int index) {
     if (selectedIndex == index) {
-      _navigation._keys[index].currentState?.maybePop();
+      _navigation._keys[index].currentState?.popUntil((route) => route.isFirst);
       return;
     }
     setState(() {
@@ -102,27 +132,21 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final repositoryAsync = ref.watch(financeRepositoryProvider);
     final desktop = MediaQuery.sizeOf(context).width >= compassDesktopMinWidth;
     final palette = paletteForStyle(widget.settingsController.themeStyle);
-    final workspaceBackground = BoxDecoration(
-      gradient: LinearGradient(
-        colors: [
-          palette.backgroundTop,
-          palette.background,
-          palette.backgroundBottom,
-        ],
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-      ),
-    );
 
     return repositoryAsync.when(
       loading: () {
         _showedLoading = true;
-        return DecoratedBox(
-          decoration: workspaceBackground,
-          child: Scaffold(
-            backgroundColor: Colors.transparent,
-            body: const SafeArea(child: CompassWorkspaceLoading()),
-          ),
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            const Positioned.fill(
+              child: RepaintBoundary(child: CompassBackdropLayer()),
+            ),
+            Scaffold(
+              backgroundColor: Colors.transparent,
+              body: const SafeArea(child: CompassWorkspaceLoading()),
+            ),
+          ],
         );
       },
       error: (error, _) => Scaffold(
@@ -146,76 +170,75 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           useEuropeanSeparators:
               repository.metaValues['number_separator_style'] == 'space_comma',
         );
-        final screens = <Widget Function()>[
-          () => DashboardV2Screen(
-                repository: repository,
-                onOpenAccounts: () => _selectDestination(1),
-                onOpenBudgets: () => _selectDestination(3),
-              ),
-          () => AccountsV2Screen(repository: repository),
-          () => TransactionsV2Screen(repository: repository),
-          () => BudgetsV2Screen(repository: repository),
-          () => ReportsV2Screen(repository: repository),
-          () => SettingsV2Screen(
-                repository: repository,
-                settingsController: widget.settingsController,
-                syncing: ref.watch(ledgerSyncSessionProvider) != null,
-                syncSettings: widget.syncSettings,
-              ),
-        ];
+        final syncing = ref.watch(ledgerSyncSessionProvider) != null;
+        if (!identical(_cachedRepository, repository) ||
+            _cachedSyncing != syncing ||
+            !identical(_cachedSyncSettings, widget.syncSettings) ||
+            !identical(_cachedSettingsController, widget.settingsController)) {
+          _cachedRepository = repository;
+          _cachedSyncing = syncing;
+          _cachedSyncSettings = widget.syncSettings;
+          _cachedSettingsController = widget.settingsController;
+          _cachedTabScreens.fillRange(0, _cachedTabScreens.length, null);
+        }
 
-        return DecoratedBox(
-          decoration: workspaceBackground,
-          child: Scaffold(
-            backgroundColor: Colors.transparent,
-            extendBody: true,
-            body: SafeArea(
-              bottom: false,
-              child: Align(
-                alignment: Alignment.topCenter,
-                child: SizedBox(
-                  width: desktop ? _workspaceMaxWidth : double.infinity,
-                  height: double.infinity,
-                  child: TweenAnimationBuilder<double>(
-                    tween: Tween(begin: reveal ? 0.0 : 1.0, end: 1.0),
-                    duration: const Duration(milliseconds: 240),
-                    curve: Curves.easeOut,
-                    builder: (context, progress, child) {
-                      final opacity = reducedMotion ? 1.0 : progress;
-                      return Opacity(
-                        opacity: opacity,
-                        alwaysIncludeSemantics: true,
-                        child: Transform.translate(
-                          offset: Offset(0, 3 * (1 - opacity)),
-                          child: child,
-                        ),
-                      );
-                    },
-                    child: IndexedStack(
-                      index: selectedIndex,
-                      children: [
-                        for (var i = 0; i < screens.length; i++)
-                          if (_openedTabs.contains(i))
-                            _WorkspaceTab(
-                              navigatorKey: _navigation._keys[i],
-                              active: selectedIndex == i,
-                              child: screens[i](),
-                            )
-                          else
-                            const SizedBox.shrink(),
-                      ],
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            const Positioned.fill(
+              child: RepaintBoundary(child: CompassBackdropLayer()),
+            ),
+            Scaffold(
+              backgroundColor: Colors.transparent,
+              extendBody: true,
+              body: SafeArea(
+                bottom: false,
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  child: SizedBox(
+                    width: desktop ? _workspaceMaxWidth : double.infinity,
+                    height: double.infinity,
+                    child: TweenAnimationBuilder<double>(
+                      tween: Tween(begin: reveal ? 0.0 : 1.0, end: 1.0),
+                      duration: const Duration(milliseconds: 240),
+                      curve: Curves.easeOut,
+                      builder: (context, progress, child) {
+                        final opacity = reducedMotion ? 1.0 : progress;
+                        return Opacity(
+                          opacity: opacity,
+                          alwaysIncludeSemantics: true,
+                          child: Transform.translate(
+                            offset: Offset(0, 3 * (1 - opacity)),
+                            child: child,
+                          ),
+                        );
+                      },
+                      child: IndexedStack(
+                        index: selectedIndex,
+                        children: [
+                          for (var i = 0; i < _destinations.length; i++)
+                            if (_openedTabs.contains(i))
+                              _WorkspaceTab(
+                                navigatorKey: _navigation._keys[i],
+                                active: selectedIndex == i,
+                                child: _tabScreenFor(i, repository, syncing),
+                              )
+                            else
+                              const SizedBox.shrink(),
+                        ],
+                      ),
                     ),
                   ),
                 ),
               ),
+              bottomNavigationBar: _CompassDock(
+                desktop: desktop,
+                palette: palette,
+                selectedIndex: selectedIndex,
+                onSelected: _selectDestination,
+              ),
             ),
-            bottomNavigationBar: _CompassDock(
-              desktop: desktop,
-              palette: palette,
-              selectedIndex: selectedIndex,
-              onSelected: _selectDestination,
-            ),
-          ),
+          ],
         );
       },
     );
@@ -263,7 +286,7 @@ class _WorkspaceTab extends StatelessWidget {
   }
 }
 
-class _CompassDock extends StatelessWidget {
+class _CompassDock extends StatefulWidget {
   const _CompassDock({
     required this.desktop,
     required this.palette,
@@ -277,11 +300,100 @@ class _CompassDock extends StatelessWidget {
   final ValueChanged<int> onSelected;
 
   @override
+  State<_CompassDock> createState() => _CompassDockState();
+}
+
+class _CompassDockState extends State<_CompassDock> {
+  int? _hoveredIndex;
+  ({Duration time, Offset position})? _lastTouch;
+
+  bool _supportsHover(PointerDeviceKind kind) =>
+      kind == PointerDeviceKind.mouse || kind == PointerDeviceKind.trackpad;
+
+  void _updateHover(PointerEvent event, double width) {
+    if (!_supportsHover(event.kind) || width <= 0) return;
+    if (_lastTouch case final touch?
+        when event.kind == PointerDeviceKind.mouse) {
+      final elapsed = event.timeStamp - touch.time;
+      // Mobile browsers can synthesize mouse hover at the touch location.
+      if (!elapsed.isNegative &&
+          elapsed < const Duration(milliseconds: 500) &&
+          (event.position - touch.position).distance < 24) {
+        return;
+      }
+    }
+    final slotWidth = width / _destinations.length;
+    final slot = (event.localPosition.dx / slotWidth)
+        .floor()
+        .clamp(0, _destinations.length - 1)
+        .toInt();
+    final index = Directionality.of(context) == TextDirection.rtl
+        ? _destinations.length - 1 - slot
+        : slot;
+    if (index != _hoveredIndex) {
+      setState(() => _hoveredIndex = index);
+    }
+  }
+
+  void _clearTouchHover(PointerEvent event) {
+    if (event.kind != PointerDeviceKind.touch) return;
+    _lastTouch = (time: event.timeStamp, position: event.position);
+    _clearHover();
+  }
+
+  void _clearHover() {
+    if (_hoveredIndex != null) {
+      setState(() => _hoveredIndex = null);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final desktop = widget.desktop;
+    final palette = widget.palette;
+    final selectedIndex = widget.selectedIndex;
     final radius = BorderRadius.circular(999);
     final height = desktop ? 62.0 : 58.0;
-    final iconSize = desktop ? 23.0 : 21.0;
-    final selectedRadius = BorderRadius.circular(13);
+    final iconSize = desktop ? 24.0 : 22.0;
+    final cpuSoftwareWeb = compassIsCpuSoftwareWeb;
+    final isLiquidGlass = palette.glassHighlightColor != null;
+    final disableAnimations = MediaQuery.disableAnimationsOf(context);
+    final enableBlur = !cpuSoftwareWeb && palette.dockBlurSigma > 0;
+    final effectiveSigma = math.min(palette.dockBlurSigma, 20.0);
+    final effectiveSurfaceAlpha = cpuSoftwareWeb
+        ? math.max(
+            palette.dockSurfaceAlpha,
+            isLiquidGlass ? 0.93 : 0.96,
+          )
+        : palette.dockSurfaceAlpha;
+    final dockSurfaceDecoration = isLiquidGlass
+        ? BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: cpuSoftwareWeb
+                  ? [
+                      Colors.white.withValues(alpha: .88),
+                      const Color(0xFFE6F4FF).withValues(alpha: .82),
+                      Colors.white.withValues(alpha: .86),
+                    ]
+                  : [
+                      Colors.white.withValues(alpha: .64),
+                      const Color(0xFFE6F4FF).withValues(alpha: .48),
+                      Colors.white.withValues(alpha: .58),
+                    ],
+            ),
+            border: Border.all(
+              color: Colors.white.withValues(alpha: .72),
+              width: 1.0,
+            ),
+            borderRadius: radius,
+          )
+        : BoxDecoration(
+            color: palette.surface.withValues(alpha: effectiveSurfaceAlpha),
+            border: Border.all(color: palette.border),
+            borderRadius: radius,
+          );
     return SafeArea(
       top: false,
       child: Padding(
@@ -290,77 +402,419 @@ class _CompassDock extends StatelessWidget {
           heightFactor: 1,
           child: ConstrainedBox(
             constraints: BoxConstraints(maxWidth: desktop ? 424 : 350),
-            child: ClipRRect(
-              borderRadius: radius,
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: palette.surface.withValues(alpha: .86),
-                    border: Border.all(color: palette.border),
-                    borderRadius: radius,
-                    boxShadow: [
-                      if (!palette.monochrome)
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: .17),
-                          blurRadius: 18,
-                          offset: const Offset(0, 5),
-                        ),
-                    ],
-                  ),
-                  child: NavigationBarTheme(
-                    data: NavigationBarTheme.of(context).copyWith(
-                      iconTheme: WidgetStatePropertyAll(
-                        IconThemeData(size: iconSize, color: palette.textMuted),
-                      ),
-                      labelTextStyle: WidgetStateProperty.resolveWith(
-                        (states) => TextStyle(
-                          fontSize: 11,
-                          height: 1.15,
-                          color: states.contains(WidgetState.selected)
-                              ? palette.seed
-                              : palette.textMuted,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                    child: NavigationBar(
-                      height: height,
-                      selectedIndex: selectedIndex,
-                      backgroundColor: Colors.transparent,
-                      surfaceTintColor: Colors.transparent,
-                      elevation: 0,
-                      indicatorColor: Colors.transparent,
-                      animationDuration: MediaQuery.disableAnimationsOf(context)
-                          ? Duration.zero
-                          : const Duration(milliseconds: 180),
-                      labelBehavior:
-                          NavigationDestinationLabelBehavior.alwaysShow,
-                      destinations: [
-                        for (final destination in _destinations)
-                          NavigationDestination(
-                            icon: Icon(destination.icon),
-                            selectedIcon: DecoratedBox(
-                              decoration: BoxDecoration(
-                                color: palette.monochrome
-                                    ? palette.surfaceAlt
-                                    : palette.seed.withValues(alpha: .17),
-                                borderRadius: selectedRadius,
-                              ),
-                              child: SizedBox.square(
-                                dimension: 31,
-                                child: Icon(destination.selectedIcon,
-                                    color: palette.seed),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final dockWidth = constraints.maxWidth;
+                return Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Listener(
+                      onPointerDown: _clearTouchHover,
+                      onPointerUp: _clearTouchHover,
+                      child: MouseRegion(
+                        onEnter: (event) => _updateHover(event, dockWidth),
+                        onHover: (event) => _updateHover(event, dockWidth),
+                        onExit: (event) {
+                          if (_supportsHover(event.kind)) _clearHover();
+                        },
+                        child: RepaintBoundary(
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              borderRadius: radius,
+                              boxShadow: [
+                                if (palette.dockShadowColor case final shadow?)
+                                  BoxShadow(
+                                    color: shadow,
+                                    blurRadius: cpuSoftwareWeb
+                                        ? 0
+                                        : (isLiquidGlass ? 22 : 14),
+                                    offset: Offset(
+                                      0,
+                                      cpuSoftwareWeb
+                                          ? 1
+                                          : (isLiquidGlass ? 8 : 4),
+                                    ),
+                                  )
+                                else if (!palette.monochrome)
+                                  BoxShadow(
+                                    color: Colors.black.withValues(alpha: .17),
+                                    blurRadius: cpuSoftwareWeb ? 0 : 14,
+                                    offset: Offset(0, cpuSoftwareWeb ? 1 : 4),
+                                  ),
+                              ],
+                            ),
+                            child: ClipRRect(
+                              borderRadius: radius,
+                              child: BackdropFilter(
+                                enabled: enableBlur,
+                                filter: ImageFilter.blur(
+                                  sigmaX: effectiveSigma,
+                                  sigmaY: effectiveSigma,
+                                  tileMode: TileMode.clamp,
+                                ),
+                                child: compassGlassHighlight(
+                                  color: palette.glassHighlightColor,
+                                  borderRadius: radius,
+                                  child: DecoratedBox(
+                                    decoration: dockSurfaceDecoration,
+                                    child: NavigationBarTheme(
+                                      data: NavigationBarTheme.of(context)
+                                          .copyWith(
+                                        iconTheme: WidgetStatePropertyAll(
+                                          IconThemeData(
+                                            size: iconSize,
+                                            color: palette.textMuted,
+                                          ),
+                                        ),
+                                        overlayColor:
+                                            WidgetStateProperty.resolveWith(
+                                          (states) => states
+                                                  .contains(WidgetState.pressed)
+                                              ? palette.seed
+                                                  .withValues(alpha: .10)
+                                              : Colors.transparent,
+                                        ),
+                                        labelTextStyle:
+                                            WidgetStateProperty.resolveWith(
+                                          (states) => TextStyle(
+                                            fontSize: 11,
+                                            height: 1.15,
+                                            color: states.contains(
+                                                    WidgetState.selected)
+                                                ? palette.seed
+                                                : palette.textMuted,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ),
+                                      child: NavigationBar(
+                                        height: height,
+                                        selectedIndex: selectedIndex,
+                                        backgroundColor: Colors.transparent,
+                                        surfaceTintColor: Colors.transparent,
+                                        elevation: 0,
+                                        indicatorColor: Colors.transparent,
+                                        animationDuration: disableAnimations
+                                            ? Duration.zero
+                                            : const Duration(milliseconds: 180),
+                                        labelBehavior:
+                                            NavigationDestinationLabelBehavior
+                                                .alwaysHide,
+                                        destinations: [
+                                          for (var i = 0;
+                                              i < _destinations.length;
+                                              i++)
+                                            NavigationDestination(
+                                              icon: _DockAnimatedIcon(
+                                                index: i,
+                                                icon: i == selectedIndex
+                                                    ? _destinations[i]
+                                                        .selectedIcon
+                                                    : _destinations[i].icon,
+                                                selected: i == selectedIndex,
+                                                hoveredIndex: _hoveredIndex,
+                                                desktop: desktop,
+                                                palette: palette,
+                                                cpuSoftwareWeb: cpuSoftwareWeb,
+                                                disableAnimations:
+                                                    disableAnimations,
+                                              ),
+                                              label: _destinations[i].label,
+                                              tooltip: '',
+                                            ),
+                                        ],
+                                        onDestinationSelected:
+                                            widget.onSelected,
+                                      ),
+                                    ),
+                                  ),
+                                ),
                               ),
                             ),
-                            label: destination.label,
-                            tooltip: '',
                           ),
-                      ],
-                      onDestinationSelected: onSelected,
+                        ),
+                      ),
                     ),
-                  ),
+                    _DockFloatingLabel(
+                      hoveredIndex: _hoveredIndex,
+                      dockWidth: dockWidth,
+                      dockHeight: height,
+                      palette: palette,
+                      cpuSoftwareWeb: cpuSoftwareWeb,
+                      disableAnimations: disableAnimations,
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DockAnimatedIcon extends StatelessWidget {
+  const _DockAnimatedIcon({
+    required this.index,
+    required this.icon,
+    required this.selected,
+    required this.hoveredIndex,
+    required this.desktop,
+    required this.palette,
+    required this.cpuSoftwareWeb,
+    required this.disableAnimations,
+  });
+
+  final int index;
+  final IconData icon;
+  final bool selected;
+  final int? hoveredIndex;
+  final bool desktop;
+  final FinanceThemePalette palette;
+  final bool cpuSoftwareWeb;
+  final bool disableAnimations;
+
+  @override
+  Widget build(BuildContext context) {
+    final isLiquidGlass = palette.glassHighlightColor != null;
+    final distance =
+        hoveredIndex == null ? null : (index - hoveredIndex!).abs();
+    final isHovered = distance == 0;
+    final isNeighbor = distance == 1;
+
+    final double scale;
+    final double liftY;
+    if (isHovered) {
+      scale = selected ? (desktop ? 1.18 : 1.12) : (desktop ? 1.22 : 1.15);
+      liftY = desktop ? -4.0 : -3.5;
+    } else if (isNeighbor) {
+      scale = 1.07;
+      liftY = -1.8;
+    } else if (selected) {
+      scale = 1.04;
+      liftY = -1.0;
+    } else {
+      scale = 1.0;
+      liftY = 0.0;
+    }
+
+    final duration =
+        disableAnimations ? Duration.zero : const Duration(milliseconds: 210);
+    // A bounded curve keeps the capsule inside the pill on interrupted hovers.
+    const curve = Curves.easeOutCubic;
+    final showCapsule = selected || isHovered;
+    final Color? capsuleColor = switch ((isLiquidGlass, selected, isHovered)) {
+      (true, true, _) => null,
+      (true, false, true) => Colors.white.withValues(alpha: .50),
+      (false, true, _) => palette.selectedSurface ??
+          (palette.monochrome
+              ? palette.surfaceAlt
+              : palette.seed.withValues(alpha: .17)),
+      (false, false, true) => palette.seed.withValues(alpha: .10),
+      _ => null,
+    };
+
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(end: liftY),
+      duration: duration,
+      curve: curve,
+      builder: (context, dy, child) => Transform.translate(
+        offset: Offset(0, dy),
+        transformHitTests: false,
+        child: child,
+      ),
+      child: AnimatedScale(
+        scale: scale,
+        duration: duration,
+        curve: curve,
+        alignment: Alignment.center,
+        child: AnimatedContainer(
+          key: Key('compass-dock-icon-$index'),
+          duration: duration,
+          curve: curve,
+          width: desktop ? 44 : 36,
+          height: desktop ? 32 : 28,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: capsuleColor,
+            gradient: isLiquidGlass && selected
+                ? LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.white.withValues(alpha: .94),
+                      const Color(0xFFD6EEFF).withValues(alpha: .78),
+                    ],
+                  )
+                : null,
+            borderRadius: BorderRadius.circular(999),
+            border: isLiquidGlass && showCapsule
+                ? Border.all(
+                    color: Colors.white.withValues(alpha: selected ? .90 : .72),
+                  )
+                : null,
+            boxShadow: [
+              if (!cpuSoftwareWeb && (isHovered || isLiquidGlass && selected))
+                BoxShadow(
+                  color: isLiquidGlass
+                      ? const Color(0x2B0A6ED1)
+                      : palette.seed.withValues(alpha: .18),
+                  blurRadius: desktop ? 2.5 : 1.5,
+                  spreadRadius: -1.5,
+                  offset: const Offset(0, 1),
                 ),
+            ],
+          ),
+          child: Icon(
+            icon,
+            color: showCapsule ? palette.seed : palette.textMuted,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DockFloatingLabel extends StatelessWidget {
+  const _DockFloatingLabel({
+    required this.hoveredIndex,
+    required this.dockWidth,
+    required this.dockHeight,
+    required this.palette,
+    required this.cpuSoftwareWeb,
+    required this.disableAnimations,
+  });
+
+  final int? hoveredIndex;
+  final double dockWidth;
+  final double dockHeight;
+  final FinanceThemePalette palette;
+  final bool cpuSoftwareWeb;
+  final bool disableAnimations;
+
+  @override
+  Widget build(BuildContext context) {
+    final index = hoveredIndex;
+    if (index == null) return const SizedBox.shrink();
+
+    final pillBoxWidth = math.min(92.0, dockWidth);
+    final slotCenter = (index + 0.5) * (dockWidth / _destinations.length);
+    final start = (slotCenter - pillBoxWidth / 2)
+        .clamp(0.0, dockWidth - pillBoxWidth)
+        .toDouble();
+    final isLiquidGlass = palette.glassHighlightColor != null;
+    final radius = BorderRadius.circular(999);
+    final bg = (palette.monochrome ? palette.textPrimary : palette.seed)
+        .withValues(alpha: 1);
+    // At this luminance black and white have equal contrast against the fill.
+    final fg = bg.computeLuminance() > .179 ? Colors.black : Colors.white;
+    final contents = Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
+      child: Text(
+        _destinations[index].label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        softWrap: false,
+        style: TextStyle(
+          fontSize: 12,
+          height: 1.1,
+          fontWeight: FontWeight.w600,
+          color: isLiquidGlass ? const Color(0xFF15283B) : fg,
+        ),
+      ),
+    );
+
+    final Widget pill;
+    if (isLiquidGlass) {
+      pill = DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: radius,
+          boxShadow: [
+            if (!cpuSoftwareWeb)
+              const BoxShadow(
+                color: Color(0x2B0A6ED1),
+                blurRadius: 12,
+                offset: Offset(0, 4),
+              ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: radius,
+          child: BackdropFilter(
+            enabled: !cpuSoftwareWeb,
+            filter: ImageFilter.blur(
+              sigmaX: 14,
+              sigmaY: 14,
+              tileMode: TileMode.clamp,
+            ),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.white.withValues(alpha: .92),
+                    const Color(0xFFE6F4FF).withValues(alpha: .84),
+                  ],
+                ),
+                borderRadius: radius,
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: .94),
+                  width: 1,
+                ),
+              ),
+              child: contents,
+            ),
+          ),
+        ),
+      );
+    } else {
+      pill = DecoratedBox(
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: radius,
+          boxShadow: [
+            if (!cpuSoftwareWeb)
+              BoxShadow(
+                color: palette.monochrome
+                    ? Colors.black.withValues(alpha: .16)
+                    : palette.seed.withValues(alpha: .28),
+                blurRadius: 10,
+                offset: const Offset(0, 3),
+              ),
+          ],
+        ),
+        child: contents,
+      );
+    }
+
+    return AnimatedPositionedDirectional(
+      start: start,
+      bottom: dockHeight + 10,
+      width: pillBoxWidth,
+      duration:
+          disableAnimations ? Duration.zero : const Duration(milliseconds: 150),
+      curve: Curves.easeOutCubic,
+      child: IgnorePointer(
+        child: ExcludeSemantics(
+          child: Center(
+            child: TweenAnimationBuilder<double>(
+              tween: Tween<double>(begin: 0, end: 1),
+              duration: disableAnimations
+                  ? Duration.zero
+                  : const Duration(milliseconds: 160),
+              curve: Curves.easeOutCubic,
+              builder: (context, t, child) => Transform.translate(
+                offset: Offset(0, (1 - t) * 6),
+                child: Transform.scale(
+                  scale: 0.92 + 0.08 * t,
+                  child: child,
+                ),
+              ),
+              child: KeyedSubtree(
+                key: const Key('compass-dock-hover-label'),
+                child: pill,
               ),
             ),
           ),

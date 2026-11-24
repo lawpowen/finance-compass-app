@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../shared/finance_amount_field.dart';
@@ -10,7 +12,6 @@ import '../../core/models/transaction.dart';
 import '../../core/providers/mutations/account_mutations.dart';
 import '../../core/providers/mutations/transaction_mutations.dart';
 import '../../core/providers/repository_provider.dart';
-import '../../core/theme/finance_colors.dart';
 import '../../core/theme/finance_theme.dart';
 import '../../core/utils/id_generator.dart';
 import '../shared/compass_ui.dart';
@@ -119,6 +120,7 @@ class _CreditCardDetailScreenState
       now: now,
       committedOutstanding: usageAmount,
     );
+    final palette = financePaletteOf(context);
     final display = isSelectedStatement
         ? _selectedStatementDisplay(
             period,
@@ -132,21 +134,28 @@ class _CreditCardDetailScreenState
                 period.statementDate,
               ),
             ),
+            palette,
             isFuture: isFutureStatement,
           )
         : _creditCardDisplayCopy(
             displayState,
             summary,
             now,
+            palette,
             currentDebt: usageAmount,
           );
+    final sidePadding =
+        math.max(20.0, (MediaQuery.sizeOf(context).width - 840) / 2);
 
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: CompassBackground(
         child: SafeArea(
           child: ListView(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+            padding: compassScrollPadding(
+              context,
+              EdgeInsets.fromLTRB(sidePadding, 12, sidePadding, 28),
+            ),
             children: [
               Row(
                 children: [
@@ -213,6 +222,7 @@ class _CreditCardDetailScreenState
                                 color: display.color,
                                 fontSize: 30,
                                 fontWeight: FontWeight.w600,
+                                fontFeatures: compassTabularFigures,
                               ),
                             ),
                           ),
@@ -270,33 +280,16 @@ class _CreditCardDetailScreenState
               const SizedBox(height: 24),
               compassHairline,
               const SizedBox(height: 22),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Row(
-                      children: [
-                        Flexible(
-                          child: Text('账单周期时间线',
-                              style: Theme.of(context).textTheme.titleMedium),
-                        ),
-                        const SizedBox(width: 7),
-                        const Icon(Icons.info_outline_rounded, size: 17),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      '消费与信用卡转出会按交易日期自动归入对应账单',
-                      maxLines: 2,
-                      textAlign: TextAlign.right,
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ),
-                ],
+              Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: CompassHelpHeading(
+                  title: Text('账单周期时间线',
+                      style: Theme.of(context).textTheme.titleMedium),
+                  label: '账单周期',
+                  message: '消费与信用卡转出会按交易日期自动归入对应账单。',
+                ),
               ),
-              const SizedBox(height: 22),
+              const SizedBox(height: 10),
               _BillingTimeline(
                 now: now,
                 period: period,
@@ -323,7 +316,9 @@ class _CreditCardDetailScreenState
                       alignment: Alignment.centerRight,
                       child: Text(
                         '${compassMoney(usageAmount)} / ${compassMoney(limit)}',
-                        style: Theme.of(context).textTheme.bodySmall,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              fontFeatures: compassTabularFigures,
+                            ),
                       ),
                     ),
                   ),
@@ -814,6 +809,10 @@ class _HistoricalCreditCardBanner extends StatelessWidget {
                 '历史统计 · 截至 ${cutoffDate.year}年${cutoffDate.month}月末',
               ),
             ),
+            const CompassHelpButton(
+              title: '信用卡历史统计',
+              message: '月末账单和消费记录为只读。切换到当前后可调整账期、编辑交易和记录还款。',
+            ),
             TextButton(
               key: const Key('credit-card-return-current'),
               onPressed: onReturnCurrent,
@@ -978,7 +977,9 @@ class _PurchaseRow extends StatelessWidget {
               fit: BoxFit.scaleDown,
               child: Text(
                 compassMoney(item.amount),
-                style: Theme.of(context).textTheme.titleSmall,
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontFeatures: compassTabularFigures,
+                    ),
               ),
             ),
           ),
@@ -1120,7 +1121,8 @@ class _CreditCardDisplayCopy {
 
 _CreditCardDisplayCopy _selectedStatementDisplay(
   CreditCardBillingPeriod period,
-  double amount, {
+  double amount,
+  FinanceThemePalette palette, {
   required bool isFuture,
 }) {
   return _CreditCardDisplayCopy(
@@ -1130,7 +1132,7 @@ _CreditCardDisplayCopy _selectedStatementDisplay(
     statusLabel: isFuture ? '已确定' : '历史账单',
     dueStatusLabel: '还款日 ${_shortDate(period.dueDate)}',
     paymentActionLabel: isFuture ? '已确定' : '历史账单',
-    color: amount > 0 ? FinanceColors.compassOrange : FinanceColors.compassTeal,
+    color: amount > 0 ? palette.expense : palette.income,
     dueNeedsAttention: false,
     canRepay: false,
   );
@@ -1139,7 +1141,8 @@ _CreditCardDisplayCopy _selectedStatementDisplay(
 _CreditCardDisplayCopy _creditCardDisplayCopy(
   CreditCardDisplayState state,
   CreditCardBillingSummary summary,
-  DateTime now, {
+  DateTime now,
+  FinanceThemePalette palette, {
   required double currentDebt,
 }) {
   switch (state) {
@@ -1150,7 +1153,7 @@ _CreditCardDisplayCopy _creditCardDisplayCopy(
         statusLabel: '请设置账期',
         dueStatusLabel: '账期待设置',
         paymentActionLabel: '记录还款',
-        color: FinanceColors.compassOrange,
+        color: palette.expense,
         dueNeedsAttention: true,
         canRepay: currentDebt > 0.005,
       );
@@ -1161,7 +1164,7 @@ _CreditCardDisplayCopy _creditCardDisplayCopy(
         statusLabel: '逾期未还',
         dueStatusLabel: _daysUntilLabel(now, summary.dueDate),
         paymentActionLabel: '记录还款',
-        color: FinanceColors.compassOrange,
+        color: palette.expense,
         dueNeedsAttention: true,
         canRepay: true,
       );
@@ -1172,7 +1175,7 @@ _CreditCardDisplayCopy _creditCardDisplayCopy(
         statusLabel: '今日到期',
         dueStatusLabel: '今天到期',
         paymentActionLabel: '记录还款',
-        color: FinanceColors.compassOrange,
+        color: palette.expense,
         dueNeedsAttention: true,
         canRepay: true,
       );
@@ -1183,7 +1186,7 @@ _CreditCardDisplayCopy _creditCardDisplayCopy(
         statusLabel: '待还款',
         dueStatusLabel: _daysUntilLabel(now, summary.dueDate),
         paymentActionLabel: '记录还款',
-        color: FinanceColors.compassOrange,
+        color: palette.expense,
         dueNeedsAttention: true,
         canRepay: true,
       );
@@ -1194,7 +1197,7 @@ _CreditCardDisplayCopy _creditCardDisplayCopy(
         statusLabel: '本期已还清',
         dueStatusLabel: '本期已还清',
         paymentActionLabel: currentDebt > 0.005 ? '提前还款' : '无需还款',
-        color: FinanceColors.compassTeal,
+        color: palette.income,
         dueNeedsAttention: false,
         canRepay: currentDebt > 0.005,
       );
@@ -1207,18 +1210,18 @@ _CreditCardDisplayCopy _creditCardDisplayCopy(
         statusLabel: '尚未出账',
         dueStatusLabel: '本期无需还款',
         paymentActionLabel: '提前还款',
-        color: FinanceColors.compassTeal,
+        color: palette.income,
         dueNeedsAttention: false,
         canRepay: true,
       );
     case CreditCardDisplayState.noBalance:
-      return const _CreditCardDisplayCopy(
+      return _CreditCardDisplayCopy(
         amountLabel: '当前欠款',
         amount: 0,
         statusLabel: '暂无欠款',
         dueStatusLabel: '本期无需还款',
         paymentActionLabel: '无需还款',
-        color: FinanceColors.compassTeal,
+        color: palette.income,
         dueNeedsAttention: false,
         canRepay: false,
       );

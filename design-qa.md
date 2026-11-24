@@ -1,5 +1,28 @@
 # Design QA
 
+## 2026-11-24 Web 21 页内说明与浮动 Dock
+
+- 隔离 QA 中使用同一组合成账本，分别检查黑白极简、多巴胺和苹果液态玻璃。Chrome 在 1440×900、390×844、320×844 访问六个主标签，验证说明打开、Esc 或按钮关闭、图表与必读确认可访问。
+- 桌面核对胶囊上方标签及图标波浪联动。移动端用触控点按验证切页后标签清除。说明面板桌面最大宽 480 逻辑像素。支持默认 WebGL 与 `?cpu=1` 回退。
+- 浏览器截图保存在 `artifacts/sync-qa/web21-qa/`。各主题的 `*-1440-hover.png`、`*-1440-help.png`、`*-390-touch.png` 与 `*-390-help.png` 分别记录悬停、说明、手机点按与手机说明。320 像素使用相同的检查规则。QA 截图使用 Chrome 移动设备模拟。
+
+## 2026-11-24 本地 UI/UX 全面优化与三主题落地（未部署 Homelab）
+
+- **范围与约束**：协同 Codex 会话 `01a20640-e5b7-7961-b08f-fbe05649ce49`（本地分支会话 `01a20c8f-f1df-7f82-8db1-3b8388d986fc`）完成全应用信息表达与易用性重构，并基于 `FinanceThemePalette` 落地三套本机可选主题：**黑白极简（`monochrome`，默认及历史归一目标）**、**多巴胺（`dopamine`）**与**苹果液态玻璃（`liquidGlass`）**。全程仅保留在本地工作区，未推送、未打 tag、未构建或部署至 Homelab。
+- **自动化对比度与契约核验**：
+  - `test/theme_application_test.dart` 验证全 15 个枚举样式的字体映射、按钮前景色及 muted 对比度 `>= 4.5:1`，并对可选择的 `monochrome`、`dopamine` 与 `liquidGlass` 验证 `income`/`expense`/`warning` 与 `resolvedPrimaryAction` 在实体/表面及液态玻璃半透明卡片叠加 3 段渐变底色（最低 `6.64:1`、多巴胺 `#C93B2B` 白字 `5.07:1`、液态玻璃 `#B83232` 白字 `5.93:1`）上均满足 `>= 4.5:1`，同时保持 `monochrome` 灰阶圆环不可退化。
+  - `test/theme_palette_contract_test.dart`、`test/settings_v2_screen_test.dart`、`test/budgets_v2_screen_test.dart` 与 `test/uiux_upgrade_test.dart` 分别覆盖 320 / 390 / 480 / 960 / 1280 视口下的外观搜索/预览/保存/失败回滚、总览 KPI 与多条提醒、外币折合与信用卡额度进度条（修复曾实测出的 390px 1.4px 溢出）、交易每日小计与记账动态账户标签、预算双层进度条与动态本位币、以及报表页内分类展开切换。
+- **本地验证命令与结果**：
+  - `dart.bat format --output=none --set-exit-if-changed lib test`：173 个文件全部通过（exit 0）。
+  - `flutter.bat analyze --no-pub --no-fatal-infos --no-fatal-warnings`：exit 0，0 错误（含 72 条存量 info / 2 条存量 unused warning）。
+  - `flutter.bat test --no-pub --reporter compact`：exit 0，**265 passed / 2 skipped（离线 `localhost:5000` AI 网关集成测试按预期跳过）/ 0 failed**。
+- **已知环境限制**：本轮全部为 Flutter 静态分析与自动化单元测试 / Widget 回归（无真实 Chrome/Windows/Android 实机截屏人工视觉比对；建议在本地通过 `flutter run -d chrome` 或 `flutter run -d windows` 实机体验三套主题与新交互细节）。
+
+## 2026-11-24 桌面报表
+
+- 对照 1440×940 Chrome 的同月合成账本状态。旧版截图 `artifacts/sync-qa/desktop-after-12-1440-reports.png` 使用两条不同高度的内容列。新版 `artifacts/sync-qa/report-web-16-desktop.png` 将两张期间趋势卡片对齐，在下方展示支出表和独立的月末快照。
+- `artifacts/sync-qa/report-web-16-960.png` 记录较窄桌面下的报表。切换到全部时间后，调整窗口到 960 及 390 像素，已选期间均保留。设置保持黑白极简并可访问通知和版本信息。
+
 ## 2026-09-29 信用卡复审跟进
 
 - 信用卡账户设置“额度与余额”分区：余额行标签由“当前欠款”改为“信用卡余额”，行下新增一行 `bodySmall` 说明“欠款填负数，溢缴款填正数”，沿用该页“ⓘ 消费按交易日期自动归入对应账单”的说明样式；输入键盘改为带符号数字键盘。非有限输入显示行内错误“请输入有效金额”。

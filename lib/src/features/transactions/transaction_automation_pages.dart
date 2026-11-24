@@ -450,8 +450,7 @@ class _RecurringPlanPageState extends ConsumerState<RecurringPlanPage> {
           onTap: allRows.isEmpty ? null : () => _generateAll(allRows),
         ),
         const SizedBox(height: 18),
-        Text('生成预计交易，可转为实际',
-            style: Theme.of(context).textTheme.bodySmall),
+        Text('生成预计交易，可转为实际', style: Theme.of(context).textTheme.bodySmall),
         const SizedBox(height: 18),
         Align(
           alignment: Alignment.centerRight,
@@ -746,8 +745,7 @@ class _RecurringRuleEditorPageState
           onPressed: _editDraft,
         ),
         const SizedBox(height: 12),
-        Text('生成预计交易，可转为实际',
-            style: Theme.of(context).textTheme.bodySmall),
+        Text('生成预计交易，可转为实际', style: Theme.of(context).textTheme.bodySmall),
         const SizedBox(height: 26),
         Row(
           children: [

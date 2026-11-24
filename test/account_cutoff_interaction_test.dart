@@ -64,6 +64,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('MYR 700.00'), findsWidgets);
+    expect(find.text('信用卡溢缴款'), findsNothing);
     await tester.tap(find.byKey(const Key('account-cutoff-selector')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('account-cutoff-month-list')), findsOneWidget);
@@ -80,6 +81,38 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('MYR 900.00'), findsWidgets);
+    expect(find.textContaining('历史统计 · 截至'), findsOneWidget);
+    final historicalHelp = find.textContaining('余额和负债统计截至所选月份末');
+    expect(historicalHelp, findsNothing);
+    await tester.tap(find.byTooltip('查看历史统计说明'));
+    await tester.pumpAndSettle();
+    expect(historicalHelp, findsOneWidget);
+    await tester.tap(find.text('知道了'));
+    await tester.pumpAndSettle();
+    expect(historicalHelp, findsNothing);
+
+    await tester.tap(find.text('现金').last);
+    await tester.pumpAndSettle();
+    final cash = find.text('Cash');
+    final netAssets = find.text('净资产');
+    expect(tester.getTopLeft(cash).dy,
+        greaterThan(tester.getBottomLeft(netAssets).dy));
+
+    for (final width in [960.0, 1440.0]) {
+      tester.view.physicalSize = Size(width, 844);
+      await tester.pumpAndSettle();
+      final cutoff = find.byKey(const Key('account-cutoff-selector'));
+      final summary = tester.getRect(netAssets);
+      expect(tester.getBottomRight(cutoff).dx, lessThan(summary.left));
+      expect(tester.getTopLeft(cash).dx, lessThan(summary.left));
+      expect(find.text('MYR 900.00'), findsWidgets);
+      expect(find.byKey(const Key('asset-goals-card')), findsOneWidget);
+    }
+
+    tester.view.physicalSize = const Size(390, 844);
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(cash).dy,
+        greaterThan(tester.getBottomLeft(netAssets).dy));
     expect(find.textContaining('历史统计 · 截至'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });

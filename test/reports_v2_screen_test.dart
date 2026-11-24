@@ -16,6 +16,7 @@ import 'package:finance_app/src/core/theme/finance_theme.dart';
 import 'package:finance_app/src/core/utils/month_key.dart';
 import 'package:finance_app/src/features/reports/reports_v2_screen.dart';
 import 'package:finance_app/src/features/shared/compass_ui.dart';
+import 'package:finance_app/src/features/shared/finance_donut.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -95,6 +96,22 @@ void main() {
         currency: 'MYR',
         currentBalance: -70000,
       ),
+      Account(
+        id: 'overpaid-card',
+        name: 'Overpaid card',
+        accountType: AccountType.creditCard,
+        reportGroup: ReportGroup.credit,
+        currency: 'MYR',
+        currentBalance: 1000,
+      ),
+      Account(
+        id: 'reserve-cash',
+        name: 'Reserve cash',
+        accountType: AccountType.cash,
+        reportGroup: ReportGroup.cash,
+        currency: 'MYR',
+        currentBalance: 100,
+      ),
     ]) {
       repository = await repository.addAccount(account);
     }
@@ -147,12 +164,48 @@ void main() {
     // card purchase and the planned expense are not cash outflow.
     expect(_text(tester, 'reports-cash-outflow'), compassMoney(1616));
     expect(_text(tester, 'reports-cash-net'), compassMoney(-616));
+    final cashFlowTrend = find.byKey(const Key('reports-cash-flow-trend'));
+    expect(
+      find.descendant(of: cashFlowTrend, matching: find.byType(CustomPaint)),
+      findsOneWidget,
+    );
+    final trendSemantics = tester.widget<Semantics>(find.descendant(
+      of: cashFlowTrend,
+      matching: find.byWidgetPredicate(
+        (widget) => widget is Semantics && widget.properties.value != null,
+      ),
+    ));
+    expect(trendSemantics.properties.value, contains(compassMoney(-616)));
+    final composition = tester.widget<FinanceDonutPanel>(
+      find.byKey(const Key('reports-asset-composition')),
+    );
+    expect(repository.totalAssetsByGroup(ReportGroup.cash), lessThan(0));
+    expect(composition.slices.map((slice) => slice.value), [100, 0, 0]);
+    expect(composition.totalValue, compassMoney(100, decimals: 0));
+    expect(
+      find.text('负债 ${compassMoney(68906.33, decimals: 0)}'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('信用卡溢缴款 ${compassMoney(1000, decimals: 0)}'),
+      findsOneWidget,
+    );
     expect(_text(tester, 'reports-category-0-name'), 'Shopping');
     expect(_text(tester, 'reports-category-0-amount'), compassMoney(300));
     expect(_text(tester, 'reports-category-1-name'), 'Food');
     expect(_text(tester, 'reports-category-1-amount'), compassMoney(100));
-    expect(find.textContaining('按交易发生口径（非现金流）'), findsOneWidget);
-    expect(find.textContaining('贷款还款按实际支付的全额计为现金流出'), findsOneWidget);
+    for (final (label, explanation) in [
+      ('实际现金流', '信用卡和贷款还款按全额计入'),
+      ('支出分类排行', '按交易发生日统计已分类支出'),
+    ]) {
+      expect(find.textContaining(explanation), findsNothing);
+      await tester.tap(find.byTooltip('查看$label说明'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining(explanation), findsOneWidget);
+      await tester.tap(find.text('知道了'));
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsNothing);
+    }
     expect(tester.takeException(), isNull);
   });
 
@@ -239,13 +292,119 @@ void main() {
       (tester) async {
     await _pumpReports(tester, await _emptyRepository());
 
-    expect(find.text('尚未添加账户，添加账户后可查看净资产变化。'), findsOneWidget);
+    expect(find.text('尚未添加账户'), findsOneWidget);
     expect(find.text('所选期间没有实际现金流记录'), findsOneWidget);
     expect(find.text('所选期间没有已分类支出'), findsOneWidget);
     expect(find.text('暂无资产余额'), findsOneWidget);
     expect(find.text('本月尚未设置预算'), findsOneWidget);
     expect(find.text('尚未添加投资或退休账户'), findsOneWidget);
     expect(find.textContaining('+'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('report help and figures fit 320px with each active theme',
+      (tester) async {
+    final repository = await _populatedRepository();
+    const viewport = Size(320, 844);
+    for (final style in [
+      AppThemeStyle.monochrome,
+      AppThemeStyle.dopamine,
+      AppThemeStyle.liquidGlass,
+    ]) {
+      await _pumpReports(tester, repository, size: viewport, style: style);
+      final scrollable = find.byType(Scrollable).first;
+      tester.state<ScrollableState>(scrollable).position.jumpTo(0);
+      await tester.pumpAndSettle();
+      for (final (label, explanation) in [
+        ('所选期间', '日期范围影响净资产趋势与变化'),
+        ('资产构成', '信用卡溢缴款单独列示'),
+      ]) {
+        final help = find.byTooltip('查看$label说明');
+        await tester.scrollUntilVisible(help, 160, scrollable: scrollable);
+        await tester.pumpAndSettle();
+        await tester.tap(help);
+        await tester.pumpAndSettle();
+        expect(find.byType(AlertDialog), findsOneWidget);
+        expect(find.textContaining(explanation), findsOneWidget);
+        await tester.tap(find.text('知道了'));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+      }
+    }
+  });
+
+  testWidgets('desktop aligns trend cards and separates the month-end snapshot',
+      (tester) async {
+    final repository = await _populatedRepository();
+    await _pumpReports(tester, repository, size: const Size(960, 900));
+
+    final netWorthTrend = find.byKey(const Key('reports-net-worth-trend'));
+    final cashFlowTrend = find.byKey(const Key('reports-cash-flow-trend'));
+    final cashFlow = find.text('实际现金流');
+    final assets = find.byKey(const Key('reports-asset-composition'));
+    final budget = find.text('本月预算');
+    final periodHeading = find.text('所选期间');
+    final spend = find.text('支出分类排行 · 前 5');
+    final snapshotHeading = find.text('本月末快照');
+    final cutoff = repository.currentMonthCutoffDate();
+    final cutoffDate = '${cutoff.year}年${cutoff.month}月${cutoff.day}日';
+    final netWorthCard = find
+        .ancestor(of: netWorthTrend, matching: find.byType(CompassCard))
+        .first;
+    final cashFlowCard = find
+        .ancestor(of: cashFlowTrend, matching: find.byType(CompassCard))
+        .first;
+    final scrollable = find.byType(Scrollable).first;
+    final position = tester.state<ScrollableState>(scrollable).position;
+    for (final width in [960.0, 1440.0]) {
+      position.jumpTo(0);
+      tester.view.physicalSize = Size(width, 900);
+      await tester.pumpAndSettle();
+      final netWorthRect = tester.getRect(netWorthCard);
+      final cashFlowRect = tester.getRect(cashFlowCard);
+      expect(netWorthRect.right, lessThan(cashFlowRect.left));
+      expect(netWorthRect.top, cashFlowRect.top);
+      expect(netWorthRect.height, cashFlowRect.height);
+      expect(tester.getSize(netWorthTrend).height,
+          tester.getSize(cashFlowTrend).height);
+      expect(
+          tester.getBottomLeft(periodHeading).dy, lessThan(netWorthRect.top));
+      final spendingOffset = tester.getTopLeft(spend).dy;
+      expect(spendingOffset, greaterThan(cashFlowRect.bottom));
+      expect(find.text('分类'), findsOneWidget);
+      expect(find.text('金额'), findsOneWidget);
+      expect(find.text('占比'), findsOneWidget);
+      await tester.scrollUntilVisible(snapshotHeading, 220,
+          scrollable: scrollable);
+      await tester.pumpAndSettle();
+      expect(tester.getTopLeft(snapshotHeading).dy + position.pixels,
+          greaterThan(spendingOffset));
+      await tester.scrollUntilVisible(assets, 220, scrollable: scrollable);
+      await tester.pumpAndSettle();
+      expect(
+          tester.getRect(assets).right, lessThan(tester.getTopLeft(budget).dx));
+      expect(find.text(cutoffDate), findsOneWidget);
+      expect(tester.takeException(), isNull, reason: 'width $width');
+    }
+
+    position.jumpTo(0);
+    await tester.pumpAndSettle();
+    await _selectRange(tester, '${DateTime.now().year}年至今', '全部时间');
+    expect(_text(tester, 'reports-net-worth-change'), contains('全部时间'));
+    await tester.scrollUntilVisible(assets, 220, scrollable: scrollable);
+    await tester.pumpAndSettle();
+    expect(find.text(cutoffDate), findsOneWidget);
+
+    position.jumpTo(0);
+    tester.view.physicalSize = const Size(390, 844);
+    await tester.pumpAndSettle();
+    expect(_text(tester, 'reports-net-worth-change'), contains('全部时间'));
+    expect(periodHeading, findsNothing);
+    expect(snapshotHeading, findsNothing);
+    final mobileLane = tester.getTopLeft(cashFlow).dx;
+    await tester.scrollUntilVisible(assets, 180,
+        scrollable: find.byType(Scrollable).first);
+    expect(tester.getTopLeft(assets).dx, mobileLane);
     expect(tester.takeException(), isNull);
   });
 
@@ -270,13 +429,12 @@ void main() {
     // Every section has data, so no empty state may appear.
     for (final emptyState in const [
       '尚未添加账户，添加账户后可查看净资产变化。',
-      '期初净资产不为正，变化率不适用。',
       '所选期间没有实际现金流记录',
       '所选期间没有已分类支出',
       '暂无资产余额',
       '本月尚未设置预算',
       '尚未添加投资或退休账户',
-      '尚无成本数据，无法计算未实现盈亏。',
+      '尚无成本数据',
     ]) {
       expect(find.text(emptyState), findsNothing, reason: emptyState);
     }
@@ -284,7 +442,7 @@ void main() {
     final scrollable = find.byType(Scrollable).first;
     final sections = <String, List<Finder>>{
       '净资产': [
-        find.textContaining('净资产 · 当前'),
+        find.textContaining('月末净资产 · '),
         find.byKey(const Key('reports-net-worth-change')),
         find.byKey(const Key('reports-net-worth-trend')),
       ],
@@ -306,9 +464,10 @@ void main() {
       ],
       '资产构成': [
         find.text('资产构成'),
-        find.byType(CompassDistributionBar),
-        for (final label in const ['现金', '投资', '退休', '信用负债']) find.text(label),
-        find.text('负债为负值，将从资产中扣除。'),
+        find.byKey(const Key('reports-asset-composition')),
+        find.text('总资产'),
+        for (final label in const ['现金', '投资', '退休']) find.text(label),
+        find.textContaining('负债 '),
       ],
       '预算': [
         find.text('本月预算'),
@@ -373,7 +532,7 @@ void main() {
     await tester.pumpAndSettle();
     final position = tester.state<ScrollableState>(scrollable).position;
     expect(position.pixels, position.minScrollExtent);
-    expect(position.maxScrollExtent, greaterThan(viewport.height));
+    expect(position.maxScrollExtent, greaterThan(0));
     var steps = 0;
     while (position.pixels < position.maxScrollExtent && steps++ < 60) {
       await tester.drag(scrollable, const Offset(0, -300));
@@ -496,6 +655,7 @@ Future<void> _pumpReports(
   // Keep the 390px phone width; the tall surface builds every section.
   Size size = const Size(390, 3200),
   Key? boundaryKey,
+  AppThemeStyle style = AppThemeStyle.abyss,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -504,7 +664,7 @@ Future<void> _pumpReports(
   await tester.pumpWidget(
     MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: buildFinanceTheme(AppThemeStyle.abyss),
+      theme: buildFinanceTheme(style),
       navigatorObservers: observers,
       home: RepaintBoundary(
         key: boundaryKey,

@@ -18,7 +18,7 @@ const _financeCompassIssuesUrl =
     'https://github.com/lawpowen/finance-compass-app/issues';
 const _financeCompassSupportQrAsset =
     'assets/support/touch-n-go-support-qr.jpg';
-const _financeVersionDisplay = kIsWeb ? '0.10.1+45 · Web 17' : '0.10.1+45';
+const _financeVersionDisplay = kIsWeb ? '0.10.1+45 · Web 21' : '0.10.1+45';
 
 class SettingsV2Screen extends StatelessWidget {
   const SettingsV2Screen({
@@ -35,10 +35,13 @@ class SettingsV2Screen extends StatelessWidget {
   final Widget? syncSettings;
 
   @override
-  Widget build(BuildContext context) => LayoutBuilder(
-        builder: (context, constraints) => _buildPage(
-          context,
-          wide: constraints.maxWidth >= compassDesktopMinWidth,
+  Widget build(BuildContext context) => AnimatedBuilder(
+        animation: settingsController,
+        builder: (context, _) => LayoutBuilder(
+          builder: (context, constraints) => _buildPage(
+            context,
+            wide: constraints.maxWidth >= compassDesktopMinWidth,
+          ),
         ),
       );
 
@@ -152,6 +155,11 @@ class SettingsV2Screen extends StatelessWidget {
       _SettingsSection(
         title: '个性化',
         rows: [
+          setting(
+            icon: Icons.palette_outlined,
+            title: '外观与主题',
+            value: settingsController.themeStyle.label,
+          ),
           setting(
             icon: Icons.notifications_none_rounded,
             title: '通知与提醒',
@@ -278,6 +286,7 @@ class SettingsV2Screen extends StatelessWidget {
       '类别、模板与周期规则' => FinanceRulesCenterPage(repository: repository),
       '备份、恢复与迁移' => BackupRestorePage(repository: repository),
       '导入与导出' => ImportExportPage(repository: repository),
+      '外观与主题' => AppearancePage(settingsController: settingsController),
       '通知与提醒' => NotificationsPage(repository: repository),
       '智能分析与网关' => AiGatewayPage(repository: repository),
       _ => Scaffold(
@@ -326,7 +335,7 @@ class FinanceCompassAboutPage extends StatelessWidget {
       appBar: AppBar(title: const Text('关于 Finance Compass')),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: compassPagePadding,
+          padding: compassScrollPadding(context, compassPagePadding),
           child: Center(
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 640),
@@ -346,9 +355,11 @@ class FinanceCompassAboutPage extends StatelessWidget {
                     const Card(
                       child: ListTile(
                         leading: Icon(Icons.cloud_done_outlined),
-                        title: Text('账本保存在你的自托管服务器'),
-                        subtitle: Text(
-                          '已登录设备共享同一账本。退出后可切换到独立的离线本地账本，也可以手动下载 JSON 备份。',
+                        title: Text('自托管账本'),
+                        trailing: CompassHelpButton(
+                          title: '自托管账本',
+                          message:
+                              '已登录设备共享同一账本。退出后可切换到独立的离线本地账本，也可以下载 JSON 备份。',
                         ),
                       ),
                     )
@@ -356,8 +367,11 @@ class FinanceCompassAboutPage extends StatelessWidget {
                     const Card(
                       child: ListTile(
                         leading: Icon(Icons.shield_outlined),
-                        title: Text('你的财务资料保存在本机'),
-                        subtitle: Text('只有你主动导出时，账本资料才会离开设备。'),
+                        title: Text('本机账本'),
+                        trailing: CompassHelpButton(
+                          title: '本机账本',
+                          message: '财务资料保存在本机。导出或分享由你主动发起。',
+                        ),
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -365,8 +379,10 @@ class FinanceCompassAboutPage extends StatelessWidget {
                       child: ListTile(
                         leading: Icon(Icons.language_outlined),
                         title: Text('Web 离线本地模式'),
-                        subtitle: Text(
-                          '账本保存在当前浏览器，各设备独立使用。清除网站数据会删除本地账本，请定期导出 JSON。',
+                        trailing: CompassHelpButton(
+                          title: 'Web 离线本地模式',
+                          message:
+                              '账本保存在当前浏览器，各设备独立使用。清除网站数据会删除本地账本，请定期导出 JSON。',
                         ),
                       ),
                     ),
@@ -402,16 +418,18 @@ class FinanceCompassAboutPage extends StatelessWidget {
                     child: const Text('授权信息'),
                   ),
                   const Divider(height: 32),
-                  Text(
-                    '请开发者喝杯咖啡',
-                    style: textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w800,
+                  CompassHelpHeading(
+                    title: Text(
+                      '请开发者喝杯咖啡',
+                      style: textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
+                    label: '自愿支持',
+                    message: '支持完全自愿，应用功能和服务权益与支持无关。'
+                        '二维码是静态图片。应用不接入支付 SDK，也不读取付款结果。',
                   ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    '如果 Finance Compass 对你有帮助，欢迎自愿支持继续开发。支持完全自愿，不会解锁额外功能，也不形成服务权益；付款前请确认收款人是 LAW PO WEN。',
-                  ),
+                  const Text('自愿支持。付款前请确认收款人是 LAW PO WEN。'),
                   const SizedBox(height: 16),
                   Semantics(
                     label: 'Touch n Go 开发支持收款二维码，收款人 LAW PO WEN',
@@ -423,11 +441,6 @@ class FinanceCompassAboutPage extends StatelessWidget {
                         fit: BoxFit.contain,
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  const Text(
-                    '二维码只是静态图片；应用不接入支付 SDK，不读取付款结果，也不会因为支持与否改变任何功能。',
-                    textAlign: TextAlign.center,
                   ),
                 ],
               ),
@@ -449,10 +462,15 @@ class _SettingsSearchDelegate extends SearchDelegate<void> {
     '类别、模板与周期规则',
     '备份、恢复与迁移',
     '导入与导出',
+    '外观与主题',
     '通知与提醒',
     '智能分析与网关',
     '版本信息',
   ];
+
+  static const _searchAliases = <String, List<String>>{
+    '外观与主题': ['主题', '外观', '黑白极简', '多巴胺', '苹果液态玻璃', 'theme', 'appearance'],
+  };
 
   @override
   List<Widget>? buildActions(BuildContext context) => [
@@ -472,9 +490,15 @@ class _SettingsSearchDelegate extends SearchDelegate<void> {
   Widget buildSuggestions(BuildContext context) => _results(context);
 
   Widget _results(BuildContext context) {
-    final matches = entries
-        .where((entry) => entry.toLowerCase().contains(query.toLowerCase()))
-        .toList();
+    final normalized = query.trim().toLowerCase();
+    final matches = entries.where((entry) {
+      if (normalized.isEmpty || entry.toLowerCase().contains(normalized)) {
+        return true;
+      }
+      final aliases = _searchAliases[entry];
+      return aliases != null &&
+          aliases.any((alias) => alias.toLowerCase().contains(normalized));
+    }).toList();
     return ListView(
       padding: compassPagePadding,
       children: matches
@@ -519,19 +543,20 @@ class _SettingsGroupTitle extends StatelessWidget {
   const _SettingsGroupTitle(this.title);
   final String title;
   @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.only(bottom: 4),
-        child: Text(
-          title,
-          style: TextStyle(
-            color: financePaletteOf(context).monochrome
-                ? financePaletteOf(context).textPrimary
-                : FinanceColors.compassTeal,
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-          ),
+  Widget build(BuildContext context) {
+    final palette = financePaletteOf(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Text(
+        title,
+        style: TextStyle(
+          color: palette.monochrome ? palette.textPrimary : palette.seed,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
         ),
-      );
+      ),
+    );
+  }
 }
 
 class _LocalProfileRow extends StatelessWidget {
@@ -542,6 +567,7 @@ class _LocalProfileRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = financePaletteOf(context);
     final muted = Theme.of(context).textTheme.bodySmall?.color;
     return InkWell(
       onTap: onTap,
@@ -551,10 +577,11 @@ class _LocalProfileRow extends StatelessWidget {
           children: [
             CircleAvatar(
               radius: 20,
-              backgroundColor: financePaletteOf(context).monochrome
-                  ? financePaletteOf(context).seed
-                  : const Color(0xFF2B7B77),
-              child: const Text('L', style: TextStyle(color: Colors.white)),
+              backgroundColor: palette.seed,
+              child: Text(
+                'L',
+                style: TextStyle(color: financeForegroundOn(palette.seed)),
+              ),
             ),
             const SizedBox(width: 14),
             Expanded(

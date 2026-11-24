@@ -1,5 +1,7 @@
 # 接口与导入导出
 
+`FinanceAmountField` 暂存键盘输入，点「完成」才写回 controller。取消不改动字段。清空后确认返回空字符串，由原表单继续区分必填和可选。`FinanceTextField(isAmount: true)` 使用同一交互。
+
 投资成本读取接口：`FinanceRepository.costBasisForAccount(accountId, upToDate)` 返回首张快照基线加之后实际投入的累计成本；`remainingCostBasisForAccount(accountId, upToDate)` 再扣首张快照之后的实际取出，供资产卡片、详情与报表计算未实现盈亏。没有快照时按全部实际投入减实际取出计算。`snapshotRemainingCostBasis` 和 `snapshotUnrealizedPnl` 采用相同截止日口径；这些调用只读，不改写快照或交易。截止日早于首张快照时，`costBasisForAccount` 只返回截至当日的实际投入，`accountBalanceAt` / `accountBalanceTrace` 从 `initial_balance` 累加截止日及之前的实际交易，均不读取未来快照。
 
 快照写入接口：`FinanceRepository.addAssetSnapshot`、`updateExistingAssetSnapshot`、`deleteExistingAssetSnapshot` 分别调用 `AppDatabase.insertAssetSnapshot`、`updateAssetSnapshot`、`deleteAssetSnapshot`，签名不变，返回刷新后的 Repository。契约变化如下：
@@ -13,6 +15,8 @@
 余额读取接口：`accountBalanceAt(accountId, date)` 在快照之后的截止日返回“快照市值 + 快照后到截止日的实际收入/支出 − 截止日后已折入的实际转账/调整”。`accountBalanceTrace` 的条目依次为：收入/支出正向加入（旧到新），然后转账/调整扣回（新到旧）；`endingBalance` 与 `accountBalanceAt` 相同。
 
 ## 自托管 Web 接口边界
+
+账号同步部署的 API 单独定义，见 [同步接口](SYNC_HOSTING.md#同步接口)。下述边界适用于原有静态自托管版。
 
 Web 自托管版没有 JSON/REST/GraphQL 服务端接口。Caddy 仅提供静态 `index.html`、`flutter_bootstrap.js` 与其他 Flutter 资源、`manifest.json`、`service-worker.js`、`pwa_bootstrap.js`、`sqlite3.wasm`、`drift_worker.js` 和同源回退字体 `fonts/`（清单为 `fonts/SHA256SUMS`，Service Worker 安装时按它预缓存）；`flutter_service_worker.js` 仅作为 Flutter 生成的自注销存根存在，应用不注册它；所有账本 CRUD 仍在浏览器内通过 Drift 执行。反向代理只可把 `https://finance.example.com/` 转发到 `127.0.0.1:8080`，并应在这一层实施 TLS/认证。`sqlite3.wasm` 必须以 `application/wasm` 响应。
 

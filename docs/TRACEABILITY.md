@@ -23,6 +23,7 @@
 | `features/transactions/transaction_automation_pages.dart`、`features/budgets/**` | `MODULE_DESIGN.md`、`DATA_DESIGN.md`、`TESTING_AND_QUALITY.md`、`CHANGELOG.md` |
 | `core/data/finance_repository.dart` 的周期生成、`features/accounts/loan_detail_screen.dart` 的预计还款 | `SYSTEM_REQUIREMENTS.md`、`ARCHITECTURE.md`、`MODULE_DESIGN.md`、`DATA_DESIGN.md`、`INTERFACES.md`、`SECURITY_AND_OPERATIONS.md`、`UI_REFERENCE.md`、`TESTING_AND_QUALITY.md`、`CHANGELOG.md` |
 | 导入、导出、AI、分享 | `INTERFACES.md`、`SECURITY_AND_OPERATIONS.md` |
+| `core/sync/**`、`features/sync/**`、`server/**`、`deploy/sync/**` | `SYNC_HOSTING.md`、`ARCHITECTURE.md`、`INTERFACES.md`、`SECURITY_AND_OPERATIONS.md`、`TESTING_AND_QUALITY.md`、`CHANGELOG.md` |
 | `pubspec.yaml`、Android 配置 | `ARCHITECTURE.md`、`SECURITY_AND_OPERATIONS.md`、`CHANGELOG.md` |
 | `assets/support/**`、`features/settings/settings_v2_screen.dart` 的关于与支持页 | `SYSTEM_REQUIREMENTS.md`、`MODULE_DESIGN.md`、`INTERFACES.md`、`SECURITY_AND_OPERATIONS.md`、`UI_REFERENCE.md`、`TESTING_AND_QUALITY.md`、`CHANGELOG.md`、根目录 `README.md` |
 | `packaging/**`、Windows/Android 发布配置 | `ARCHITECTURE.md`、`RELEASE_WORKFLOW.md`、`SECURITY_AND_OPERATIONS.md`、`TESTING_AND_QUALITY.md`、`CHANGELOG.md`、根目录 `README.md` |

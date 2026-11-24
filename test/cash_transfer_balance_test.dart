@@ -13,8 +13,11 @@ import 'package:finance_app/src/features/home/home_screen.dart';
 import 'package:finance_app/src/features/transactions/transaction_composer_page.dart';
 import 'package:finance_app/src/features/transactions/transaction_form_dialog.dart';
 import 'package:flutter/material.dart';
+import 'package:finance_app/src/features/shared/finance_amount_field.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'support/amount_entry.dart';
 
 void main() {
   test('actual cash transfer updates both stored and displayed balances',
@@ -153,15 +156,15 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('转账').first);
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField).first, '250');
+    await enterAmount(tester, find.byType(TextField).first, '250');
     await tester.ensureVisible(find.text('转入账户'));
     await tester.tap(find.text('转入账户'));
     await tester.pumpAndSettle();
     await tester.tap(find.textContaining('现金账户 B'));
     await tester.pumpAndSettle();
-    final receivingField =
-        tester.widget<TextField>(find.byType(TextField).at(1));
-    expect(receivingField.controller!.text, '250.00');
+    final receivingField = tester
+        .widget<FinanceAmountField>(find.byType(FinanceAmountField).at(1));
+    expect(receivingField.controller.text, '250.00');
     expect(receivingField.readOnly, isTrue);
     await tester.ensureVisible(find.text('保存交易'));
     await tester.tap(find.text('保存交易'));
@@ -224,19 +227,26 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('转账').first);
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField).first, '250');
+    await enterAmount(tester, find.byType(TextField).first, '250');
     await tester.ensureVisible(find.text('转入账户'));
     await tester.tap(find.text('转入账户'));
     await tester.pumpAndSettle();
     await tester.tap(find.textContaining('现金账户 B'));
     await tester.pumpAndSettle();
 
-    final receivingField =
-        tester.widget<TextField>(find.byType(TextField).at(1));
-    expect(receivingField.controller!.text, '1785.71');
+    final receivingField = tester
+        .widget<FinanceAmountField>(find.byType(FinanceAmountField).at(1));
+    expect(receivingField.controller.text, '1785.71');
     expect(receivingField.readOnly, isFalse);
+    final conversion = find.byTooltip('查看转入金额说明');
+    expect(find.textContaining('1 MYR = 7.1429 TWD'), findsNothing);
+    await tester.ensureVisible(conversion);
+    await tester.tap(conversion);
+    await tester.pumpAndSettle();
     expect(find.textContaining('1 MYR = 7.1429 TWD'), findsOneWidget);
-    await tester.enterText(find.byType(TextField).at(1), '1800');
+    await tester.tap(find.text('知道了'));
+    await tester.pumpAndSettle();
+    await enterAmount(tester, find.byType(TextField).at(1), '1800');
     tester.testTextInput.hide();
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('保存交易'));

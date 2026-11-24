@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 
@@ -21,6 +22,9 @@ void main() {
       () async {
     final required = [
       'web/sqlite3.wasm',
+      'assets/fonts/MiSans-Regular.ttf',
+      'assets/fonts/MisansTC-Regular.ttf',
+      'assets/fonts/SHA256SUMS',
       'tool/drift_worker.dart',
       'tool/sqlite3_wasm.lock',
       'web/service-worker.js',
@@ -37,6 +41,20 @@ void main() {
       final file = File('${root.path}/$relative');
       expect(await file.exists(), isTrue, reason: '$relative must exist');
       expect(await file.length(), greaterThan(0), reason: '$relative is empty');
+    }
+
+    final fontLock =
+        await File('${root.path}/assets/fonts/SHA256SUMS').readAsLines();
+    const fontSizes = {
+      'MiSans-Regular.ttf': 8122324,
+      'MisansTC-Regular.ttf': 4058948,
+    };
+    expect(fontLock, hasLength(fontSizes.length));
+    for (final entry in fontSizes.entries) {
+      final embeddedFont = File('${root.path}/assets/fonts/${entry.key}');
+      expect(await embeddedFont.length(), entry.value);
+      expect(fontLock,
+          contains(matches('^[0-9a-f]{64}  ${RegExp.escape(entry.key)}\$')));
     }
 
     final wasmLock =
@@ -68,11 +86,31 @@ void main() {
       './canvaskit/skwasm_heavy.wasm',
       './canvaskit/wimp.wasm',
       './assets/fonts/MaterialIcons-Regular.otf',
+      './assets/assets/fonts/MiSans-Regular.ttf',
+      './assets/assets/fonts/MisansTC-Regular.ttf',
     ]) {
       expect(worker, contains(asset));
     }
     expect(worker, isNot(contains('http://')));
     expect(worker, isNot(contains('https://')));
+  });
+
+  test('the Traditional font covers glyphs missing from the default face',
+      () async {
+    Future<ByteData> font(String name) async => ByteData.sublistView(
+          await File('${root.path}/assets/fonts/$name').readAsBytes(),
+        );
+    final simplified = await font('MiSans-Regular.ttf');
+    final traditional = await font('MisansTC-Regular.ttf');
+    for (final codePoint in '臺灣帳務餘額髮銅繳'.runes) {
+      expect(_hasBmpGlyph(traditional, codePoint), isTrue);
+    }
+    for (final codePoint in '⾨⿓'.runes) {
+      expect(_hasBmpGlyph(simplified, codePoint), isFalse);
+      expect(_hasBmpGlyph(traditional, codePoint), isTrue);
+    }
+    expect(_hasBmpGlyph(simplified, '嘅'.runes.single), isTrue);
+    expect(_hasBmpGlyph(traditional, '嘅'.runes.single), isFalse);
   });
 
   test('service worker precaches only files the web build ships', () async {
@@ -215,10 +253,47 @@ void main() {
   test('import confirmation keeps native and browser recovery promises exact',
       () async {
     final settings = await File(
-      '${root.path}/lib/src/features/settings/settings_reference_pages.dart',
+      '${root.path}/lib/src/features/settings/import_ledger_dialog.dart',
     ).readAsString();
     expect(settings, contains('kIsWeb'));
-    expect(settings, contains('Web 浏览器不会在服务器保留隐藏恢复点。'));
+    expect(settings, contains('请先下载完整 JSON，作为恢复备份。'));
     expect(settings, contains('确认后会先建立恢复点，再用此文件替换当前资料。'));
   });
+}
+
+bool _hasBmpGlyph(ByteData font, int codePoint) {
+  final tableCount = font.getUint16(4);
+  for (var index = 0; index < tableCount; index++) {
+    final tableRecord = 12 + index * 16;
+    if (font.getUint32(tableRecord) != 0x636d6170) continue; // cmap
+    final cmap = font.getUint32(tableRecord + 8);
+    final mappingCount = font.getUint16(cmap + 2);
+    for (var mapping = 0; mapping < mappingCount; mapping++) {
+      final mappingRecord = cmap + 4 + mapping * 8;
+      final platform = font.getUint16(mappingRecord);
+      final encoding = font.getUint16(mappingRecord + 2);
+      if (platform != 0 && !(platform == 3 && encoding == 1)) continue;
+      final subtable = cmap + font.getUint32(mappingRecord + 4);
+      if (font.getUint16(subtable) != 4) continue;
+      final segments = font.getUint16(subtable + 6) ~/ 2;
+      final ends = subtable + 14;
+      final starts = ends + segments * 2 + 2;
+      final deltas = starts + segments * 2;
+      final ranges = deltas + segments * 2;
+      for (var segment = 0; segment < segments; segment++) {
+        final offset = segment * 2;
+        if (font.getUint16(ends + offset) < codePoint) continue;
+        final start = font.getUint16(starts + offset);
+        if (start > codePoint) return false;
+        final delta = font.getInt16(deltas + offset);
+        final rangeOffset = ranges + offset;
+        final range = font.getUint16(rangeOffset);
+        if (range == 0) return ((codePoint + delta) & 0xffff) != 0;
+        final glyph =
+            font.getUint16(rangeOffset + range + (codePoint - start) * 2);
+        return glyph != 0 && ((glyph + delta) & 0xffff) != 0;
+      }
+    }
+  }
+  return false;
 }

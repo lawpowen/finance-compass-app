@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -87,18 +89,24 @@ class _LoanDetailScreenState extends ConsumerState<LoanDetailScreen> {
                 const SizedBox(height: 24),
                 CompassCard(
                   child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Icon(Icons.calculate_outlined, size: 48),
-                      const SizedBox(height: 12),
-                      const Text('设置金额、利率和年限后，系统会生成完整还款计划。'),
-                      const SizedBox(height: 18),
+                      CompassHelpHeading(
+                        title: Text('还款计划',
+                            style: Theme.of(context).textTheme.titleMedium),
+                        label: '贷款条件',
+                        message: isHistorical
+                            ? '设置金额、利率和年限后，系统会生成还款计划。历史统计状态不可修改贷款条件。'
+                            : '设置金额、利率和年限后，系统会生成还款计划。',
+                      ),
+                      const SizedBox(height: 8),
                       if (!isHistorical)
                         CompassPrimaryButton(
                           label: '设置贷款条件',
                           onPressed: () => _editAccount(account),
                         )
                       else
-                        const Text('历史统计状态不可修改贷款条件。'),
+                        const Text('历史状态只读'),
                     ],
                   ),
                 ),
@@ -132,11 +140,17 @@ class _LoanDetailScreenState extends ConsumerState<LoanDetailScreen> {
     final outstanding =
         _repository.accountBalanceAt(account.id, cutoffDate).abs();
 
+    final sidePadding =
+        math.max(20.0, (MediaQuery.sizeOf(context).width - 840) / 2);
+
     return Scaffold(
       body: CompassBackground(
         child: SafeArea(
           child: ListView(
-            padding: compassPagePadding.copyWith(bottom: 36),
+            padding: compassScrollPadding(
+              context,
+              EdgeInsets.fromLTRB(sidePadding, 16, sidePadding, 36),
+            ),
             children: [
               CompassPageHeader(
                 title: account.name,
@@ -173,7 +187,11 @@ class _LoanDetailScreenState extends ConsumerState<LoanDetailScreen> {
                     Text(
                       formatMoney(outstanding, currency: account.currency),
                       key: const Key('loan-outstanding-balance'),
-                      style: Theme.of(context).textTheme.headlineMedium,
+                      style:
+                          Theme.of(context).textTheme.headlineMedium?.copyWith(
+                                fontWeight: FontWeight.w700,
+                                fontFeatures: compassTabularFigures,
+                              ),
                     ),
                     const SizedBox(height: 16),
                     Row(
@@ -218,26 +236,15 @@ class _LoanDetailScreenState extends ConsumerState<LoanDetailScreen> {
                   ],
                 ),
               ),
-              const SizedBox(height: 14),
-              if (isHistorical)
-                CompassCard(
-                  child: Row(
-                    children: [
-                      Icon(Icons.lock_clock_outlined,
-                          color: financePaletteOf(context).expense),
-                      SizedBox(width: 10),
-                      Expanded(child: Text('历史统计为只读状态，不能记录或生成还款交易。')),
-                    ],
-                  ),
-                )
-              else if (nextInstallment != null)
+              if (!isHistorical) const SizedBox(height: 14),
+              if (!isHistorical && nextInstallment != null)
                 CompassPrimaryButton(
                   key: const Key('record-loan-installment'),
                   label: '记录第 ${nextInstallment.number} 期还款',
                   icon: Icons.payments_outlined,
                   onPressed: () => _recordInstallment(account, nextInstallment),
                 )
-              else
+              else if (!isHistorical)
                 CompassCard(
                   child: Row(
                     children: [
@@ -707,8 +714,12 @@ class _HistoricalLoanBanner extends StatelessWidget {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                '历史统计 · 截至 ${cutoffDate.year}年${cutoffDate.month}月末',
+                '历史统计 · 截至 ${cutoffDate.year}年${cutoffDate.month}月末 · 只读',
               ),
+            ),
+            const CompassHelpButton(
+              title: '贷款历史统计',
+              message: '历史统计为只读状态，不能记录或生成还款交易。切换到当前后可继续处理。',
             ),
             TextButton(
               key: const Key('loan-return-current'),
@@ -735,7 +746,12 @@ class _Metric extends StatelessWidget {
           FittedBox(
             fit: BoxFit.scaleDown,
             alignment: Alignment.centerLeft,
-            child: Text(value, style: Theme.of(context).textTheme.titleSmall),
+            child: Text(
+              value,
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontFeatures: compassTabularFigures,
+                  ),
+            ),
           ),
         ],
       );
@@ -776,15 +792,18 @@ class _InstallmentRow extends StatelessWidget {
                     '${isPaid ? '已记录' : '预计'}',
                     style: TextStyle(
                       color: isPaid
-                          ? financePaletteOf(context).seed
+                          ? financePaletteOf(context).income
                           : financePaletteOf(context).textMuted,
+                      fontWeight: isPaid ? FontWeight.w600 : FontWeight.w400,
                     ),
                   ),
                   const SizedBox(height: 3),
                   Text(
                     '本金 ${formatMoney(installment.principal, currency: currency)} · '
                     '利息 ${formatMoney(installment.interest, currency: currency)}',
-                    style: Theme.of(context).textTheme.bodySmall,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          fontFeatures: compassTabularFigures,
+                        ),
                   ),
                 ],
               ),
@@ -795,11 +814,15 @@ class _InstallmentRow extends StatelessWidget {
               children: [
                 Text(
                   formatMoney(installment.payment, currency: currency),
-                  style: Theme.of(context).textTheme.titleSmall,
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontFeatures: compassTabularFigures,
+                      ),
                 ),
                 Text(
                   '余 ${formatMoney(installment.remainingPrincipal, currency: currency)}',
-                  style: Theme.of(context).textTheme.bodySmall,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        fontFeatures: compassTabularFigures,
+                      ),
                 ),
               ],
             ),

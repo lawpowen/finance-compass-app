@@ -113,7 +113,7 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
         child: SafeArea(
           child: ListView(
             controller: _scrollController,
-            padding: EdgeInsets.fromLTRB(sidePadding, 12, sidePadding, 28),
+            padding: EdgeInsets.fromLTRB(sidePadding, 8, sidePadding, 20),
             children: [
               Row(
                 children: [
@@ -134,7 +134,7 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                   ),
                 ],
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 10),
               _TypeTabs(
                 selected: type,
                 onChanged: (value) {
@@ -147,7 +147,7 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                   _updateTransferEstimate(force: true);
                 },
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: 10),
               Align(
                 alignment: Alignment.centerRight,
                 child: TextButton.icon(
@@ -173,6 +173,7 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                         color: financePaletteOf(context).seed,
                         fontSize: 40,
                         fontWeight: FontWeight.w600,
+                        fontFeatures: compassTabularFigures,
                       ),
                       decoration: InputDecoration(
                         hintText: '0.00',
@@ -181,6 +182,7 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                           color: financePaletteOf(context).seed,
                           fontSize: 40,
                           fontWeight: FontWeight.w600,
+                          fontFeatures: compassTabularFigures,
                         ),
                         border: InputBorder.none,
                         enabledBorder: InputBorder.none,
@@ -222,6 +224,7 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                           color: financePaletteOf(context).seed,
                           fontSize: 40,
                           fontWeight: FontWeight.w600,
+                          fontFeatures: compassTabularFigures,
                         ),
                         decoration: InputDecoration(
                           prefixText:
@@ -230,6 +233,7 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                             color: financePaletteOf(context).seed,
                             fontSize: 40,
                             fontWeight: FontWeight.w600,
+                            fontFeatures: compassTabularFigures,
                           ),
                           hintText: toAccountId == null ? '先选择账户' : null,
                           border: InputBorder.none,
@@ -256,13 +260,19 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                 if (issue != null && issue.transferIn)
                   _ComposerError(
                       key: _transferErrorKey, message: issue.message),
-                const SizedBox(height: 4),
                 Row(
                   children: [
                     Expanded(
-                      child: Text(
-                        _transferConversionHint(),
-                        style: Theme.of(context).textTheme.bodySmall,
+                      child: Align(
+                        alignment: AlignmentDirectional.centerStart,
+                        child: CompassHelpHeading(
+                          title: Text(
+                            _isStructuredLoanPayment ? '本息 → 本金' : '转入金额规则',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                          label: '转入金额',
+                          message: _transferConversionHint(),
+                        ),
                       ),
                     ),
                     if (toAccountId != null &&
@@ -278,7 +288,7 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                   ],
                 ),
               ],
-              const SizedBox(height: 12),
+              const SizedBox(height: 10),
               CompassSegmentedControl(
                 labels: const ['已发生', '预计'],
                 selectedIndex: status == TransactionStatus.planned ? 1 : 0,
@@ -289,14 +299,19 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                 }),
               ),
               if (status == TransactionStatus.planned) ...[
-                const SizedBox(height: 8),
+                const SizedBox(height: 6),
                 Text('不计入账户余额', style: Theme.of(context).textTheme.bodySmall),
               ],
-              const SizedBox(height: 24),
+              const SizedBox(height: 14),
               const CompassSectionLabel('基本信息'),
               _ComposerRow(
                 icon: Icons.account_balance_wallet_outlined,
-                title: type == TransactionType.transfer ? '转出账户' : '付款账户',
+                title: switch (type) {
+                  TransactionType.transfer => '转出账户',
+                  TransactionType.income => '收款账户',
+                  TransactionType.adjustment => '调整账户',
+                  TransactionType.expense => '付款账户',
+                },
                 value: account?.name ?? '请选择账户',
                 onTap: _pickAccount,
               ),
@@ -307,13 +322,43 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                   value: _account(toAccountId)?.name ?? '请选择账户',
                   onTap: _pickToAccount,
                 ),
-              if (type != TransactionType.transfer)
+              if (type != TransactionType.transfer) ...[
                 _ComposerRow(
                   icon: Icons.sell_outlined,
                   title: '类别',
                   value: category?.name ?? '未分类',
                   onTap: _pickCategory,
                 ),
+                if (_categoriesForType(type).isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4, bottom: 2),
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          for (final item in _categoriesForType(type).take(6))
+                            Padding(
+                              padding: const EdgeInsets.only(right: 6),
+                              child: ChoiceChip(
+                                key: Key('composer-quick-category-${item.id}'),
+                                label: Text(item.name),
+                                selected: categoryId == item.id,
+                                visualDensity: VisualDensity.compact,
+                                materialTapTargetSize:
+                                    MaterialTapTargetSize.shrinkWrap,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 0,
+                                ),
+                                onSelected: (_) =>
+                                    setState(() => categoryId = item.id),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
               _ComposerInputRow(
                 icon: Icons.storefront_outlined,
                 title: '商户',
@@ -326,7 +371,37 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                 value: '${date.year}年${date.month}月${date.day}日',
                 onTap: _pickDate,
               ),
-              const SizedBox(height: 18),
+              Padding(
+                padding: const EdgeInsets.only(top: 4, bottom: 2),
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    for (final entry in _quickDateOptions())
+                      ChoiceChip(
+                        key: Key('composer-quick-date-${entry.key}'),
+                        label: Text(entry.label),
+                        selected: DateUtils.isSameDay(date, entry.date),
+                        visualDensity: VisualDensity.compact,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 0,
+                        ),
+                        onSelected: (_) => setState(() {
+                          date = DateTime(
+                            entry.date.year,
+                            entry.date.month,
+                            entry.date.day,
+                            date.hour,
+                            date.minute,
+                          );
+                        }),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
               InkWell(
                 onTap: () => setState(() => moreExpanded = !moreExpanded),
                 child: Row(
@@ -364,7 +439,7 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                     value: '请在规则中心修改',
                   ),
               ],
-              const SizedBox(height: 24),
+              const SizedBox(height: 14),
               if (widget.editExisting) ...[
                 OutlinedButton.icon(
                   onPressed: _confirmDelete,
@@ -488,11 +563,38 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
         '$targetCurrency · 可按实际到账金额修改';
   }
 
+  List<({String key, String label, DateTime date})> _quickDateOptions() {
+    final now = DateTime.now();
+    final today = DateUtils.dateOnly(now);
+    return [
+      if (status == TransactionStatus.planned)
+        (
+          key: 'tomorrow',
+          label: '明天',
+          date: today.add(const Duration(days: 1))
+        ),
+      (key: 'today', label: '今天', date: today),
+      (
+        key: 'yesterday',
+        label: '昨天',
+        date: today.subtract(const Duration(days: 1)),
+      ),
+      (
+        key: 'two-days-ago',
+        label: '前天',
+        date: today.subtract(const Duration(days: 2)),
+      ),
+    ];
+  }
+
   Future<void> _pickAccount() async {
     final value = await _pickFromSheet<Account>(
       title: '选择账户',
       items: repository.accounts,
+      selected: _account(accountId),
       label: (item) => '${item.name} · ${item.currency}',
+      subtitle: (item) =>
+          '当前余额 ${compassMoney(item.currentBalance, currency: item.currency)}',
     );
     if (value != null) {
       setState(() {
@@ -508,7 +610,10 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
     final value = await _pickFromSheet<Account>(
       title: '选择转入账户',
       items: repository.accounts.where((item) => item.id != accountId).toList(),
+      selected: _account(toAccountId),
       label: (item) => '${item.name} · ${item.currency}',
+      subtitle: (item) =>
+          '当前余额 ${compassMoney(item.currentBalance, currency: item.currency)}',
     );
     if (value != null) {
       setState(() {
@@ -523,6 +628,7 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
     final value = await _pickFromSheet<Category>(
       title: '选择类别',
       items: _categoriesForType(type),
+      selected: _category(categoryId),
       label: (item) => item.name,
     );
     if (value != null) setState(() => categoryId = value.id);
@@ -564,27 +670,47 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
     required String title,
     required List<T> items,
     required String Function(T item) label,
+    String Function(T item)? subtitle,
+    T? selected,
   }) =>
       showModalBottomSheet<T>(
         context: context,
         showDragHandle: true,
-        builder: (context) => SafeArea(
-          child: ListView(
-            shrinkWrap: true,
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-            children: [
-              Text(title, style: Theme.of(context).textTheme.titleLarge),
-              const SizedBox(height: 10),
-              ...items.map(
-                (item) => ListTile(
-                  title: Text(label(item)),
-                  trailing: const Icon(Icons.chevron_right_rounded),
-                  onTap: () => Navigator.pop(context, item),
-                ),
-              ),
-            ],
-          ),
-        ),
+        builder: (context) {
+          final palette = financePaletteOf(context);
+          return SafeArea(
+            child: ListView(
+              shrinkWrap: true,
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+              children: [
+                Text(title, style: Theme.of(context).textTheme.titleLarge),
+                const SizedBox(height: 10),
+                ...items.map((item) {
+                  final isSelected = selected != null && selected == item;
+                  return ListTile(
+                    title: Text(label(item)),
+                    subtitle: subtitle == null
+                        ? null
+                        : Text(
+                            subtitle(item),
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(fontFeatures: compassTabularFigures),
+                          ),
+                    trailing: Icon(
+                      isSelected
+                          ? Icons.check_circle_rounded
+                          : Icons.chevron_right_rounded,
+                      color: isSelected ? palette.seed : palette.textMuted,
+                    ),
+                    onTap: () => Navigator.pop(context, item),
+                  );
+                }),
+              ],
+            ),
+          );
+        },
       );
 
   Future<void> _pickDate() async {
@@ -608,10 +734,16 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('选择生成周期', style: Theme.of(context).textTheme.titleLarge),
-              const SizedBox(height: 6),
+              CompassHelpHeading(
+                title: Text(
+                  '选择生成周期',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                label: '生成周期',
+                message: '所有月份都会保持当前选择的「已发生」或「预计」状态。',
+              ),
               Text(
-                '所有月份都会保持当前选择的“已发生”或“预计”状态。',
+                status == TransactionStatus.planned ? '生成状态 预计' : '生成状态 已发生',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               const SizedBox(height: 14),
@@ -826,6 +958,7 @@ class _TypeTabs extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = financePaletteOf(context);
     const values = [
       TransactionType.income,
       TransactionType.expense,
@@ -833,15 +966,23 @@ class _TypeTabs extends StatelessWidget {
       TransactionType.adjustment,
     ];
     const labels = ['收入', '支出', '转账', '调整'];
+    Color activeColorFor(TransactionType value) => switch (value) {
+          TransactionType.income => palette.income,
+          TransactionType.expense => palette.expense,
+          TransactionType.transfer ||
+          TransactionType.adjustment =>
+            palette.seed,
+        };
     return Container(
       height: 44,
       decoration: BoxDecoration(
-        border: Border.all(color: financePaletteOf(context).border),
+        border: Border.all(color: palette.border),
         borderRadius: BorderRadius.circular(22),
       ),
       child: Row(
         children: List.generate(values.length, (index) {
           final active = values[index] == selected;
+          final fillColor = activeColorFor(values[index]);
           return Expanded(
             child: InkWell(
               onTap: () => onChanged(values[index]),
@@ -849,17 +990,15 @@ class _TypeTabs extends StatelessWidget {
               child: Container(
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: active
-                      ? financePaletteOf(context).expense
-                      : Colors.transparent,
+                  color: active ? fillColor : Colors.transparent,
                   borderRadius: BorderRadius.circular(21),
                 ),
                 child: Text(
                   labels[index],
                   style: TextStyle(
                     color: active
-                        ? financeForegroundOn(financePaletteOf(context).expense)
-                        : financePaletteOf(context).textMuted,
+                        ? financeForegroundOn(fillColor)
+                        : palette.textMuted,
                     fontWeight: active ? FontWeight.w600 : FontWeight.w400,
                   ),
                 ),

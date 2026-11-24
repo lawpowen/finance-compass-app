@@ -22,6 +22,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/amount_entry.dart';
+
 void main() {
   test('feature source contains no no-op or empty interaction handlers', () {
     final files = Directory('lib/src/features')
@@ -241,7 +243,7 @@ void main() {
     );
     await tester.tap(find.text('新增预算'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField).first, '500');
+    await enterAmount(tester, find.byType(TextField).first, '500');
     await tester.tap(find.text('生效月份'));
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
@@ -313,8 +315,22 @@ void main() {
     );
     await tester.tap(find.text('调整八月预算'));
     await tester.pumpAndSettle();
-    expect(find.text('从该月起持续生效，直到同一类别设置新的月份预算。'), findsOneWidget);
-    await tester.enterText(find.byType(TextField).first, '400');
+    const monthExplanation = '从该月起持续生效，直到同一类别设置新的月份预算。';
+    expect(find.text(monthExplanation), findsNothing);
+    final help = find.byTooltip('查看生效月份说明');
+    await tester.scrollUntilVisible(
+      help,
+      120,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(help);
+    await tester.pumpAndSettle();
+    expect(find.text(monthExplanation), findsOneWidget);
+    await tester.tap(find.text('知道了'));
+    await tester.pumpAndSettle();
+    expect(find.text(monthExplanation), findsNothing);
+    await tester.ensureVisible(find.byType(TextField).first);
+    await enterAmount(tester, find.byType(TextField).first, '400');
     await tester.scrollUntilVisible(
       find.text('保存更改'),
       350,
@@ -404,12 +420,21 @@ void main() {
     expect(find.text('关于 Finance Compass'), findsOneWidget);
     expect(find.text('下载最新版本'), findsOneWidget);
     expect(find.text('请开发者喝杯咖啡'), findsOneWidget);
-    expect(find.textContaining('支持完全自愿'), findsOneWidget);
-    expect(find.textContaining('不接入支付 SDK'), findsOneWidget);
+    expect(find.textContaining('付款前请确认收款人是 LAW PO WEN'), findsOneWidget);
+    expect(find.textContaining('支持完全自愿'), findsNothing);
     expect(
       find.bySemanticsLabel('Touch n Go 开发支持收款二维码，收款人 LAW PO WEN'),
       findsOneWidget,
     );
+    final supportHelp = find.byTooltip('查看自愿支持说明');
+    await tester.ensureVisible(supportHelp);
+    await tester.tap(supportHelp);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('支持完全自愿'), findsOneWidget);
+    expect(find.textContaining('不接入支付 SDK'), findsOneWidget);
+    await tester.tap(find.widgetWithText(TextButton, '知道了'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('支持完全自愿'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 }

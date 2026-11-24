@@ -2,7 +2,7 @@
 
 ## 当前实现与边界
 
-Finance Compass `0.10.1+45` 可构建为自托管的 Flutter Web 应用。自托管服务器只分发 HTML、JavaScript、静态资源、`sqlite3.wasm` 与 Drift Worker；**没有后端 API、用户账户、服务端 SQLite、服务端备份或跨设备同步**。因此它适合让 iPhone、iPad、Android 和桌面浏览器访问同一私有网址，但不是云同步服务。
+Finance Compass `0.10.1+45` 可构建为自托管的 Flutter Web 应用。本文所述静态版只分发 HTML、JavaScript、静态资源、`sqlite3.wasm` 与 Drift Worker，账本保存在浏览器。在多设备上使用同一本账时，使用单独的[账号登录与同步部署](SYNC_HOSTING.md)。
 
 公开发布包（[v0.10.1](https://github.com/lawpowen/finance-compass-app/releases/tag/v0.10.1) 已于 2026-09-29 公开发布，校验值见 Release 中的 `SHA256SUMS.txt` 与 [v0.10.1 公开发布 QA](public-release-qa-v0.10.1-2026-09-29.md)）：
 
@@ -25,6 +25,8 @@ flowchart LR
 ```
 
 ## PWA 与 Apple/Android 使用方式
+
+网页与已安装的 PWA 默认使用 CanvasKit WebGL。设备的图形驱动不稳定时，可以通过地址末尾的 `?cpu=1` 切换到软件绘图。此模式关闭实时模糊与发光阴影以降低重绘成本。通过 `node --test test/web_bootstrap.test.mjs` 验证默认路径、软件回退及同源字体配置。[Flutter Web 初始化选项](https://docs.flutter.dev/platform-integration/web/initialization)
 
 - **iOS/iPadOS Safari**：通过 HTTPS 打开站点，点击分享按钮，再选择“添加到主屏幕”。Safari 不提供 Chromium 式安装提示；离线缓存与本地存储受 iOS 存储回收策略影响，所以不应以它代替 JSON 备份。
 - **Android Chrome**：通过 HTTPS 打开站点，在 Chrome 菜单选择“安装应用”或“添加到主屏幕”。manifest 和 standalone display 已配置；Service Worker 会缓存静态应用外壳，首次完整加载后可离线打开。它不会让服务器持有或同步账本。
@@ -97,7 +99,7 @@ chmod +x tool/build_web.sh
 
 ## 升级、回滚与恢复
 
-- **升级 Web 壳**：先从每个设备导出 JSON，再拉取/解压新版本并运行 `docker compose up -d --build`。`web/service-worker.js` 采用缓存优先策略，每个发布版本都必须更换 `CACHE_NAME`（`0.10.1` 为 `finance-compass-shell-v0.10.1`），新 Worker 激活时才会删除旧的 `finance-compass-shell-*` 应用壳缓存；它不触碰 Drift 浏览器存储中的账本。浏览器首次刷新可能仍使用旧 Service Worker；关闭标签页后重新打开，必要时在浏览器开发者工具清除“应用缓存”，但先导出 JSON。
+- **升级 Web 壳**：先从每个设备导出 JSON，再拉取或解压新版本并运行 `docker compose up -d --build`。每个 Web 发布都需为 `CACHE_NAME` 设置新值，并保留 `finance-compass-shell-consent-` 前缀。新版下载完成后，当前页面显示更新提示，用户点“更新”才切换。先继续工作时可点“稍后”，以后从设置更新。关闭全部页面后，浏览器也可以自然切换到已经下载的版本。Worker 只清理旧应用资源缓存，Drift 账本留在浏览器数据库。
 - **回滚 Web 壳**：部署旧镜像/源码即可；它不改变浏览器数据库 schema 之外的既有 Drift 迁移逻辑。若曾打开更高 schema，先按应用现有恢复策略导出 JSON，并确认旧应用能理解其格式。
 - **恢复账本**：打开同一受保护 origin，在“导入与导出”选择此前下载的 JSON。Web 不能悄悄在服务器创建恢复点；导入覆盖前，界面必须让用户先下载当前 JSON。
 - **丢失浏览器数据**：服务器不能恢复它。使用用户自行保存的 JSON 才能恢复。

@@ -9,19 +9,31 @@ class AppSettingsController extends ChangeNotifier {
 
   final AppDatabase? _database;
 
+  AppThemeStyle _themeStyle = AppThemeStyle.monochrome;
   bool _isLoaded = false;
 
   AppDatabase get _preferencesDatabase =>
       _database ?? DatabaseProvider.instance;
-  AppThemeStyle get themeStyle => AppThemeStyle.monochrome;
+  AppThemeStyle get themeStyle => _themeStyle;
   bool get isLoaded => _isLoaded;
 
   Future<void> load() async {
     final rawValue = await _preferencesDatabase.getMetaValue('theme_style');
-    if (rawValue != null && rawValue != themeStyle.name) {
-      await _preferencesDatabase.setMetaValue('theme_style', themeStyle.name);
+    final normalized = AppThemeStyle.normalize(rawValue);
+    _themeStyle = normalized;
+    if (rawValue != null && rawValue != normalized.name) {
+      await _preferencesDatabase.setMetaValue('theme_style', normalized.name);
     }
     _isLoaded = true;
+    notifyListeners();
+  }
+
+  Future<void> setThemeStyle(AppThemeStyle style) async {
+    final target = AppThemeStyle.selectableStyles.contains(style)
+        ? style
+        : AppThemeStyle.monochrome;
+    await _preferencesDatabase.setMetaValue('theme_style', target.name);
+    _themeStyle = target;
     notifyListeners();
   }
 }

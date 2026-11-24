@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show setEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -38,33 +39,46 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
   _TransactionFilters filters = const _TransactionFilters();
   _TransactionBasis selectedBasis = _TransactionBasis.consumption;
   final Set<String> selectedTransactionIds = {};
+  bool selectionMode = false;
   bool isDeleting = false;
+  _TransactionsMonthData? _cachedMonthData;
 
   FinanceRepository get repository =>
       ref.read(financeRepositoryProvider).valueOrNull ?? widget.repository;
 
-  bool get isSelecting => selectedTransactionIds.isNotEmpty;
+  bool get isSelecting => selectionMode || selectedTransactionIds.isNotEmpty;
 
-  @override
-  Widget build(BuildContext context) {
-    ref.watch(financeRepositoryProvider);
+  _TransactionsMonthData _monthDataFor(FinanceRepository currentRepo) {
     final now = DateTime.now();
+    final dayKey = now.year * 10000 + now.month * 100 + now.day;
+    final cached = _cachedMonthData;
+    if (cached != null &&
+        identical(cached.repository, currentRepo) &&
+        cached.monthOffset == monthOffset &&
+        cached.includePlanned == includePlanned &&
+        cached.filters == filters &&
+        cached.dayKey == dayKey) {
+      return cached;
+    }
+
     final month = DateTime(now.year, now.month + monthOffset);
     final monthKey = '${month.year}-${month.month.toString().padLeft(2, '0')}';
-    final realForMonth = repository.transactions
+    final accountsById = {
+      for (final account in currentRepo.accounts) account.id: account,
+    };
+    final realForMonth = currentRepo.transactions
         .where((item) =>
             item.transactionDate.year == month.year &&
             item.transactionDate.month == month.month)
         .toList()
       ..sort((a, b) => b.transactionDate.compareTo(a.transactionDate));
-    final allForMonth = realForMonth;
-    final filteredForMonth = allForMonth.where(filters.matches).toList();
+    final filteredForMonth = realForMonth.where(filters.matches).toList();
     final visible = filteredForMonth
         .where((item) =>
             includePlanned || item.status != TransactionStatus.planned)
         .toList();
     final fundingNeed = monthOffset >= 0
-        ? repository.monthlyFundingNeedForMonth(
+        ? currentRepo.monthlyFundingNeedForMonth(
             monthKey,
             includePlanned: includePlanned,
           )
@@ -75,20 +89,42 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
           basis,
           visible,
           filteredForMonth,
+          currentRepo: currentRepo,
+          accountsById: accountsById,
           fundingNeed: fundingNeed,
         ),
     };
-    final selectedSummary = basisSummaries[selectedBasis]!;
+    final mobileEntries = _buildMobileEntries(
+      visible,
+      currentRepo: currentRepo,
+    );
+    return _cachedMonthData = _TransactionsMonthData(
+      repository: currentRepo,
+      month: month,
+      monthOffset: monthOffset,
+      includePlanned: includePlanned,
+      filters: filters,
+      dayKey: dayKey,
+      accountsById: accountsById,
+      visible: visible,
+      fundingNeed: fundingNeed,
+      basisSummaries: basisSummaries,
+      mobileEntries: mobileEntries,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    ref.watch(financeRepositoryProvider);
+    final data = _monthDataFor(repository);
+    final selectedSummary = data.basisSummaries[selectedBasis]!;
 
     return LayoutBuilder(
       builder: (context, constraints) => _ledger(
         context,
         desktop: constraints.maxWidth >= compassDesktopMinWidth,
-        month: month,
-        basisSummaries: basisSummaries,
+        data: data,
         selectedSummary: selectedSummary,
-        fundingNeed: fundingNeed,
-        visible: visible,
       ),
     );
   }
@@ -96,12 +132,16 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
   Widget _ledger(
     BuildContext context, {
     required bool desktop,
-    required DateTime month,
-    required Map<_TransactionBasis, _BasisSummary> basisSummaries,
+    required _TransactionsMonthData data,
     required _BasisSummary selectedSummary,
-    required MonthlyFundingNeed? fundingNeed,
-    required List<FinanceTransaction> visible,
   }) {
+    final month = data.month;
+    final basisSummaries = data.basisSummaries;
+    final fundingNeed = data.fundingNeed;
+    final visible = data.visible;
+    final mobileEntries = data.mobileEntries;
+    final palette = financePaletteOf(context);
+    final baseCurrency = repository.baseCurrency;
     final searchAction = _HeaderAction(
       icon: Icons.search_rounded,
       tooltip: '搜索交易',
@@ -135,15 +175,30 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
             side: BorderSide.none,
           ),
         ),
+        if (monthOffset != 0)
+          TextButton(
+            key: const Key('transaction-month-today'),
+            onPressed: _resetToCurrentMonth,
+            style: TextButton.styleFrom(
+              minimumSize: const Size(0, 30),
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              visualDensity: VisualDensity.compact,
+            ),
+            child: const Text('本月'),
+          ),
       ],
     );
     final statusSwitch = _StatusSwitch(
       includePlanned: includePlanned,
       onChanged: (value) => setState(() {
+        selectionMode = false;
         selectedTransactionIds.clear();
         includePlanned = value;
       }),
     );
+    final hasActiveFilters = filters.accountIds.isNotEmpty ||
+        filters.types.isNotEmpty ||
+        filters.categoryIds.isNotEmpty;
     final filterPills = [
       _QuickFilterPill(
         key: const Key('transaction-filter-account'),
@@ -181,177 +236,289 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
         selected: filters.categoryIds.isNotEmpty,
         onTap: () => _openFilterSheet({_FilterDimension.category}),
       ),
+      if (hasActiveFilters)
+        Padding(
+          padding: const EdgeInsets.only(right: 4),
+          child: ActionChip(
+            key: const Key('transaction-filter-reset'),
+            avatar: Icon(Icons.close_rounded, size: 15, color: palette.expense),
+            label: Text(
+              '清除筛选',
+              style: TextStyle(fontSize: 11, color: palette.expense),
+            ),
+            visualDensity: VisualDensity.compact,
+            side: BorderSide(color: palette.expense.withValues(alpha: .35)),
+            onPressed: _resetFilters,
+          ),
+        ),
     ];
+    final (primaryDotColor, secondaryDotColor) = switch (selectedBasis) {
+      _TransactionBasis.consumption => (palette.income, palette.expense),
+      _TransactionBasis.cash => (
+          fundingNeed != null ? palette.textPrimary : palette.income,
+          fundingNeed != null ? palette.warning : palette.expense,
+        ),
+      _TransactionBasis.committed => (palette.warning, palette.income),
+    };
     final breakdown = [
       _FlowLegend(
         key: const Key('transaction-basis-primary'),
-        color: financePaletteOf(context).seed,
+        color: primaryDotColor,
         label:
-            '${selectedSummary.primaryLabel} ${compassMoney(selectedSummary.primary, decimals: 0)}',
+            '${selectedSummary.primaryLabel} ${compassMoney(selectedSummary.primary, currency: baseCurrency, decimals: 0)}',
         compact: desktop,
       ),
       _FlowLegend(
         key: const Key('transaction-basis-secondary'),
-        color: financePaletteOf(context).expense,
+        color: secondaryDotColor,
         label:
-            '${selectedSummary.secondaryLabel} ${compassMoney(selectedSummary.secondary, decimals: 0)}',
+            '${selectedSummary.secondaryLabel} ${compassMoney(selectedSummary.secondary, currency: baseCurrency, decimals: 0)}',
         compact: desktop,
       ),
     ];
+    final basisHelp = CompassHelpButton(
+      title: '${selectedSummary.title}口径',
+      message: switch (selectedBasis) {
+        _TransactionBasis.consumption =>
+          '按交易发生日统计收入和消费。账户间转账不计入消费。「包含预计」会计入本期预计交易。',
+        _TransactionBasis.cash => fundingNeed == null
+            ? '统计历史月份现金账户的流入和流出。信用卡与贷款还款按现金支付金额计入。「包含预计」会计入本期预计交易。'
+            : '需准备现金包括本月已知现金流出，以及尚未安排的到期信用卡和贷款还款。已安排的还款不会重复计入。这个总额不会随下方筛选变化。',
+        _TransactionBasis.committed =>
+          '显示当前信用卡与贷款的欠款，包含已经承诺的分期。启用「包含预计」后，也计入本月预计交易对余额的影响。',
+      },
+    );
     final desktopActionStyle = TextButton.styleFrom(
       minimumSize: const Size(0, 36),
       padding: const EdgeInsets.symmetric(horizontal: 8),
     );
 
+    final headerControls = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        CompassPageHeader(
+          title: isSelecting ? '已选择 ${selectedTransactionIds.length} 笔' : '交易',
+          leading: isSelecting
+              ? IconButton(
+                  tooltip: '退出选择',
+                  onPressed: isDeleting ? null : _clearSelection,
+                  icon: const Icon(Icons.close_rounded),
+                )
+              : null,
+          actions: isSelecting
+              ? [
+                  _HeaderAction(
+                    icon: Icons.select_all_rounded,
+                    tooltip: '选择当前列表全部交易',
+                    onPressed:
+                        isDeleting ? null : () => _selectAllVisible(visible),
+                  ),
+                  const SizedBox(width: 8),
+                  _HeaderAction(
+                    icon: Icons.delete_outline_rounded,
+                    tooltip: '删除所选交易',
+                    color: financePaletteOf(context).expense,
+                    onPressed: isDeleting ? null : _deleteSelected,
+                  ),
+                ]
+              : desktop
+                  ? [
+                      OutlinedButton.icon(
+                        onPressed: () => _showQuickTemplates(context),
+                        icon: const Icon(Icons.bolt_rounded, size: 18),
+                        label: const Text('快捷模板'),
+                      ),
+                      const SizedBox(width: 10),
+                      FilledButton.icon(
+                        onPressed: () => _showTransactionEditor(context),
+                        icon: const Icon(Icons.add_rounded, size: 19),
+                        label: const Text('记账'),
+                      ),
+                    ]
+                  : [searchAction, const SizedBox(width: 8), filterAction],
+        ),
+        const SizedBox(height: 14),
+        if (!desktop) Center(child: monthSelector),
+        _BasisCards(
+          summaries: basisSummaries,
+          selected: selectedBasis,
+          desktop: desktop,
+          onSelected: (basis) => setState(() => selectedBasis = basis),
+        ),
+        if (!desktop) ...[
+          const SizedBox(height: 12),
+          statusSwitch,
+        ],
+        const SizedBox(height: 4),
+        Row(
+          children: [
+            Expanded(
+              child: desktop
+                  ? Wrap(spacing: 20, runSpacing: 4, children: breakdown)
+                  : Row(
+                      children: [
+                        for (final entry in breakdown) Expanded(child: entry),
+                      ],
+                    ),
+            ),
+            basisHelp,
+          ],
+        ),
+        if (selectedBasis == _TransactionBasis.cash && fundingNeed != null) ...[
+          Text(
+            '到期信用 ${compassMoney(fundingNeed.creditDue, currency: baseCurrency, decimals: 0)} · '
+            '到期贷款 ${compassMoney(fundingNeed.loanDue, currency: baseCurrency, decimals: 0)} · '
+            '已安排 ${compassMoney(fundingNeed.coveredDebtPayments, currency: baseCurrency, decimals: 0)}',
+            key: const Key('monthly-funding-need-note'),
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  fontFeatures: compassTabularFigures,
+                ),
+          ),
+        ],
+        SizedBox(height: desktop ? 20 : 10),
+        if (desktop) ...[
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Wrap(
+                  spacing: 4,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    monthSelector,
+                    ...filterPills,
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        TextButton.icon(
+                          style: desktopActionStyle,
+                          onPressed: _openSearch,
+                          icon: const Icon(Icons.search_rounded, size: 17),
+                          label: const Text('搜索'),
+                        ),
+                        TextButton.icon(
+                          style: desktopActionStyle,
+                          onPressed: () => _openFilterSheet(
+                            _FilterDimension.values.toSet(),
+                          ),
+                          icon: const Icon(
+                            Icons.filter_alt_outlined,
+                            size: 17,
+                          ),
+                          label: const Text('高级筛选'),
+                        ),
+                        if (visible.isNotEmpty && !isSelecting)
+                          TextButton.icon(
+                            style: desktopActionStyle,
+                            onPressed: () =>
+                                setState(() => selectionMode = true),
+                            icon: const Icon(
+                              Icons.checklist_rounded,
+                              size: 17,
+                            ),
+                            label: const Text('多选'),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Padding(
+                padding: const EdgeInsets.only(top: 5),
+                child: SizedBox(width: 168, child: statusSwitch),
+              ),
+            ],
+          ),
+        ] else
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: filterPills,
+            ),
+          ),
+        const SizedBox(height: 12),
+      ],
+    );
+
+    final useCompactDesktopCard = desktop && visible.length <= 40;
+    final itemCount = visible.isEmpty
+        ? 2
+        : desktop
+            ? (useCompactDesktopCard ? 2 : visible.length + 2)
+            : 1 + mobileEntries.length;
+
     return Stack(
       children: [
-        ListView(
+        ListView.builder(
+          cacheExtent: 600,
           padding: compassScrollPadding(
               context,
               desktop
                   ? compassDesktopPagePadding
                   : compassPagePadding.copyWith(bottom: 108)),
-          children: [
-            CompassPageHeader(
-              title:
-                  isSelecting ? '已选择 ${selectedTransactionIds.length} 笔' : '交易',
-              leading: isSelecting
-                  ? IconButton(
-                      tooltip: '退出选择',
-                      onPressed: isDeleting ? null : _clearSelection,
-                      icon: const Icon(Icons.close_rounded),
-                    )
-                  : null,
-              actions: isSelecting
-                  ? [
-                      _HeaderAction(
-                        icon: Icons.select_all_rounded,
-                        tooltip: '选择当前列表全部交易',
-                        onPressed: isDeleting
-                            ? null
-                            : () => _selectAllVisible(visible),
-                      ),
-                      const SizedBox(width: 8),
-                      _HeaderAction(
-                        icon: Icons.delete_outline_rounded,
-                        tooltip: '删除所选交易',
-                        color: financePaletteOf(context).expense,
-                        onPressed: isDeleting ? null : _deleteSelected,
-                      ),
-                    ]
-                  : desktop
-                      ? [
-                          OutlinedButton.icon(
-                            onPressed: () => _showQuickTemplates(context),
-                            icon: const Icon(Icons.bolt_rounded, size: 18),
-                            label: const Text('快捷模板'),
-                          ),
-                          const SizedBox(width: 10),
-                          FilledButton.icon(
-                            onPressed: () => _showTransactionEditor(context),
-                            icon: const Icon(Icons.add_rounded, size: 19),
-                            label: const Text('记账'),
-                          ),
-                        ]
-                      : [searchAction, const SizedBox(width: 8), filterAction],
-            ),
-            const SizedBox(height: 14),
-            if (!desktop) Center(child: monthSelector),
-            _BasisCards(
-              summaries: basisSummaries,
-              selected: selectedBasis,
-              desktop: desktop,
-              onSelected: (basis) => setState(() => selectedBasis = basis),
-            ),
-            if (!desktop) ...[
-              const SizedBox(height: 12),
-              statusSwitch,
-            ],
-            SizedBox(height: desktop ? 8 : 10),
-            if (desktop)
-              Wrap(spacing: 20, runSpacing: 4, children: breakdown)
-            else
-              Row(
-                children: [
-                  for (final entry in breakdown) Expanded(child: entry),
-                ],
-              ),
-            if (selectedBasis == _TransactionBasis.cash &&
-                fundingNeed != null) ...[
-              const SizedBox(height: 7),
-              Text(
-                '到期信用 ${compassMoney(fundingNeed.creditDue, decimals: 0)} · '
-                '到期贷款 ${compassMoney(fundingNeed.loanDue, decimals: 0)} · '
-                '已包含 ${compassMoney(fundingNeed.coveredDebtPayments, decimals: 0)}；'
-                '总额不重复，且不受下方筛选影响。',
-                key: const Key('monthly-funding-need-note'),
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ],
-            SizedBox(height: desktop ? 20 : 10),
-            if (desktop) ...[
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Wrap(
-                      spacing: 4,
-                      runSpacing: 8,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        monthSelector,
-                        ...filterPills,
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            TextButton.icon(
-                              style: desktopActionStyle,
-                              onPressed: _openSearch,
-                              icon: const Icon(Icons.search_rounded, size: 17),
-                              label: const Text('搜索'),
-                            ),
-                            TextButton.icon(
-                              style: desktopActionStyle,
-                              onPressed: () => _openFilterSheet(
-                                _FilterDimension.values.toSet(),
-                              ),
-                              icon: const Icon(
-                                Icons.filter_alt_outlined,
-                                size: 17,
-                              ),
-                              label: const Text('高级筛选'),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Padding(
-                    padding: const EdgeInsets.only(top: 5),
-                    child: SizedBox(width: 168, child: statusSwitch),
-                  ),
-                ],
-              ),
-            ] else
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: filterPills,
-                ),
-              ),
-            const SizedBox(height: 12),
-            if (desktop) const _DesktopLedgerHeader(),
-            if (visible.isEmpty)
-              const CompassCard(
+          itemCount: itemCount,
+          itemBuilder: (context, index) {
+            if (index == 0) return headerControls;
+            if (visible.isEmpty) {
+              return CompassCard(
                 child: Padding(
-                  padding: EdgeInsets.symmetric(vertical: 18),
-                  child: Center(child: Text('这个月份没有符合条件的交易')),
+                  padding: const EdgeInsets.symmetric(vertical: 20),
+                  child: Column(
+                    children: [
+                      Text(
+                        hasActiveFilters ? '当前筛选下没有交易' : '这个月份没有符合条件的交易',
+                      ),
+                      const SizedBox(height: 10),
+                      if (hasActiveFilters)
+                        OutlinedButton(
+                          onPressed: _resetFilters,
+                          child: const Text('清除筛选'),
+                        )
+                      else
+                        FilledButton.icon(
+                          onPressed: () => _showTransactionEditor(context),
+                          icon: const Icon(Icons.add_rounded, size: 18),
+                          label: const Text('记一笔'),
+                        ),
+                    ],
+                  ),
                 ),
-              )
-            else
-              ..._transactionWidgets(context, visible, desktop: desktop),
-          ],
+              );
+            }
+            if (desktop) {
+              if (useCompactDesktopCard) {
+                return CompassCard(
+                  padding: EdgeInsets.zero,
+                  radius: 14,
+                  child: Column(
+                    children: [
+                      const _DesktopLedgerHeader(),
+                      ..._transactionWidgets(context, visible, desktop: true),
+                    ],
+                  ),
+                );
+              }
+              return _desktopVirtualItem(context, visible, index - 1, palette);
+            }
+            final entry = mobileEntries[index - 1];
+            if (entry.transaction == null) {
+              return _mobileDayHeader(
+                context,
+                palette,
+                entry.dateLabel!,
+                entry.daySummary!,
+              );
+            }
+            final item = entry.transaction!;
+            final row = _buildTransactionRow(context, item, desktop: false);
+            if (!entry.showDivider) return row;
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [row, const Divider()],
+            );
+          },
         ),
         if (!desktop && !isSelecting)
           Positioned(
@@ -362,13 +529,17 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
                 CompassActionBubble(
                   heroTag: 'transactions_v2_quick',
                   icon: Icons.bolt_rounded,
+                  color: palette.surface,
+                  foregroundColor: palette.textPrimary,
+                  borderColor: palette.border,
+                  elevation: 3,
                   onPressed: () => _showQuickTemplates(context),
                 ),
                 const SizedBox(height: 9),
                 CompassActionBubble(
                   heroTag: 'transactions_v2_add',
                   icon: Icons.add_rounded,
-                  color: financePaletteOf(context).expense,
+                  color: palette.resolvedPrimaryAction,
                   onPressed: () => _showTransactionEditor(context),
                 ),
               ],
@@ -382,6 +553,8 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
     _TransactionBasis basis,
     List<FinanceTransaction> scopedTransactions,
     List<FinanceTransaction> allForMonth, {
+    required FinanceRepository currentRepo,
+    required Map<String, Account> accountsById,
     MonthlyFundingNeed? fundingNeed,
   }) {
     switch (basis) {
@@ -390,17 +563,17 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
             .where((item) => item.type == TransactionType.income)
             .fold<double>(
               0,
-              (sum, item) => sum + repository.transactionAmountInBase(item),
+              (sum, item) => sum + currentRepo.transactionAmountInBase(item),
             );
         final expense = scopedTransactions
             .where((item) => item.type == TransactionType.expense)
             .fold<double>(
               0,
-              (sum, item) => sum + repository.transactionAmountInBase(item),
+              (sum, item) => sum + currentRepo.transactionAmountInBase(item),
             );
         return _BasisSummary(
           title: '实际消费',
-          subtitle: '按交易发生日',
+          subtitle: '收支净额',
           value: income - expense,
           primaryLabel: '收入',
           primary: income,
@@ -412,7 +585,7 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
         var inflow = 0.0;
         var outflow = 0.0;
         for (final item in scopedTransactions) {
-          final delta = _cashDelta(item);
+          final delta = _cashDelta(item, currentRepo, accountsById);
           if (delta >= 0) {
             inflow += delta;
           } else {
@@ -434,7 +607,7 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
         }
         return _BasisSummary(
           title: '实际现金',
-          subtitle: '历史实际现金流出',
+          subtitle: includePlanned ? '历史流出含预计' : '历史实际流出',
           value: outflow,
           primaryLabel: '流入',
           primary: inflow,
@@ -447,36 +620,40 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
         var additions = 0.0;
         var reductions = 0.0;
         for (final item in scopedTransactions) {
-          final delta = _creditDebtDelta(item);
+          final delta = _creditDebtDelta(item, currentRepo, accountsById);
           if (delta >= 0) {
             additions += delta;
           } else {
             reductions += -delta;
           }
         }
-        final cutoff = repository.currentMonthCutoffDate();
-        final currentCommitted = repository.accounts
+        final cutoff = currentRepo.currentMonthCutoffDate();
+        final currentCommitted = currentRepo.accounts
             .where((account) =>
                 account.reportGroup == ReportGroup.credit &&
                 (filters.accountIds.isEmpty ||
                     filters.accountIds.contains(account.id)))
             .fold<double>(0, (sum, account) {
           final balance = account.accountType == AccountType.creditCard
-              ? repository.convertToBase(
+              ? currentRepo.convertToBase(
                   account.currentBalance,
                   account.currency,
                 )
-              : repository.accountBalanceAtBase(account.id, cutoff);
+              : currentRepo.accountBalanceAtBase(account.id, cutoff);
           return sum + (-balance).clamp(0.0, double.infinity).toDouble();
         });
         final plannedDelta = includePlanned
             ? allForMonth
                 .where((item) => item.status == TransactionStatus.planned)
-                .fold<double>(0, (sum, item) => sum + _creditDebtDelta(item))
+                .fold<double>(
+                  0,
+                  (sum, item) =>
+                      sum + _creditDebtDelta(item, currentRepo, accountsById),
+                )
             : 0.0;
         return _BasisSummary(
           title: '信用/贷款',
-          subtitle: includePlanned ? '当前＋本月预计' : '当前信用与分期义务',
+          subtitle: includePlanned ? '含本月预计' : '承诺余额',
           value: (currentCommitted + plannedDelta)
               .clamp(0.0, double.infinity)
               .toDouble(),
@@ -489,12 +666,16 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
     }
   }
 
-  double _cashDelta(FinanceTransaction transaction) {
-    final source = _account(transaction.accountId);
+  double _cashDelta(
+    FinanceTransaction transaction,
+    FinanceRepository currentRepo,
+    Map<String, Account> accountsById,
+  ) {
+    final source = accountsById[transaction.accountId];
     final target = transaction.toAccountId == null
         ? null
-        : _account(transaction.toAccountId!);
-    final amount = repository.transactionAmountInBase(transaction);
+        : accountsById[transaction.toAccountId!];
+    final amount = currentRepo.transactionAmountInBase(transaction);
     switch (transaction.type) {
       case TransactionType.income:
         return source?.reportGroup == ReportGroup.cash ? amount : 0;
@@ -506,18 +687,22 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
         var delta = 0.0;
         if (source?.reportGroup == ReportGroup.cash) delta -= amount;
         if (target?.reportGroup == ReportGroup.cash) {
-          delta += repository.transferIncomingAmountInBase(transaction);
+          delta += currentRepo.transferIncomingAmountInBase(transaction);
         }
         return delta;
     }
   }
 
-  double _creditDebtDelta(FinanceTransaction transaction) {
-    final source = _account(transaction.accountId);
+  double _creditDebtDelta(
+    FinanceTransaction transaction,
+    FinanceRepository currentRepo,
+    Map<String, Account> accountsById,
+  ) {
+    final source = accountsById[transaction.accountId];
     final target = transaction.toAccountId == null
         ? null
-        : _account(transaction.toAccountId!);
-    final amount = repository.transactionAmountInBase(transaction);
+        : accountsById[transaction.toAccountId!];
+    final amount = currentRepo.transactionAmountInBase(transaction);
     var delta = 0.0;
     if (source?.reportGroup == ReportGroup.credit) {
       switch (transaction.type) {
@@ -531,17 +716,159 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
     }
     if (transaction.type == TransactionType.transfer &&
         target?.reportGroup == ReportGroup.credit) {
-      delta -= repository.transferIncomingAmountInBase(transaction);
+      delta -= currentRepo.transferIncomingAmountInBase(transaction);
     }
     return delta;
   }
 
-  Account? _account(String id) {
-    for (final account in repository.accounts) {
-      if (account.id == id) return account;
+  List<_MobileLedgerEntry> _buildMobileEntries(
+    List<FinanceTransaction> transactions, {
+    required FinanceRepository currentRepo,
+  }) {
+    final entries = <_MobileLedgerEntry>[];
+    final baseCurrency = currentRepo.baseCurrency;
+    var index = 0;
+    while (index < transactions.length) {
+      final date = DateUtils.dateOnly(transactions[index].transactionDate);
+      var dayIncome = 0.0;
+      var dayExpense = 0.0;
+      var probe = index;
+      while (probe < transactions.length &&
+          DateUtils.dateOnly(transactions[probe].transactionDate) == date) {
+        final row = transactions[probe];
+        final baseAmount = currentRepo.transactionAmountInBase(row);
+        if (row.type == TransactionType.income) {
+          dayIncome += baseAmount;
+        } else if (row.type == TransactionType.expense) {
+          dayExpense += baseAmount;
+        }
+        probe++;
+      }
+      final dayCount = probe - index;
+      final summaryParts = <String>[
+        if (dayIncome > 0)
+          '收 +${compassMoney(dayIncome, currency: baseCurrency, decimals: 0)}',
+        if (dayExpense > 0)
+          '支 ${compassMoney(dayExpense, currency: baseCurrency, decimals: 0)}',
+      ];
+      entries.add(
+        _MobileLedgerEntry.dayHeader(
+          dateLabel: '${date.month}月${date.day}日',
+          daySummary:
+              summaryParts.isEmpty ? '$dayCount 笔' : summaryParts.join(' · '),
+        ),
+      );
+      for (var i = index; i < probe; i++) {
+        entries.add(
+          _MobileLedgerEntry.row(
+            transaction: transactions[i],
+            showDivider: true,
+          ),
+        );
+      }
+      index = probe;
     }
-    return null;
+    return entries;
   }
+
+  Widget _mobileDayHeader(
+    BuildContext context,
+    FinanceThemePalette palette,
+    String dateLabel,
+    String daySummary,
+  ) =>
+      Padding(
+        padding: const EdgeInsets.fromLTRB(2, 10, 2, 5),
+        child: Row(
+          children: [
+            Text(
+              dateLabel,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: palette.textPrimary,
+                  ),
+            ),
+            const Spacer(),
+            Text(
+              daySummary,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    fontSize: 11,
+                    fontFeatures: compassTabularFigures,
+                  ),
+            ),
+          ],
+        ),
+      );
+
+  Widget _desktopVirtualItem(
+    BuildContext context,
+    List<FinanceTransaction> visible,
+    int tableIndex,
+    FinanceThemePalette palette,
+  ) {
+    final borderSide = BorderSide(
+      color: palette.border,
+      width: palette.monochrome ? 1.0 : .8,
+    );
+    if (tableIndex == 0) {
+      return DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
+          border: Border(top: borderSide, left: borderSide, right: borderSide),
+        ),
+        child: const _DesktopLedgerHeader(),
+      );
+    }
+    final rowIndex = tableIndex - 1;
+    final isLast = rowIndex == visible.length - 1;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: palette.resolvedCardSurface,
+        borderRadius: isLast
+            ? const BorderRadius.vertical(bottom: Radius.circular(14))
+            : BorderRadius.zero,
+        border: Border(
+          left: borderSide,
+          right: borderSide,
+          bottom: isLast ? borderSide : BorderSide.none,
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _buildTransactionRow(context, visible[rowIndex], desktop: true),
+          if (!isLast) const Divider(height: 1),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTransactionRow(
+    BuildContext context,
+    FinanceTransaction item, {
+    required bool desktop,
+  }) =>
+      _TransactionRow(
+        item: item,
+        repository: repository,
+        desktop: desktop,
+        selected: selectedTransactionIds.contains(item.id),
+        onLongPress: () => _toggleSelection(item.id),
+        onTap: () => isSelecting
+            ? _toggleSelection(item.id)
+            : _showTransactionEditor(
+                context,
+                draft: item,
+                editExisting: true,
+              ),
+        onAction: isSelecting
+            ? null
+            : (value) => _handleTransactionAction(
+                  context,
+                  value,
+                  item,
+                ),
+      );
 
   List<Widget> _transactionWidgets(
     BuildContext context,
@@ -549,45 +876,12 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
     required bool desktop,
   }) {
     final widgets = <Widget>[];
-    DateTime? activeDate;
-    for (final item in transactions) {
-      if (!desktop) {
-        final date = DateUtils.dateOnly(item.transactionDate);
-        if (activeDate != date) {
-          activeDate = date;
-          widgets.add(Padding(
-            padding: const EdgeInsets.fromLTRB(0, 8, 0, 5),
-            child: Text(
-              '${date.month}月${date.day}日',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ));
-        }
+    for (var index = 0; index < transactions.length; index++) {
+      final item = transactions[index];
+      widgets.add(_buildTransactionRow(context, item, desktop: desktop));
+      if (!desktop || index < transactions.length - 1) {
+        widgets.add(desktop ? const Divider(height: 1) : const Divider());
       }
-      widgets.add(
-        _TransactionRow(
-          item: item,
-          repository: repository,
-          desktop: desktop,
-          selected: selectedTransactionIds.contains(item.id),
-          onLongPress: () => _toggleSelection(item.id),
-          onTap: () => isSelecting
-              ? _toggleSelection(item.id)
-              : _showTransactionEditor(
-                  context,
-                  draft: item,
-                  editExisting: true,
-                ),
-          onAction: isSelecting
-              ? null
-              : (value) => _handleTransactionAction(
-                    context,
-                    value,
-                    item,
-                  ),
-        ),
-      );
-      widgets.add(desktop ? const Divider(height: 1) : const Divider());
     }
     return widgets;
   }
@@ -862,9 +1156,26 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
 
   void _changeMonth(int delta) {
     setState(() {
+      selectionMode = false;
       selectedTransactionIds.clear();
       monthOffset = (monthOffset + delta).clamp(-120, 120);
       if (monthOffset > 0) includePlanned = true;
+    });
+  }
+
+  void _resetToCurrentMonth() {
+    setState(() {
+      selectionMode = false;
+      selectedTransactionIds.clear();
+      monthOffset = 0;
+    });
+  }
+
+  void _resetFilters() {
+    setState(() {
+      selectionMode = false;
+      selectedTransactionIds.clear();
+      filters = const _TransactionFilters();
     });
   }
 
@@ -884,7 +1195,10 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
   }
 
   void _clearSelection() {
-    setState(selectedTransactionIds.clear);
+    setState(() {
+      selectionMode = false;
+      selectedTransactionIds.clear();
+    });
   }
 
   Future<void> _deleteSelected() async {
@@ -929,7 +1243,10 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
           .read(transactionMutationsProvider.notifier)
           .deleteTransactions(ids);
       if (!mounted) return;
-      setState(selectedTransactionIds.clear);
+      setState(() {
+        selectionMode = false;
+        selectedTransactionIds.clear();
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('已删除 ${ids.length} 笔交易')),
       );
@@ -971,11 +1288,13 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
                         Text('快速记账',
                             style: Theme.of(context).textTheme.titleLarge),
                         const Spacer(),
-                        const Icon(Icons.search_rounded),
-                        const SizedBox(width: 12),
-                        InkWell(
-                          onTap: () => Navigator.pop(dialogContext),
-                          child: const Icon(Icons.close_rounded),
+                        IconButton(
+                          visualDensity: VisualDensity.compact,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          tooltip: '关闭快速模板',
+                          onPressed: () => Navigator.pop(dialogContext),
+                          icon: const Icon(Icons.close_rounded),
                         ),
                       ],
                     ),
@@ -1042,8 +1361,8 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
                               ),
                             );
                           },
-                          icon: const Icon(Icons.grid_view_rounded),
-                          label: const Text('全部模板'),
+                          icon: const Icon(Icons.grid_view_rounded, size: 18),
+                          label: const Text('管理模板'),
                         ),
                         const Spacer(),
                         TextButton.icon(
@@ -1052,14 +1371,14 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
                             Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (_) => QuickTemplateManagerPage(
+                                builder: (_) => RecurringPlanPage(
                                   repository: repository,
                                 ),
                               ),
                             );
                           },
-                          icon: const Icon(Icons.settings_outlined),
-                          label: const Text('管理'),
+                          icon: const Icon(Icons.repeat_rounded, size: 18),
+                          label: const Text('周期计划'),
                         ),
                       ],
                     ),
@@ -1102,6 +1421,53 @@ class _HeaderAction extends StatelessWidget {
       );
 }
 
+class _TransactionsMonthData {
+  const _TransactionsMonthData({
+    required this.repository,
+    required this.month,
+    required this.monthOffset,
+    required this.includePlanned,
+    required this.filters,
+    required this.dayKey,
+    required this.accountsById,
+    required this.visible,
+    required this.fundingNeed,
+    required this.basisSummaries,
+    required this.mobileEntries,
+  });
+
+  final FinanceRepository repository;
+  final DateTime month;
+  final int monthOffset;
+  final bool includePlanned;
+  final _TransactionFilters filters;
+  final int dayKey;
+  final Map<String, Account> accountsById;
+  final List<FinanceTransaction> visible;
+  final MonthlyFundingNeed? fundingNeed;
+  final Map<_TransactionBasis, _BasisSummary> basisSummaries;
+  final List<_MobileLedgerEntry> mobileEntries;
+}
+
+class _MobileLedgerEntry {
+  const _MobileLedgerEntry.dayHeader({
+    required this.dateLabel,
+    required this.daySummary,
+  })  : transaction = null,
+        showDivider = false;
+
+  const _MobileLedgerEntry.row({
+    required FinanceTransaction this.transaction,
+    required this.showDivider,
+  })  : dateLabel = null,
+        daySummary = null;
+
+  final String? dateLabel;
+  final String? daySummary;
+  final FinanceTransaction? transaction;
+  final bool showDivider;
+}
+
 @immutable
 class _TransactionFilters {
   const _TransactionFilters({
@@ -1125,6 +1491,21 @@ class _TransactionFilters {
         (item.categoryId != null && categoryIds.contains(item.categoryId));
     return matchesAccount && matchesType && matchesCategory;
   }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is _TransactionFilters &&
+          setEquals(accountIds, other.accountIds) &&
+          setEquals(types, other.types) &&
+          setEquals(categoryIds, other.categoryIds);
+
+  @override
+  int get hashCode => Object.hash(
+        Object.hashAllUnordered(accountIds),
+        Object.hashAllUnordered(types),
+        Object.hashAllUnordered(categoryIds),
+      );
 }
 
 class _TransactionFilterSheet extends StatefulWidget {
@@ -1408,19 +1789,29 @@ class _BasisCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = financePaletteOf(context);
     final valueColor = summary.valueIsOutflow || summary.value < 0
-        ? financePaletteOf(context).expense
-        : financePaletteOf(context).seed;
-    return Material(
-      color: selected
-          ? financePaletteOf(context).seed.withValues(alpha: .12)
-          : financePaletteOf(context).surfaceAlt,
+        ? palette.expense
+        : (summary.title == '实际消费' && summary.value > 0
+            ? palette.income
+            : palette.textPrimary);
+    final glass = palette.glassHighlightColor != null;
+    final radius = BorderRadius.circular(14);
+    final card = Material(
+      color: glass
+          ? Colors.white.withValues(alpha: selected ? .74 : .40)
+          : (selected ? palette.resolvedCardSurface : palette.surfaceAlt),
+      elevation: selected && palette.monochrome ? 1.5 : 0,
+      shadowColor: palette.cardShadowColor,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: radius,
         side: BorderSide(
           color: selected
-              ? financePaletteOf(context).seed.withValues(alpha: .8)
-              : financePaletteOf(context).border,
+              ? (palette.monochrome
+                  ? palette.seed
+                  : palette.seed.withValues(alpha: glass ? .55 : .8))
+              : (glass ? Colors.white.withValues(alpha: .7) : palette.border),
+          width: selected && palette.monochrome ? 1.4 : 1.0,
         ),
       ),
       child: InkWell(
@@ -1440,9 +1831,7 @@ class _BasisCard extends StatelessWidget {
                   Icon(
                     summary.icon,
                     size: desktop || selected ? 18 : 16,
-                    color: selected
-                        ? financePaletteOf(context).seed
-                        : financePaletteOf(context).textMuted,
+                    color: selected ? palette.seed : palette.textMuted,
                   ),
                   const SizedBox(width: 5),
                   Expanded(
@@ -1470,7 +1859,8 @@ class _BasisCard extends StatelessWidget {
                   style: TextStyle(
                     color: valueColor,
                     fontSize: desktop || selected ? 23 : 15,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w700,
+                    fontFeatures: compassTabularFigures,
                     height: 1,
                   ),
                 ),
@@ -1483,7 +1873,7 @@ class _BasisCard extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         fontSize: desktop ? 12 : 9.5,
-                        color: financePaletteOf(context).textMuted,
+                        color: palette.textMuted,
                       ),
                 ),
               ] else
@@ -1492,6 +1882,12 @@ class _BasisCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+    return compassGlassHighlight(
+      color: palette.glassHighlightColor,
+      borderRadius: radius,
+      intensity: selected ? 1 : .45,
+      child: card,
     );
   }
 }
@@ -1510,7 +1906,12 @@ class _FlowLegend extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final text = Text(label, style: Theme.of(context).textTheme.bodySmall);
+    final text = Text(
+      label,
+      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            fontFeatures: compassTabularFigures,
+          ),
+    );
     return Row(
       mainAxisSize: compact ? MainAxisSize.min : MainAxisSize.max,
       children: [
@@ -1545,33 +1946,45 @@ class _StatusSwitch extends StatelessWidget {
   final ValueChanged<bool> onChanged;
 
   @override
-  Widget build(BuildContext context) => Container(
-        height: 34,
-        padding: const EdgeInsets.all(3),
-        decoration: BoxDecoration(
-          color: financePaletteOf(context).surfaceAlt,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: financePaletteOf(context).border),
+  Widget build(BuildContext context) {
+    final palette = financePaletteOf(context);
+    final glass = palette.glassHighlightColor != null;
+    final track = Container(
+      height: 34,
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        color: glass ? Colors.white.withValues(alpha: .46) : palette.surfaceAlt,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: glass ? Colors.white.withValues(alpha: .78) : palette.border,
         ),
-        child: Row(
-          children: [
-            Expanded(
-              child: _StatusButton(
-                label: '已发生',
-                selected: !includePlanned,
-                onTap: () => onChanged(false),
-              ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _StatusButton(
+              label: '已发生',
+              selected: !includePlanned,
+              onTap: () => onChanged(false),
             ),
-            Expanded(
-              child: _StatusButton(
-                label: '包含预计',
-                selected: includePlanned,
-                onTap: () => onChanged(true),
-              ),
+          ),
+          Expanded(
+            child: _StatusButton(
+              label: '包含预计',
+              selected: includePlanned,
+              onTap: () => onChanged(true),
             ),
-          ],
-        ),
-      );
+          ),
+        ],
+      ),
+    );
+    return compassGlassHighlight(
+      color: palette.glassHighlightColor,
+      borderRadius: BorderRadius.circular(18),
+      intensity: .5,
+      child: track,
+    );
+  }
 }
 
 class _StatusButton extends StatelessWidget {
@@ -1586,27 +1999,53 @@ class _StatusButton extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) => InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(15),
-        child: Container(
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: selected
-                ? financePaletteOf(context).seed.withValues(alpha: .18)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(15),
-          ),
-          child: Text(
-            label,
-            style: TextStyle(
-              color: selected ? financePaletteOf(context).seed : null,
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-            ),
+  Widget build(BuildContext context) {
+    final palette = financePaletteOf(context);
+    final glassLens = selected && palette.glassHighlightColor != null;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(15),
+      child: Container(
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: glassLens
+              ? null
+              : (selected
+                  ? palette.seed.withValues(alpha: .18)
+                  : Colors.transparent),
+          // Liquid Glass: raised white-ice lens like the dock's active pill.
+          gradient: glassLens
+              ? LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.white.withValues(alpha: .96),
+                    const Color(0xFFDDF0FF).withValues(alpha: .86),
+                  ],
+                )
+              : null,
+          borderRadius: BorderRadius.circular(15),
+          boxShadow: glassLens && !compassIsCpuSoftwareWeb
+              ? [
+                  BoxShadow(
+                    color: palette.seed.withValues(alpha: .16),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  ),
+                ]
+              : null,
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: selected ? palette.seed : null,
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
           ),
         ),
-      );
+      ),
+    );
+  }
 }
 
 class _QuickFilterPill extends StatelessWidget {
@@ -1769,14 +2208,19 @@ class _TransactionRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = financePaletteOf(context);
     final isExpense = item.type == TransactionType.expense;
     final isIncome = item.type == TransactionType.income;
+    final isTransfer = item.type == TransactionType.transfer;
     final signedAmount = isExpense ? -item.amount : item.amount;
     final showsDirectionalSign =
         isExpense || isIncome || item.type == TransactionType.adjustment;
-    final color = signedAmount < 0
-        ? financePaletteOf(context).expense
-        : financePaletteOf(context).seed;
+    final color = (isExpense || signedAmount < 0)
+        ? palette.expense
+        : (isIncome ||
+                (item.type == TransactionType.adjustment && signedAmount > 0))
+            ? palette.income
+            : palette.textPrimary;
     final categoryId = item.categoryId;
     final storedCategory = categoryId == null
         ? _typeName(item.type)
@@ -1784,41 +2228,42 @@ class _TransactionRow extends StatelessWidget {
     final category = desktop || categoryId == null
         ? storedCategory
         : _translatedCategory(storedCategory);
-    final title = item.merchant ??
-        item.description ??
-        (item.type == TransactionType.transfer ? '账户转账' : category);
+    final title =
+        item.merchant ?? item.description ?? (isTransfer ? '账户转账' : category);
     final storedAccountName = repository.accountName(item.accountId);
     final accountName = desktop
         ? storedAccountName
         : _translatedAccount(storedAccountName, item.accountId);
     final toAccountId = item.toAccountId;
-    final subtitle =
-        title == category ? accountName : '$accountName · $category';
+    final mobileAccountLabel = toAccountId == null
+        ? accountName
+        : '$accountName → ${repository.accountName(toAccountId)}';
+    final subtitle = title == category
+        ? mobileAccountLabel
+        : '$mobileAccountLabel · $category';
     final amount = Text(
       '${showsDirectionalSign && signedAmount > 0 ? '+ ' : ''}'
       '${compassMoney(signedAmount, currency: item.currency)}',
       style: TextStyle(
         color: color,
-        fontSize: desktop ? 14 : 12,
+        fontSize: desktop ? 14 : 13.5,
         fontWeight: FontWeight.w600,
-        fontFeatures: desktop ? const [FontFeature.tabularFigures()] : null,
+        fontFeatures: compassTabularFigures,
       ),
     );
     final planned = item.status == TransactionStatus.planned;
-    final plannedLabel = Text(
-      '预计',
-      style: TextStyle(
-        color: financePaletteOf(context).expense,
-        fontSize: desktop ? 12 : 9,
-      ),
-    );
+    final plannedLabel = desktop
+        ? Align(
+            alignment: Alignment.centerLeft,
+            child: CompassStatusBadge(label: '预计', color: palette.warning),
+          )
+        : CompassStatusBadge(label: '预计', color: palette.warning);
     final action = _rowAction(context);
     return InkWell(
       onTap: onTap,
       onLongPress: onLongPress,
       borderRadius: BorderRadius.circular(12),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 140),
+      child: Container(
         padding: desktop
             ? EdgeInsets.zero
             : const EdgeInsets.symmetric(horizontal: 8),
@@ -1872,7 +2317,13 @@ class _TransactionRow extends StatelessWidget {
                     ),
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [amount, if (planned) plannedLabel],
+                      children: [
+                        amount,
+                        if (planned) ...[
+                          const SizedBox(height: 3),
+                          plannedLabel,
+                        ],
+                      ],
                     ),
                     if (action != null) ...[
                       SizedBox(width: selected ? 7 : 2),

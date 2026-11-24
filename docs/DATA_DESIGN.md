@@ -1,5 +1,9 @@
 # 数据设计与迁移
 
+金额键盘以整数分接收输入，并在计算结束时将结果舍入为两位小数。确认后回填十进制文本，外层表单仍按原金额字段类型校验和保存。原字段直接确认且未编辑时沿用旧文本，数据库与备份格式继续使用既有金额表示。
+
+账号同步将完整 JSON v3 和修订号存入独立服务端 SQLite，客户端复用同样的业务数据模型。服务端账本与原生及静态 Web 本地账本分别存储。见 [迁移与数据并发](SYNC_HOSTING.md#数据与并发)。
+
 ## 平台存储边界
 
 `AppDatabase` 的 schema 与 JSON 格式在原生和 Web 保持一致，但物理保留位置不同：Android/Windows/macOS/Linux 使用应用私有 SQLite 文件；Web 使用 Drift WASM SQLite 的浏览器 OPFS/IndexedDB。Web 数据键为 `finance_compass.sqlite`，作用域是当前 origin 与浏览器 profile，而非 Docker 主机。自托管容器没有可备份的服务端账本卷；每个浏览器使用完整 JSON 导出进行可携备份和恢复。
@@ -148,9 +152,11 @@ flowchart TD
 
 完整导出格式为 v3，包含 `format_version`、`transaction_date_semantics=occurrence_date`、应用/schema 版本、账户（包括 v9 贷款条件）、分类、预算、交易、快照、模板、周期规则和可导出的 meta 设置。导入 v1/v2 时缺失字段使用 `NULL` 或安全默认值，并执行旧信用卡日期归一；v3 资料保留用户修改后的发生日期。旧 JSON 中的模板和规则会迁入新表。正式导入前自动导出当前 v3 恢复点。
 
-交互偏好继续使用 `app_meta`，不改变 schema：`currency_symbol_style` 为 `symbol` 或 `code`，`number_separator_style` 为 `comma_dot` 或 `space_comma`，`notifications_enabled` 保存全局应用内提醒状态，`notification_preferences_json` 保存受支持提醒的布尔列表。系统级推送尚未实现，因此这些键只影响应用内总览提示。
+交互偏好使用 `app_meta`，不改变客户端 schema。`currency_symbol_style` 为 `symbol` 或 `code`，`number_separator_style` 为 `comma_dot` 或 `space_comma`。`notifications_enabled` 与 `notification_preferences_json` 同时控制已同步的账本偏好和相应的应用内提醒；列表索引 0、1、6 分别控制信用卡还款、结算和到期当天通知。`loan_payment_push_enabled` 控制贷款推送，缺省启用。VAPID 密钥、设备订阅及去重记录分别存储于服务端 `push_vapid`、`push_subscriptions` 和 `push_deliveries`，独立于 JSON 账本。
 
 完整导入先拒绝 0 KB、损坏、未知格式版本或字段类型错误的 JSON，再校验账户、类别、预算、交易、快照、模板与周期规则 ID 的唯一性和引用完整性。验证通过后才在数据库事务中替换所有受管表，并在提交前执行 SQLite `quick_check` 与 `foreign_key_check`；任一步失败都会回滚，原 repository 快照继续有效。模板的 `sort_order` 和周期规则的 `is_active` 会随 JSON 往返保留。导入旧 JSON 时，涉及信用卡的交易会在写入阶段把 `transaction_date` 归一为 `record_date`，因此旧单笔结算日期不会重新进入账期计算。自动恢复点保存在应用文档目录，不会覆盖用户选取的源文件。
+
+手动导入会先检查旧分类的 `parent_id`。存在的 ID 原样保留。无法按 ID 定位时，只有备份中存在同类型、同名的唯一分类且不会成环，才会恢复为其 ID。其余情况必须通过导入预览确认，才能移除失效关系并保留该分类为顶层。分类 ID、交易和预算引用不变。预览和导入使用同一份文件字节。服务端同步数据仍按 ID 严格验证。
 
 ## 保留与回滚
 

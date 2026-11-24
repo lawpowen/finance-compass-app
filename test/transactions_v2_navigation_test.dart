@@ -145,7 +145,7 @@ void main() {
     expect(find.text('新增承诺 MYR 350'), findsOneWidget);
   });
 
-  testWidgets('calculation scope can include actual and planned together', (
+  testWidgets('actual and planned scope survives the desktop ledger layout', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(390, 844);
@@ -185,6 +185,7 @@ void main() {
         transactionDate: DateTime(now.year, now.month, 2),
         status: TransactionStatus.actual,
         merchant: '已发生消费',
+        description: '收据备注',
       ),
       FinanceTransaction(
         id: 'planned-expense',
@@ -226,6 +227,60 @@ void main() {
     expect(find.text('已发生消费'), findsOneWidget);
     expect(find.text('预计消费'), findsOneWidget);
     expect(find.text('支出 MYR 140'), findsOneWidget);
+    expect(find.text('金额'), findsNothing);
+    expect(find.text('搜索'), findsNothing);
+    expect(find.text('高级筛选'), findsNothing);
+
+    for (final width in [960.0, 1440.0]) {
+      tester.view.physicalSize = Size(width, 900);
+      await tester.pumpAndSettle();
+
+      final amountHeader = find.text('金额');
+      expect(amountHeader, findsOneWidget);
+      final amountEdge = tester.getTopRight(amountHeader).dx;
+      expect(tester.getTopRight(find.text('- MYR 100.00')).dx,
+          closeTo(amountEdge, 0.5));
+      expect(tester.getTopRight(find.text('- MYR 40.00')).dx,
+          closeTo(amountEdge, 0.5));
+      expect(find.text('收据备注'), findsOneWidget);
+      expect(find.text('支出 MYR 140'), findsOneWidget);
+      expect(find.text('收入 MYR 0'), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.text('支出 MYR 140')).dx -
+            tester.getTopRight(find.text('收入 MYR 0')).dx,
+        lessThan(48),
+      );
+      expect(
+        tester.getCenter(find.text('搜索')).dy,
+        closeTo(tester.getCenter(find.text('高级筛选')).dy, 0.5),
+      );
+      expect(tester.getCenter(find.text('快捷模板')).dy,
+          lessThan(tester.getCenter(amountHeader).dy));
+      expect(tester.getCenter(find.text('记账')).dy,
+          lessThan(tester.getCenter(amountHeader).dy));
+      expect(tester.takeException(), isNull);
+    }
+
+    await tester.tap(find.text('搜索'));
+    await tester.pumpAndSettle();
+    expect(find.byType(TextField), findsOneWidget);
+    await tester.tap(find.byIcon(Icons.arrow_back_rounded));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('高级筛选'));
+    await tester.pumpAndSettle();
+    expect(find.text('筛选交易'), findsOneWidget);
+    await _tapFilterKey(tester, 'transaction-filter-cancel');
+
+    await tester.longPress(find.text('已发生消费'));
+    await tester.pumpAndSettle();
+    expect(find.text('已选择 1 笔'), findsOneWidget);
+    await tester.tap(find.byTooltip('退出选择'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('预计消费'));
+    await tester.pumpAndSettle();
+    expect(find.text('编辑交易'), findsOneWidget);
   });
 
   testWidgets('future month is reachable and its transaction opens editor', (
@@ -342,7 +397,15 @@ void main() {
     expect(find.text('已知流出 MYR 1,556'), findsOneWidget);
     expect(find.text('尚未安排 MYR 0'), findsOneWidget);
     expect(find.byKey(const Key('monthly-funding-need-note')), findsOneWidget);
+    expect(find.textContaining('这个总额不会随下方筛选变化'), findsNothing);
+    await tester.tap(find.byTooltip('查看实际现金口径说明'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('这个总额不会随下方筛选变化'), findsOneWidget);
+    await tester.tap(find.text('知道了'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('这个总额不会随下方筛选变化'), findsNothing);
 
+    await tester.ensureVisible(find.text('未来保费'));
     await tester.tap(find.text('未来保费'));
     await tester.pumpAndSettle();
     expect(find.text('编辑交易'), findsOneWidget);

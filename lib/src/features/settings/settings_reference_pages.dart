@@ -12,6 +12,7 @@ import '../../core/providers/mutations/export_mutations.dart';
 import '../../core/providers/repository_provider.dart';
 import '../../core/services/ai_analysis_service.dart';
 import '../../core/settings/app_settings_controller.dart';
+import '../../core/settings/app_theme_style.dart';
 import '../../core/sync/ledger_sync.dart';
 import '../../core/sync/push_notifications.dart';
 import '../../core/theme/finance_colors.dart';
@@ -19,6 +20,7 @@ import '../../core/theme/finance_theme.dart';
 import '../../core/utils/month_range.dart';
 import '../categories/category_manage_screen.dart';
 import '../shared/compass_ui.dart';
+import '../shared/finance_donut.dart';
 import '../transactions/transaction_automation_pages.dart';
 import 'import_ledger_dialog.dart';
 import 'settings_screen.dart';
@@ -437,24 +439,31 @@ class _BackupRestorePageState extends ConsumerState<BackupRestorePage> {
             onPressed: _busy ? null : () => _createBackup(),
           ),
           const SizedBox(height: 26),
-          const CompassSectionLabel('自动保护'),
+          CompassHelpHeading(
+            title: const CompassSectionLabel('导入保护'),
+            label: '导入保护',
+            message:
+                kIsWeb ? '替换账本前，请下载当前账本的完整 JSON，以便恢复。' : '每次替换资料前，应用会先保留当前数据库。',
+          ),
           CompassSettingsRow(
             icon: Icons.verified_user_outlined,
             title: kIsWeb ? '导入前手动备份' : '导入前自动恢复点',
-            subtitle: kIsWeb ? '替换账本前，请下载当前完整 JSON' : '每次替换资料前，应用会先保留当前数据库',
           ),
           const SizedBox(height: 24),
-          const CompassSectionLabel('恢复与迁移'),
+          const CompassHelpHeading(
+            title: CompassSectionLabel('恢复与迁移'),
+            label: '恢复与迁移',
+            message: '恢复时先选择 JSON 并核对预览，确认后会替换当前资料。迁移时先导出完整 JSON，再到新设备导入。',
+          ),
           CompassSettingsRow(
             icon: Icons.file_open_outlined,
             title: '从备份恢复',
-            subtitle: '选择 JSON，预览后替换当前资料',
+            subtitle: '确认后替换当前资料',
             onTap: _busy ? null : _restoreBackup,
           ),
           CompassSettingsRow(
             icon: Icons.phone_android_outlined,
             title: '迁移到新设备',
-            subtitle: '导出完整 JSON，再在新设备导入',
             onTap: _busy ? null : _createBackup,
           ),
         ],
@@ -565,7 +574,11 @@ class _ImportExportPageState extends ConsumerState<ImportExportPage> {
             onTap: _busy ? null : _import,
           ),
           const SizedBox(height: 30),
-          const CompassSectionLabel('分析与规划'),
+          const CompassHelpHeading(
+            title: CompassSectionLabel('分析与规划'),
+            label: '分析与规划',
+            message: '分析摘要以 JSON 保存到所选位置。规划表可用表格应用打开。',
+          ),
           CompassSettingsRow(
             icon: Icons.query_stats_rounded,
             title: 'AI 分析摘要',
@@ -740,13 +753,17 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
     final endpoint = status?.endpoint;
     final publicKey = status?.publicKey;
     return [
-      const CompassSectionLabel('本设备的系统通知'),
+      const CompassHelpHeading(
+        title: CompassSectionLabel('本设备的系统通知'),
+        label: '系统通知',
+        message:
+            '系统通知按订阅设备的时区在上午 9:00 发送。iPhone 或 iPad 先把应用添加至主屏幕，再从主屏幕打开并启用通知。',
+      ),
       Text(
         _pushBusy
             ? '正在更新通知状态…'
             : switch (status) {
-                BrowserPushStatus(supported: false) =>
-                  '此浏览器不支持系统通知。iPhone 或 iPad 请把应用添加至主屏幕，再从主屏幕打开。',
+                BrowserPushStatus(supported: false) => '此浏览器不支持系统通知。',
                 BrowserPushStatus(permission: 'denied') =>
                   '浏览器已阻止通知。允许本站发送通知后，请刷新通知状态。',
                 BrowserPushStatus(enabled: true) => '系统通知已启用。',
@@ -802,40 +819,51 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
       title: '通知与提醒',
       children: [
         if (push != null) ..._devicePushControls(push),
-        SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          secondary: Icon(Icons.notifications_active_outlined,
-              color: financePaletteOf(context).seed),
-          title: const Text('账本提醒'),
-          subtitle: Text(push == null
-              ? '控制总览“需要关注”的提示。'
-              : '控制应用内提醒和定时系统通知。系统通知按订阅设备时区在上午 9:00 发送。'),
-          value: enabled,
-          onChanged:
-              canEdit ? (value) => setState(() => enabled = value) : null,
+        Row(
+          children: [
+            Expanded(
+              child: _NotificationToggle(
+                icon: Icons.notifications_active_outlined,
+                title: '账本提醒',
+                value: enabled,
+                onChanged:
+                    canEdit ? (value) => setState(() => enabled = value) : null,
+              ),
+            ),
+            CompassHelpButton(
+              title: '账本提醒',
+              message: push == null ? '控制总览“需要关注”的提示。' : '控制应用内提醒和定时系统通知。',
+            ),
+          ],
         ),
         const SizedBox(height: 16),
-        const CompassSectionLabel('信用卡'),
+        CompassHelpHeading(
+          title: const CompassSectionLabel('信用卡'),
+          label: '信用卡提醒',
+          message: push == null
+              ? '还款提醒在总览“需要关注”显示待还账单，结算提醒在结算后显示账单状态。'
+              : '还款提醒在未还账单到期前 3 天发送。结算提醒在信用卡设定的结算日发送，也可开启到期当天提醒。',
+        ),
         _NotificationToggle(
             icon: Icons.credit_card_rounded,
             title: '还款提醒',
-            subtitle:
-                push == null ? '在总览“需要关注”显示待还账单' : '未还账单到期前 3 天提醒，也可开启到期当天提醒',
             value: switches[0],
             onChanged: canEdit ? (v) => setState(() => switches[0] = v) : null),
         _NotificationToggle(
             icon: Icons.calendar_month_outlined,
             title: '账单结算提醒',
-            subtitle: push == null ? '结算后在总览显示账单状态' : '在信用卡设定的结算日发送提醒',
             value: switches[1],
             onChanged: canEdit ? (v) => setState(() => switches[1] = v) : null),
         if (push != null) ...[
           const SizedBox(height: 16),
-          const CompassSectionLabel('贷款与到期'),
+          const CompassHelpHeading(
+            title: CompassSectionLabel('贷款与到期'),
+            label: '贷款与到期提醒',
+            message: '贷款还款提醒在未还分期到期前 3 天发送。到期当天也可提醒缴付未还的信用卡账单和贷款分期。',
+          ),
           _NotificationToggle(
             icon: Icons.account_balance_outlined,
             title: '贷款还款提醒',
-            subtitle: '未还分期到期前 3 天提醒，也可开启到期当天提醒',
             value: _loanReminders,
             onChanged: canEdit
                 ? (value) => setState(() => _loanReminders = value)
@@ -844,17 +872,19 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
           _NotificationToggle(
             icon: Icons.notification_important_outlined,
             title: '到期当天提醒',
-            subtitle: '在还款日提醒立即缴付未还的信用卡账单和贷款分期',
             value: switches[6],
             onChanged: canEdit ? (v) => setState(() => switches[6] = v) : null,
           ),
         ],
         const SizedBox(height: 16),
-        const CompassSectionLabel('预算'),
+        const CompassHelpHeading(
+          title: CompassSectionLabel('预算'),
+          label: '预算提醒',
+          message: '预算临界时在总览“需要关注”显示预算状态。',
+        ),
         _NotificationToggle(
             icon: Icons.pie_chart_outline_rounded,
             title: '预算临界提醒',
-            subtitle: '在总览“需要关注”显示预算状态',
             value: switches[4],
             onChanged: canEdit ? (v) => setState(() => switches[4] = v) : null),
         const SizedBox(height: 12),
@@ -946,19 +976,13 @@ class _AiGatewayPageState extends State<AiGatewayPage> {
           const CompassSettingsRow(
               icon: Icons.description_outlined, title: '包含预计交易与预算', value: '是'),
           const SizedBox(height: 18),
-          const CompassSectionLabel('发送前检查'),
+          const CompassHelpHeading(
+            title: CompassSectionLabel('发送前检查'),
+            label: '分享隐私',
+            message: '选择分享对象后，摘要会发送给所选应用。可以先打开预览检查拟分享的财务资料。',
+          ),
           CompassSettingsRow(
               icon: Icons.search_rounded, title: '预览分析资料', onTap: _preview),
-          const CompassCard(
-            child: Row(
-              children: [
-                Icon(Icons.verified_user_outlined,
-                    color: FinanceColors.compassTeal),
-                SizedBox(width: 12),
-                Expanded(child: Text('只会在你选择分享后发送已预览的摘要。')),
-              ],
-            ),
-          ),
           const SizedBox(height: 14),
           CompassPrimaryButton(
               label: '选择外部 AI App',
@@ -1096,21 +1120,18 @@ class _NotificationToggle extends StatelessWidget {
   const _NotificationToggle({
     required this.icon,
     required this.title,
-    required this.subtitle,
     required this.value,
     required this.onChanged,
   });
   final IconData icon;
   final String title;
-  final String subtitle;
   final bool value;
   final ValueChanged<bool>? onChanged;
   @override
   Widget build(BuildContext context) => SwitchListTile(
         contentPadding: EdgeInsets.zero,
-        secondary: Icon(icon, color: FinanceColors.compassTeal),
+        secondary: Icon(icon, color: financePaletteOf(context).seed),
         title: Text(title),
-        subtitle: Text(subtitle),
         value: value,
         onChanged: onChanged,
       );
@@ -1140,4 +1161,428 @@ Future<String?> _saveBytes({
     allowedExtensions: [extension],
     bytes: bytes,
   );
+}
+
+class AppearancePage extends StatefulWidget {
+  const AppearancePage({super.key, required this.settingsController});
+
+  final AppSettingsController settingsController;
+
+  @override
+  State<AppearancePage> createState() => _AppearancePageState();
+}
+
+class _AppearancePageState extends State<AppearancePage> {
+  late AppThemeStyle _previewStyle;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _previewStyle = widget.settingsController.themeStyle;
+  }
+
+  Future<void> _applyTheme() async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    try {
+      await widget.settingsController.setThemeStyle(_previewStyle);
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('保存主题失败，请重试')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final appliedStyle = widget.settingsController.themeStyle;
+    final hasChange = _previewStyle != appliedStyle;
+    return Theme(
+      data: buildFinanceTheme(_previewStyle),
+      child: Builder(
+        builder: (themedContext) {
+          final palette = financePaletteOf(themedContext);
+          final textTheme = Theme.of(themedContext).textTheme;
+          final donutColors = financeDonutSeries(themedContext);
+          return Scaffold(
+            backgroundColor: Colors.transparent,
+            body: CompassBackground(
+              child: SafeArea(
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 720),
+                    child: ListView(
+                      padding: compassScrollPadding(
+                        themedContext,
+                        const EdgeInsets.fromLTRB(20, 12, 20, 28),
+                      ),
+                      children: [
+                        Row(
+                          children: [
+                            const CompassBackButton(),
+                            const Spacer(),
+                            Text('外观与主题', style: textTheme.titleLarge),
+                            const Spacer(),
+                            const SizedBox(width: 24),
+                          ],
+                        ),
+                        const SizedBox(height: 18),
+                        _AppearanceLivePreview(
+                          style: _previewStyle,
+                          palette: palette,
+                          donutColors: donutColors,
+                        ),
+                        const SizedBox(height: 20),
+                        CompassHelpHeading(
+                          title: const CompassSectionLabel('选择主题'),
+                          label: '主题预览',
+                          message: [
+                            '选择主题后可实时预览。点击应用主题才会保存到本机。',
+                            for (final style in AppThemeStyle.selectableStyles)
+                              '${style.label}：${style.description}',
+                          ].join('\n\n'),
+                        ),
+                        const SizedBox(height: 10),
+                        for (final style in AppThemeStyle.selectableStyles) ...[
+                          _ThemeOptionCard(
+                            style: style,
+                            previewSelected: _previewStyle == style,
+                            currentlyApplied: appliedStyle == style,
+                            onTap: _saving
+                                ? null
+                                : () => setState(() => _previewStyle = style),
+                          ),
+                          const SizedBox(height: 10),
+                        ],
+                        const SizedBox(height: 12),
+                        CompassPrimaryButton(
+                          label: _saving
+                              ? '正在应用...'
+                              : hasChange
+                                  ? '应用主题'
+                                  : '当前已应用',
+                          onPressed: hasChange && !_saving ? _applyTheme : null,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _AppearanceLivePreview extends StatelessWidget {
+  const _AppearanceLivePreview({
+    required this.style,
+    required this.palette,
+    required this.donutColors,
+  });
+
+  final AppThemeStyle style;
+  final FinanceThemePalette palette;
+  final List<Color> donutColors;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final actionColor = palette.resolvedPrimaryAction;
+    return CompassCard(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('效果预览 · ${style.label}', style: textTheme.bodySmall),
+                    const SizedBox(height: 4),
+                    Text(
+                      'MYR 28,450',
+                      style: TextStyle(
+                        color: palette.textPrimary,
+                        fontSize: 24,
+                        fontWeight: FontWeight.w700,
+                        fontFeatures: compassTabularFigures,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              compassGlassHighlight(
+                color: palette.glassHighlightColor,
+                borderRadius: BorderRadius.circular(12),
+                intensity: .55,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: palette.glassHighlightColor != null
+                        ? null
+                        : actionColor,
+                    gradient: palette.glassHighlightColor != null
+                        ? LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [const Color(0xFF1E8AE8), actionColor],
+                            stops: const [0.0, 0.5],
+                          )
+                        : null,
+                    boxShadow: palette.glassHighlightColor != null &&
+                            !compassIsCpuSoftwareWeb
+                        ? [
+                            BoxShadow(
+                              color: actionColor.withValues(alpha: .32),
+                              blurRadius: 14,
+                              spreadRadius: -3,
+                              offset: const Offset(0, 6),
+                            ),
+                          ]
+                        : null,
+                    borderRadius: BorderRadius.circular(
+                      palette.glassHighlightColor != null ? 12 : 10,
+                    ),
+                  ),
+                  child: Text(
+                    '记账',
+                    style: TextStyle(
+                      color: financeForegroundOn(actionColor),
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              CompassStatusBadge(label: '收入 + 6,200', color: palette.income),
+              CompassStatusBadge(label: '支出 - 1,840', color: palette.expense),
+              CompassStatusBadge(label: '预算 82%', color: palette.warning),
+            ],
+          ),
+          const SizedBox(height: 12),
+          CompassDualProgressBar(
+            actualRatio: 0.62,
+            plannedRatio: 0.16,
+            alertThreshold: 0.8,
+            height: 6,
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Text('图表与胶囊预览', style: textTheme.bodySmall),
+              const Spacer(),
+              for (final color in donutColors.take(4))
+                Container(
+                  width: 14,
+                  height: 14,
+                  margin: const EdgeInsets.only(left: 5),
+                  decoration: BoxDecoration(
+                    color: color,
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: palette.donutSeparatorColor ?? palette.surface,
+                      width: 1.5,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          if (palette.glassHighlightColor != null) ...[
+            const SizedBox(height: 12),
+            compassGlassHighlight(
+              color: palette.glassHighlightColor,
+              borderRadius: BorderRadius.circular(999),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Colors.white.withValues(alpha: .64),
+                      const Color(0xFFE6F4FF).withValues(alpha: .48),
+                      Colors.white.withValues(alpha: .58),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: .72),
+                  ),
+                ),
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                  child: Row(
+                    children: [
+                      for (final (index, icon) in const [
+                        Icons.account_balance_wallet_rounded,
+                        Icons.wallet_outlined,
+                        Icons.swap_horiz_rounded,
+                        Icons.pie_chart_outline_rounded,
+                        Icons.bar_chart_rounded,
+                        Icons.settings_outlined,
+                      ].indexed)
+                        Expanded(
+                          child: Center(
+                            child: Container(
+                              width: 28,
+                              height: 22,
+                              alignment: Alignment.center,
+                              decoration: index == 0
+                                  ? BoxDecoration(
+                                      gradient: LinearGradient(
+                                        begin: Alignment.topCenter,
+                                        end: Alignment.bottomCenter,
+                                        colors: [
+                                          Colors.white.withValues(alpha: .94),
+                                          const Color(0xFFD6EEFF)
+                                              .withValues(alpha: .78),
+                                        ],
+                                      ),
+                                      borderRadius: BorderRadius.circular(999),
+                                      border: Border.all(
+                                        color:
+                                            Colors.white.withValues(alpha: .90),
+                                      ),
+                                    )
+                                  : null,
+                              child: Icon(
+                                icon,
+                                size: 15,
+                                color: index == 0
+                                    ? palette.seed
+                                    : palette.textMuted,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ThemeOptionCard extends StatelessWidget {
+  const _ThemeOptionCard({
+    required this.style,
+    required this.previewSelected,
+    required this.currentlyApplied,
+    required this.onTap,
+  });
+
+  final AppThemeStyle style;
+  final bool previewSelected;
+  final bool currentlyApplied;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final optionPalette = paletteForStyle(style);
+    final activePalette = financePaletteOf(context);
+    final swatches = <Color>[
+      optionPalette.background,
+      optionPalette.seed,
+      optionPalette.resolvedPrimaryAction,
+      ...?optionPalette.donutColors?.take(2),
+    ];
+    final activeGlass = activePalette.glassHighlightColor != null;
+    return CompassCard(
+      padding: EdgeInsets.zero,
+      // Liquid Glass keeps option rows translucent (null => diagonal glass
+      // fill) and tints the previewed one with a frosted selection lens.
+      color: previewSelected
+          ? (activeGlass
+              ? (activePalette.selectedSurface ?? activePalette.surfaceAlt)
+                  .withValues(alpha: .78)
+              : activePalette.surfaceAlt)
+          : (activeGlass ? null : activePalette.resolvedCardSurface),
+      borderColor: previewSelected
+          ? activePalette.seed
+          : (activeGlass ? null : activePalette.border),
+      onTap: onTap,
+      child: Padding(
+        key: Key('theme-option-${style.name}'),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+        child: Row(
+          children: [
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (final swatch in swatches.take(4))
+                      Container(
+                        width: 13,
+                        height: 13,
+                        margin: const EdgeInsets.only(right: 4),
+                        decoration: BoxDecoration(
+                          color: swatch,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: activePalette.border),
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(
+                    style.label,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  if (currentlyApplied)
+                    CompassStatusBadge(
+                      label: '当前使用',
+                      color: activePalette.income,
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Icon(
+              previewSelected
+                  ? Icons.check_circle_rounded
+                  : Icons.radio_button_unchecked_rounded,
+              color: previewSelected
+                  ? activePalette.seed
+                  : activePalette.textMuted,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

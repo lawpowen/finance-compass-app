@@ -16,6 +16,8 @@ This project is already beyond a simple MVP skeleton. It includes local persiste
 
 ## Self-hosted Web / PWA
 
+For a hosted ledger shared across devices, use the separate [account and sync deployment](docs/SYNC_HOSTING.md). It can import a full JSON backup from v0.10.1. The static deployment below continues to support browser-local bookkeeping.
+
 `0.9.0+42` adds a self-hosted Web/PWA build for iPhone/iPad Safari, Android Chrome and desktop browsers. The server **only serves static application files**. Each browser keeps its own Drift WASM SQLite data in its local browser storage; there is no server database, login system, cloud backup or device-to-device sync. Export JSON regularly and before clearing browser/site data.
 
 The Docker deployment defaults to localhost-only. Put HTTPS and access control in your own reverse proxy before exposing it beyond the host. See [self-hosted Web/PWA guide](docs/SELF_HOSTING.md) for Ubuntu, Windows and macOS install scripts, PWA limits, backup and rollback.

@@ -18,8 +18,22 @@ class FinanceThemePalette {
     required this.gradient,
     required this.income,
     required this.expense,
+    this.warning = const Color(0xFFB45309),
+    this.primaryAction,
+    this.cardSurface,
+    this.cardBlurSigma = 0,
+    this.cardShadowColor,
+    this.dockBlurSigma = 10,
+    this.dockSurfaceAlpha = 0.86,
+    this.dockShadowColor,
+    this.donutColors,
+    this.donutSeparatorColor,
+    this.backgroundMiddle,
+    this.glassHighlightColor,
+    this.selectedSurface,
+    Color? accent,
     this.monochrome = false,
-  });
+  }) : accent = accent ?? seed;
 
   final Color seed;
   final Color background;
@@ -35,7 +49,75 @@ class FinanceThemePalette {
   final List<Color> gradient;
   final Color income;
   final Color expense;
+  final Color warning;
+  final Color? primaryAction;
+  final Color? cardSurface;
+  final double cardBlurSigma;
+  final Color? cardShadowColor;
+  final double dockBlurSigma;
+  final double dockSurfaceAlpha;
+  final Color? dockShadowColor;
+  final List<Color>? donutColors;
+  final Color? donutSeparatorColor;
+  final Color? backgroundMiddle;
+  final Color? glassHighlightColor;
+  final Color? selectedSurface;
+  final Color accent;
   final bool monochrome;
+
+  Color get resolvedPrimaryAction =>
+      primaryAction ?? (monochrome ? seed : expense);
+
+  Color get resolvedCardSurface =>
+      cardSurface ?? (monochrome ? surface : cardTint.withValues(alpha: .76));
+
+  List<Color> get backgroundGradientColors => [
+        backgroundTop,
+        backgroundMiddle ?? background,
+        backgroundBottom,
+      ];
+
+  FinanceThemePalette copyWith({
+    Color? backgroundMiddle,
+    Color? glassHighlightColor,
+    Color? selectedSurface,
+    Color? accent,
+  }) =>
+      FinanceThemePalette(
+        seed: seed,
+        background: background,
+        backgroundTop: backgroundTop,
+        backgroundBottom: backgroundBottom,
+        surface: surface,
+        surfaceAlt: surfaceAlt,
+        border: border,
+        cardTint: cardTint,
+        cardBorderStrong: cardBorderStrong,
+        textPrimary: textPrimary,
+        textMuted: textMuted,
+        gradient: gradient,
+        income: income,
+        expense: expense,
+        warning: warning,
+        primaryAction: primaryAction,
+        cardSurface: cardSurface,
+        cardBlurSigma: cardBlurSigma,
+        cardShadowColor: cardShadowColor,
+        dockBlurSigma: dockBlurSigma,
+        dockSurfaceAlpha: dockSurfaceAlpha,
+        dockShadowColor: dockShadowColor,
+        donutColors: donutColors,
+        donutSeparatorColor: donutSeparatorColor,
+        backgroundMiddle: backgroundMiddle ?? this.backgroundMiddle,
+        glassHighlightColor: glassHighlightColor ?? this.glassHighlightColor,
+        selectedSurface: selectedSurface ?? this.selectedSurface,
+        accent: accent ?? this.accent,
+        monochrome: monochrome,
+      );
+
+  // Keep each palette's surfaces and foregrounds together during a theme change.
+  FinanceThemePalette lerp(FinanceThemePalette other, double t) =>
+      t < .5 ? this : other;
 }
 
 @immutable
@@ -54,7 +136,8 @@ class FinanceThemeTokens extends ThemeExtension<FinanceThemeTokens> {
     double t,
   ) {
     if (other is! FinanceThemeTokens) return this;
-    return t < .5 ? this : other;
+    final resolved = palette.lerp(other.palette, t);
+    return identical(resolved, palette) ? this : other;
   }
 }
 
@@ -81,20 +164,107 @@ FinanceThemePalette paletteForStyle(AppThemeStyle style) {
     case AppThemeStyle.monochrome:
       return const FinanceThemePalette(
         seed: Color(0xFF151515),
-        background: Color(0xFFFAFAF8),
-        backgroundTop: Color(0xFFFAFAF8),
-        backgroundBottom: Color(0xFFFAFAF8),
+        background: Color(0xFFF7F7F4),
+        backgroundTop: Color(0xFFF9F9F6),
+        backgroundBottom: Color(0xFFF4F4F0),
         surface: Color(0xFFFFFFFF),
-        surfaceAlt: Color(0xFFECECEC),
-        border: Color(0xFFD5D5D5),
+        surfaceAlt: Color(0xFFEFEEEA),
+        border: Color(0xFFE0DFDA),
         cardTint: Color(0xFFFFFFFF),
-        cardBorderStrong: Color(0xFF969696),
-        textPrimary: Color(0xFF151515),
-        textMuted: Color(0xFF5A5A5A),
+        cardBorderStrong: Color(0xFFAEADA7),
+        textPrimary: Color(0xFF141413),
+        textMuted: Color(0xFF5A5A56),
         gradient: [Color(0xFFCDCDCD), Color(0xFFF3F3F3)],
-        income: Color(0xFF454545),
-        expense: Color(0xFF151515),
+        income: Color(0xFF1E6B47),
+        expense: Color(0xFFB83227),
+        warning: Color(0xFF94540F),
+        primaryAction: Color(0xFF151515),
+        cardSurface: Color(0xFFFFFFFF),
+        cardShadowColor: Color(0x0A000000),
+        dockSurfaceAlpha: 0.92,
+        dockShadowColor: Color(0x17000000),
+        donutColors: [
+          Color(0xFFDCDCDC),
+          Color(0xFFAAAAAA),
+          Color(0xFF777777),
+          Color(0xFF363636),
+        ],
+        donutSeparatorColor: Color(0xFFFFFFFF),
         monochrome: true,
+      );
+    case AppThemeStyle.dopamine:
+      const accent = Color(0xFFBCB3EF);
+      return const FinanceThemePalette(
+        seed: Color(0xFF156E66),
+        background: Color(0xFFFAF8F3),
+        backgroundTop: Color(0xFFFAF8F3),
+        backgroundBottom: Color(0xFFF2F7F5),
+        surface: Color(0xFFFFFFFF),
+        cardSurface: Color(0xFFFFFFFF),
+        surfaceAlt: Color(0xFFEEF8F5),
+        border: Color(0xFFD5E5E0),
+        cardTint: Color(0xFFF5F2FC),
+        cardBorderStrong: Color(0xFFA6C8BF),
+        selectedSurface: Color(0xFFEAE4FA),
+        textPrimary: Color(0xFF172C30),
+        textMuted: Color(0xFF4C6066),
+        gradient: [accent, Color(0xFFF5F2FC)],
+        primaryAction: Color(0xFFF4AD79),
+        income: Color(0xFF116B58),
+        expense: Color(0xFFC93B2B),
+        warning: Color(0xFF9A570C),
+        accent: accent,
+        donutColors: [
+          Color(0xFF63D4C0),
+          Color(0xFFF4AD79),
+          accent,
+          Color(0xFF78929A),
+          Color(0xFF4CA89A),
+        ],
+        donutSeparatorColor: Color(0xFFFFFFFF),
+        cardBlurSigma: 0,
+        cardShadowColor: Color(0x14172C30),
+        dockBlurSigma: 10,
+        dockSurfaceAlpha: 0.94,
+        dockShadowColor: Color(0x16172C30),
+      );
+    case AppThemeStyle.liquidGlass:
+      const accent = Color(0xFF28A4C4);
+      return const FinanceThemePalette(
+        seed: Color(0xFF0A5CA8),
+        background: Color(0xFFD5EAF8),
+        backgroundTop: Color(0xFFDDF0FC),
+        backgroundMiddle: Color(0xFFCDE3F7),
+        backgroundBottom: Color(0xFFD1EFE9),
+        surface: Color(0xFFF4FAFF),
+        cardSurface: Color(0x94FFFFFF),
+        surfaceAlt: Color(0xFFE0EFFA),
+        border: Color(0xFFA8CCE4),
+        cardTint: Color(0xFFE5F2FC),
+        cardBorderStrong: Color(0xFF83B1CF),
+        selectedSurface: Color(0xFFCDE6F8),
+        glassHighlightColor: Color(0xE6FFFFFF),
+        textPrimary: Color(0xFF0E2233),
+        textMuted: Color(0xFF334C5E),
+        gradient: [accent, Color(0xFFE5F2FC)],
+        primaryAction: Color(0xFF0B6BD3),
+        income: Color(0xFF0E644C),
+        expense: Color(0xFFAD2B2B),
+        warning: Color(0xFF8C4D08),
+        accent: accent,
+        donutColors: [
+          Color(0xFF0B6BD3),
+          accent,
+          Color(0xFF5D7CE2),
+          Color(0xFF3D6585),
+          Color(0xFF6BA7CC),
+        ],
+        donutSeparatorColor: Color(0xFFF4FAFF),
+        cardBlurSigma: 12,
+        cardShadowColor: Color(0x200B3D66),
+        dockBlurSigma: 20,
+        dockSurfaceAlpha: 0.58,
+        dockShadowColor: Color(0x2A0B3D66),
       );
     case AppThemeStyle.tide:
       return const FinanceThemePalette(
@@ -231,6 +401,7 @@ FinanceThemePalette paletteForStyle(AppThemeStyle style) {
         gradient: [Color(0x4D4A6FA5), Color(0x1A4A6FA5)],
         income: Color(0xFF7BC89A),
         expense: Color(0xFFE8AAAA),
+        warning: Color(0xFFE8A838),
       );
     case AppThemeStyle.abyss:
       return const FinanceThemePalette(
@@ -248,6 +419,7 @@ FinanceThemePalette paletteForStyle(AppThemeStyle style) {
         gradient: [Color(0x3058D4C4), Color(0x0658D4C4)],
         income: Color(0xFF58D4C4),
         expense: Color(0xFFFF7417),
+        warning: Color(0xFFE8A838),
       );
     case AppThemeStyle.graphite:
       return const FinanceThemePalette(
@@ -265,6 +437,7 @@ FinanceThemePalette paletteForStyle(AppThemeStyle style) {
         gradient: [Color(0x4D888888), Color(0x1A888888)],
         income: Color(0xFF7BC89A),
         expense: Color(0xFFE8AAAA),
+        warning: Color(0xFFE8A838),
       );
     case AppThemeStyle.darkGreen:
       return const FinanceThemePalette(
@@ -282,6 +455,7 @@ FinanceThemePalette paletteForStyle(AppThemeStyle style) {
         gradient: [Color(0x4D4A8B6E), Color(0x1A4A8B6E)],
         income: Color(0xFF7BC89A),
         expense: Color(0xFFE8AAAA),
+        warning: Color(0xFFE8A838),
       );
     case AppThemeStyle.darkWood:
       return const FinanceThemePalette(
@@ -299,6 +473,7 @@ FinanceThemePalette paletteForStyle(AppThemeStyle style) {
         gradient: [Color(0x4DA08060), Color(0x1AA08060)],
         income: Color(0xFF7BC89A),
         expense: Color(0xFFE8AAAA),
+        warning: Color(0xFFE8A838),
       );
   }
 }
@@ -339,6 +514,11 @@ ThemeData buildFinanceTheme(AppThemeStyle style, {Locale? locale}) {
     outline: palette.border,
     outlineVariant: palette.border.withValues(alpha: .6),
   );
+  // Liquid Glass chrome: near-opaque ice sheets (no blur over the modal
+  // barrier, so text stays crisp) framed by a white specular rim.
+  final glass = palette.glassHighlightColor != null;
+  final glassSheetSurface = palette.surface.withValues(alpha: .96);
+  final glassRim = BorderSide(color: Colors.white.withValues(alpha: .85));
 
   return ThemeData(
     useMaterial3: true,
@@ -422,17 +602,22 @@ ThemeData buildFinanceTheme(AppThemeStyle style, {Locale? locale}) {
       ),
     ),
     bottomSheetTheme: BottomSheetThemeData(
-      backgroundColor: palette.surface,
-      modalBackgroundColor: palette.surface,
+      backgroundColor: glass ? glassSheetSurface : palette.surface,
+      modalBackgroundColor: glass ? glassSheetSurface : palette.surface,
       surfaceTintColor: Colors.transparent,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      shape: RoundedRectangleBorder(
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        side: glass ? glassRim : BorderSide.none,
       ),
     ),
     dialogTheme: DialogThemeData(
-      backgroundColor: palette.surface,
+      backgroundColor: glass ? glassSheetSurface : palette.surface,
       surfaceTintColor: Colors.transparent,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+      shadowColor: glass ? palette.cardShadowColor : null,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(glass ? 26 : 22),
+        side: glass ? glassRim : BorderSide.none,
+      ),
     ),
     dividerTheme: DividerThemeData(
       color: palette.border.withValues(alpha: 0.5),
@@ -441,26 +626,33 @@ ThemeData buildFinanceTheme(AppThemeStyle style, {Locale? locale}) {
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      fillColor: palette.surfaceAlt.withValues(alpha: 0.6),
+      fillColor: glass
+          ? Colors.white.withValues(alpha: 0.62)
+          : palette.surfaceAlt.withValues(alpha: 0.6),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide(color: palette.border, width: 0.5),
+        borderSide: BorderSide(color: palette.border, width: glass ? .8 : 0.5),
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide(color: palette.border, width: 0.5),
+        borderSide: BorderSide(color: palette.border, width: glass ? .8 : 0.5),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide(color: palette.seed, width: 1.0),
+        borderSide: BorderSide(color: palette.seed, width: glass ? 1.4 : 1.0),
       ),
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
     ),
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
-        backgroundColor: palette.seed,
-        foregroundColor: colorScheme.onPrimary,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        backgroundColor: palette.resolvedPrimaryAction,
+        foregroundColor: financeForegroundOn(palette.resolvedPrimaryAction),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(glass ? 16 : 14),
+          side: glass
+              ? BorderSide(color: Colors.white.withValues(alpha: .38))
+              : BorderSide.none,
+        ),
         padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
         elevation: 0,
       ),

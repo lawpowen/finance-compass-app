@@ -5,6 +5,8 @@ import 'package:finance_app/src/features/accounts/account_form_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/amount_entry.dart';
+
 Account _card(double balance) => Account(
       id: 'card',
       name: 'Card',
@@ -23,9 +25,10 @@ const _balanceField = Key('credit-card-balance-field');
 /// Opens the form for [initial]; the returned getter reads the popped result.
 Future<Account? Function()> _openForm(
   WidgetTester tester,
-  Account initial,
-) async {
-  tester.view.physicalSize = const Size(390, 844);
+  Account initial, {
+  double width = 390,
+}) async {
+  tester.view.physicalSize = Size(width, 844);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
@@ -68,16 +71,24 @@ Future<void> _save(WidgetTester tester) async {
 void main() {
   testWidgets('credit card balance field is signed and explained',
       (tester) async {
-    await _openForm(tester, _card(-250));
+    await _openForm(tester, _card(-250), width: 320);
 
     expect(find.text('信用卡余额'), findsOneWidget);
-    expect(find.text('欠款填负数，溢缴款填正数'), findsOneWidget);
+    final guidance = find.text('欠款填负数，溢缴款填正数');
+    expect(guidance, findsNothing);
+    await tester.tap(find.byTooltip('查看信用卡余额说明'));
+    await tester.pumpAndSettle();
+    expect(guidance, findsOneWidget);
+    await tester.tap(find.text('知道了'));
+    await tester.pumpAndSettle();
+    expect(guidance, findsNothing);
     expect(find.text('当前欠款'), findsNothing);
     expect(
       tester.widget<TextFormField>(find.byKey(_balanceField)).controller!.text,
       '-250.00',
       reason: 'The stored signed balance is shown as-is, never flipped.',
     );
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('saving an untouched debt or overpayment keeps its sign',
@@ -94,12 +105,12 @@ void main() {
   testWidgets('edited debt stays negative and overpayment stays positive',
       (tester) async {
     var result = await _openForm(tester, _card(-250));
-    await tester.enterText(find.byKey(_balanceField), '-300.5');
+    await enterAmount(tester, find.byKey(_balanceField), '-300.5');
     await _save(tester);
     expect(result()!.currentBalance, -300.5);
 
     result = await _openForm(tester, _card(-250));
-    await tester.enterText(find.byKey(_balanceField), '45');
+    await enterAmount(tester, find.byKey(_balanceField), '45');
     await _save(tester);
     expect(result()!.currentBalance, 45);
     expect(tester.takeException(), isNull);
@@ -113,7 +124,9 @@ void main() {
         -300,
         scrollable: find.byType(Scrollable).first,
       );
-      await tester.enterText(find.byKey(_balanceField), input);
+      // Invalid restored/programmatic values must still fail form validation.
+      amountController(tester, find.byKey(_balanceField)).text = input;
+      await tester.pump();
       await _save(tester);
       await tester.scrollUntilVisible(
         find.byKey(_balanceField),

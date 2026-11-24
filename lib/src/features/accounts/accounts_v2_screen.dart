@@ -67,7 +67,14 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
     );
     final liabilities = creditLiability + loanLiability;
     final netAssets = totalAssets - liabilities + creditCardCredit;
+    final baseCurrency = repository.baseCurrency;
     final visibleAccounts = _accountsForGroup(repository, selectedGroup);
+    final goalSummaries = repository.assetGoalSummaries();
+    final featuredGoal =
+        goalSummaries.cast<AssetGoalProgressSummary?>().firstWhere(
+              (item) => item != null && !item.isReached,
+              orElse: () => goalSummaries.isEmpty ? null : goalSummaries.last,
+            );
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -137,12 +144,13 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
             fit: BoxFit.scaleDown,
             alignment: AlignmentDirectional.centerStart,
             child: Text(
-              compassMoney(netAssets),
+              compassMoney(netAssets, currency: baseCurrency),
               style: TextStyle(
-                color: palette.seed,
+                color: netAssets < 0 ? palette.expense : palette.textPrimary,
                 fontSize: 34,
-                fontWeight: FontWeight.w600,
-                letterSpacing: .5,
+                fontWeight: FontWeight.w700,
+                letterSpacing: .2,
+                fontFeatures: compassTabularFigures,
               ),
             ),
           ),
@@ -151,7 +159,11 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
-                child: _AmountSummary(label: '总资产', value: totalAssets),
+                child: _AmountSummary(
+                  label: '总资产',
+                  value: totalAssets,
+                  currency: baseCurrency,
+                ),
               ),
               Container(
                 width: 1,
@@ -163,11 +175,24 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _AmountSummary(label: '负债', value: liabilities),
+                    _AmountSummary(
+                      label: '负债',
+                      value: liabilities,
+                      currency: baseCurrency,
+                      valueColor: liabilities > 0 ? palette.expense : null,
+                    ),
                     const SizedBox(height: 12),
-                    _BreakdownLine(label: '信用卡', value: creditLiability),
+                    _BreakdownLine(
+                      label: '信用卡',
+                      value: creditLiability,
+                      currency: baseCurrency,
+                    ),
                     const SizedBox(height: 5),
-                    _BreakdownLine(label: '贷款', value: loanLiability),
+                    _BreakdownLine(
+                      label: '贷款',
+                      value: loanLiability,
+                      currency: baseCurrency,
+                    ),
                   ],
                 ),
               ),
@@ -178,7 +203,9 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
             _BreakdownLine(
               label: '信用卡溢缴款',
               value: creditCardCredit,
+              currency: baseCurrency,
               decimals: 2,
+              valueColor: palette.income,
             ),
           ],
         ];
@@ -198,8 +225,46 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('资产目标', style: textTheme.titleMedium),
-                    if (repository.assetGoals.isNotEmpty)
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text('资产目标', style: textTheme.titleMedium),
+                        ),
+                        if (featuredGoal != null)
+                          Text(
+                            featuredGoal.isReached
+                                ? '已达成'
+                                : '${(featuredGoal.progressRatio * 100).clamp(0, 100).round()}%',
+                            style: TextStyle(
+                              color: featuredGoal.isReached
+                                  ? palette.income
+                                  : palette.textMuted,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              fontFeatures: compassTabularFigures,
+                            ),
+                          ),
+                      ],
+                    ),
+                    if (featuredGoal != null) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        '${featuredGoal.goal.name} · 目标 ${compassMoney(featuredGoal.goal.targetAmount, currency: baseCurrency, decimals: 0)}'
+                        '${repository.assetGoals.length > 1 ? '（共 ${repository.assetGoals.length} 个）' : ''}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: textTheme.bodySmall,
+                      ),
+                      const SizedBox(height: 6),
+                      CompassDualProgressBar(
+                        actualRatio: featuredGoal.progressRatio.clamp(0.0, 1.0),
+                        alertThreshold: 1.0,
+                        height: 5,
+                        actualColor: featuredGoal.isReached
+                            ? palette.income
+                            : palette.seed,
+                      ),
+                    ] else if (repository.assetGoals.isNotEmpty)
                       Text(
                         '${repository.assetGoals.length} 个目标',
                         style: textTheme.bodySmall,
@@ -207,6 +272,7 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
                   ],
                 ),
               ),
+              const SizedBox(width: 4),
               const Icon(Icons.chevron_right_rounded),
             ],
           ),
@@ -220,7 +286,12 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
           (label: '退休', value: retirement, color: assetColors[1]),
         ];
         final allocation = [
-          const CompassSectionTitle('资产分布'),
+          CompassHelpHeading(
+            title: Text('资产分布',
+                style: textTheme.titleMedium?.copyWith(fontSize: 17)),
+            label: '资产分布',
+            message: '外币余额按账本设置的汇率换算为 $baseCurrency，再计入资产汇总。账户仍以原币记账。',
+          ),
           const SizedBox(height: 9),
           if (desktop)
             for (final group in assetGroups)
@@ -228,6 +299,7 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
                 label: group.label,
                 value: group.value,
                 total: totalAssets,
+                currency: baseCurrency,
                 color: group.color,
                 desktop: true,
               )
@@ -253,6 +325,7 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
                       label: group.label,
                       value: group.value,
                       total: totalAssets,
+                      currency: baseCurrency,
                       color: group.color,
                     ),
                   ),
@@ -304,21 +377,66 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
-                  color: palette.expense.withValues(alpha: .14),
+                  color: palette.expense.withValues(alpha: .12),
                   borderRadius: BorderRadius.circular(16),
                 ),
-                child: Text(
-                  '历史统计 · 截至 ${selectedCutoffMonth.year}年${selectedCutoffMonth.month}月末',
-                  style: TextStyle(
-                    color: palette.expense,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
+                child: Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 8,
+                  runSpacing: 4,
+                  children: [
+                    CompassHelpHeading(
+                      title: Text(
+                        '历史统计 · 截至 ${selectedCutoffMonth.year}年${selectedCutoffMonth.month}月末',
+                        style: TextStyle(
+                          color: palette.expense,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      label: '历史统计',
+                      message: '余额和负债统计截至所选月份末。进入账户详情后可查看当时的记录，返回本月即可继续编辑或记账。',
+                    ),
+                    InkWell(
+                      borderRadius: BorderRadius.circular(10),
+                      onTap: () {
+                        final current = DateTime.now();
+                        setState(() {
+                          selectedCutoffMonth =
+                              DateTime(current.year, current.month);
+                        });
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        child: Text(
+                          '返回本月',
+                          style: TextStyle(
+                            color: palette.seed,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
           ],
         ];
+        final groupTotal = switch (selectedGroup) {
+          0 => cash,
+          1 => creditLiability,
+          2 => loanLiability,
+          3 => investment,
+          _ => retirement,
+        };
+        final groupTotalLabel = switch (selectedGroup) {
+          1 => '负债总额  ${compassMoney(creditLiability, currency: baseCurrency)}',
+          2 => '待还总额  ${compassMoney(loanLiability, currency: baseCurrency)}',
+          _ => '合计  ${compassMoney(groupTotal, currency: baseCurrency)}',
+        };
         final accountList = [
           ...cutoffControls,
           const SizedBox(height: 14),
@@ -335,17 +453,20 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
                   style: textTheme.titleLarge,
                 ),
               ),
-              if (selectedGroup == 1)
-                Flexible(
-                  child: Text(
-                    '负债总额  ${compassMoney(creditLiability)}',
-                    textAlign: TextAlign.end,
-                    style: TextStyle(
-                      color: palette.expense,
-                      fontWeight: FontWeight.w600,
-                    ),
+              Flexible(
+                child: Text(
+                  groupTotalLabel,
+                  textAlign: TextAlign.end,
+                  style: TextStyle(
+                    color: selectedGroup == 1 ||
+                            (selectedGroup == 2 && loanLiability > 0)
+                        ? palette.expense
+                        : palette.textMuted,
+                    fontWeight: FontWeight.w600,
+                    fontFeatures: compassTabularFigures,
                   ),
                 ),
+              ),
             ],
           ),
           const SizedBox(height: 4),
@@ -672,10 +793,17 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
 }
 
 class _AmountSummary extends StatelessWidget {
-  const _AmountSummary({required this.label, required this.value});
+  const _AmountSummary({
+    required this.label,
+    required this.value,
+    required this.currency,
+    this.valueColor,
+  });
 
   final String label;
   final double value;
+  final String currency;
+  final Color? valueColor;
 
   @override
   Widget build(BuildContext context) => Column(
@@ -686,8 +814,13 @@ class _AmountSummary extends StatelessWidget {
           FittedBox(
             fit: BoxFit.scaleDown,
             child: Text(
-              compassMoney(value),
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w500),
+              compassMoney(value, currency: currency),
+              style: TextStyle(
+                color: valueColor,
+                fontSize: 20,
+                fontWeight: FontWeight.w600,
+                fontFeatures: compassTabularFigures,
+              ),
             ),
           ),
         ],
@@ -698,12 +831,16 @@ class _BreakdownLine extends StatelessWidget {
   const _BreakdownLine({
     required this.label,
     required this.value,
+    required this.currency,
     this.decimals = 0,
+    this.valueColor,
   });
 
   final String label;
   final double value;
+  final String currency;
   final int decimals;
+  final Color? valueColor;
 
   @override
   Widget build(BuildContext context) => Row(
@@ -712,9 +849,13 @@ class _BreakdownLine extends StatelessWidget {
           const SizedBox(width: 6),
           Expanded(
             child: Text(
-              compassMoney(value, decimals: decimals),
+              compassMoney(value, currency: currency, decimals: decimals),
               textAlign: TextAlign.end,
-              style: Theme.of(context).textTheme.bodySmall,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: valueColor,
+                    fontWeight: valueColor != null ? FontWeight.w600 : null,
+                    fontFeatures: compassTabularFigures,
+                  ),
             ),
           ),
         ],
@@ -726,6 +867,7 @@ class _AllocationMetric extends StatelessWidget {
     required this.label,
     required this.value,
     required this.total,
+    required this.currency,
     required this.color,
     this.desktop = false,
   });
@@ -733,14 +875,19 @@ class _AllocationMetric extends StatelessWidget {
   final String label;
   final double value;
   final double total;
+  final String currency;
   final Color color;
   final bool desktop;
 
   @override
   Widget build(BuildContext context) {
+    final palette = financePaletteOf(context);
     final share = '${total == 0 ? 0 : (value / total * 100).round()}%';
-    final amount = compassMoney(value);
-    final amountStyle = Theme.of(context).textTheme.bodySmall;
+    final amount = compassMoney(value, currency: currency);
+    final amountStyle = Theme.of(context).textTheme.bodySmall?.copyWith(
+          fontFeatures: compassTabularFigures,
+        );
+    final shareColor = palette.monochrome ? palette.textPrimary : color;
     if (desktop) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 5),
@@ -759,7 +906,13 @@ class _AllocationMetric extends StatelessWidget {
               child: FittedBox(
                 alignment: AlignmentDirectional.centerEnd,
                 fit: BoxFit.scaleDown,
-                child: Text(share, style: amountStyle?.copyWith(color: color)),
+                child: Text(
+                  share,
+                  style: amountStyle?.copyWith(
+                    color: shareColor,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ),
             ),
           ],
@@ -771,9 +924,10 @@ class _AllocationMetric extends StatelessWidget {
         Text(
           share,
           style: TextStyle(
-            color: color,
+            color: shareColor,
             fontSize: 18,
             fontWeight: FontWeight.w700,
+            fontFeatures: compassTabularFigures,
           ),
         ),
         const SizedBox(height: 4),
@@ -868,6 +1022,7 @@ class _AccountRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = financePaletteOf(context);
     final now = isHistorical ? cutoffDate : DateTime.now();
     final scopedTransactions = repository.transactions.where(
       (item) => !item.transactionDate.isAfter(cutoffDate),
@@ -878,6 +1033,12 @@ class _AccountRow extends StatelessWidget {
             cutoffDate: isHistorical ? cutoffDate : null,
           )
         : null;
+    final overpaid = account.accountType == AccountType.creditCard
+        ? repository.creditCardCreditBalance(
+            account.id,
+            cutoffDate: isHistorical ? cutoffDate : null,
+          )
+        : 0.0;
     final billing = account.accountType == AccountType.creditCard
         ? repository.creditCardBillingSummary(
             account.id,
@@ -899,15 +1060,46 @@ class _AccountRow extends StatelessWidget {
               committedOutstanding: creditDebt,
             ),
             billing,
-            financePaletteOf(context),
+            palette,
           );
-    final amount = creditDebt ??
-        repository
-            .accountBalanceAt(
-              account.id,
-              cutoffDate,
-            )
-            .abs();
+    final rawBalance = repository.accountBalanceAt(account.id, cutoffDate);
+    final amount = creditDebt ?? rawBalance.abs();
+    final isNegativeCash = account.accountType != AccountType.creditCard &&
+        account.accountType != AccountType.loan &&
+        rawBalance < 0;
+    final baseCurrency = repository.baseCurrency;
+    final foreignCurrency = account.currency.trim().toUpperCase() !=
+        baseCurrency.trim().toUpperCase();
+    final baseEquivalent = foreignCurrency
+        ? repository.convertToBase(
+            isNegativeCash ? -amount : amount,
+            account.currency,
+          )
+        : null;
+    final reconciledMonth = repository.reconciledMonthForAccount(account.id);
+    final isInvestmentGroup = account.reportGroup == ReportGroup.investment ||
+        account.reportGroup == ReportGroup.retirement;
+    double? investmentReturnRatio;
+    if (isInvestmentGroup) {
+      final snapshots =
+          repository.snapshotsForAccountUpTo(account.id, cutoffDate);
+      if (snapshots.isNotEmpty) {
+        final remainingCost = repository.remainingCostBasisForAccount(
+          account.id,
+          upToDate: cutoffDate,
+        );
+        if (remainingCost > 0) {
+          investmentReturnRatio = (rawBalance - remainingCost) / remainingCost;
+        }
+      }
+    }
+    final creditLimit = account.creditLimit;
+    final creditUtilization = creditDebt != null &&
+            creditLimit != null &&
+            creditLimit > 0 &&
+            creditDebt > 0
+        ? creditDebt / creditLimit
+        : null;
     final subtitle = billing == null
         ? [
             account.institution,
@@ -915,11 +1107,16 @@ class _AccountRow extends StatelessWidget {
                 account.hasCompleteLoanProfile)
               '${account.loanAnnualInterestRate!.toStringAsFixed(2)}% · ${account.loanTermMonths}期',
             account.currency,
+            if (reconciledMonth != null) '已对账 $reconciledMonth',
           ].whereType<String>().where((item) => item.isNotEmpty).join(' · ')
-        : billing.isEstimated
-            ? '当前为估算提醒'
-            : '结算日 ${account.statementDay}日 · 还款日 ${account.paymentDueDay}日';
+        : [
+            billing.isEstimated
+                ? '当前为估算提醒'
+                : '结算日 ${account.statementDay}日 · 还款日 ${account.paymentDueDay}日',
+            if (reconciledMonth != null) '已对账 $reconciledMonth',
+          ].join(' · ');
     return InkWell(
+      borderRadius: BorderRadius.circular(12),
       onTap: onTap,
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 13),
@@ -927,10 +1124,8 @@ class _AccountRow extends StatelessWidget {
           children: [
             CompassIconBadge(
               icon: _accountIcon(account.accountType),
-              color: account.accountType == AccountType.creditCard
-                  ? financePaletteOf(context).seed
-                  : financePaletteOf(context).seed,
-              size: 48,
+              color: palette.seed,
+              size: 46,
               outlined: true,
             ),
             const SizedBox(width: 12),
@@ -946,56 +1141,154 @@ class _AccountRow extends StatelessWidget {
                   ),
                   const SizedBox(height: 5),
                   Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
-                  if (billing != null) ...[
-                    const SizedBox(height: 6),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: cardDisplay!.color.withValues(alpha: .18),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        cardDisplay.statusLabel,
-                        style: TextStyle(
-                          color: cardDisplay.color,
-                          fontSize: 11,
-                        ),
-                      ),
+                  if (billing != null ||
+                      investmentReturnRatio != null ||
+                      creditUtilization != null)
+                    _AccountStatusExtras(
+                      cardDisplay: cardDisplay,
+                      overpaid: overpaid,
+                      currency: account.currency,
+                      investmentReturnRatio: investmentReturnRatio,
+                      creditUtilization: creditUtilization,
                     ),
-                  ],
                 ],
               ),
             ),
             const SizedBox(width: 8),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                if (billing != null)
-                  Text(
-                    '当前欠款',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                const SizedBox(height: 4),
-                Text(
-                  compassMoney(amount),
-                  style: TextStyle(
-                    color: cardDisplay != null
-                        ? cardDisplay.color
-                        : financePaletteOf(context).textPrimary,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
+            _AccountAmountColumn(
+              hasBilling: billing != null,
+              isNegativeCash: isNegativeCash,
+              amount: amount,
+              currency: account.currency,
+              amountColor: cardDisplay != null
+                  ? cardDisplay.color
+                  : (isNegativeCash ? palette.expense : palette.textPrimary),
+              baseEquivalent: baseEquivalent,
+              baseCurrency: baseCurrency,
             ),
             const SizedBox(width: 2),
-            const Icon(Icons.chevron_right_rounded, size: 25),
+            const Icon(Icons.chevron_right_rounded, size: 24),
           ],
         ),
       ),
     );
   }
+}
+
+class _AccountStatusExtras extends StatelessWidget {
+  const _AccountStatusExtras({
+    required this.cardDisplay,
+    required this.overpaid,
+    required this.currency,
+    required this.investmentReturnRatio,
+    required this.creditUtilization,
+  });
+
+  final _AccountCardDisplay? cardDisplay;
+  final double overpaid;
+  final String currency;
+  final double? investmentReturnRatio;
+  final double? creditUtilization;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = financePaletteOf(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (cardDisplay != null || investmentReturnRatio != null) ...[
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            children: [
+              if (cardDisplay case final display?)
+                CompassStatusBadge(
+                  label: display.statusLabel,
+                  color: display.color,
+                ),
+              if (overpaid > 0)
+                CompassStatusBadge(
+                  label: '溢缴 ${compassMoney(overpaid, currency: currency)}',
+                  color: palette.income,
+                ),
+              if (investmentReturnRatio case final rate?)
+                CompassStatusBadge(
+                  label:
+                      '${rate >= 0 ? '+' : ''}${(rate * 100).toStringAsFixed(1)}%',
+                  color: rate >= 0 ? palette.income : palette.expense,
+                ),
+            ],
+          ),
+        ],
+        if (creditUtilization case final ratio?) ...[
+          const SizedBox(height: 7),
+          CompassDualProgressBar(
+            actualRatio: ratio.clamp(0.0, 1.0),
+            alertThreshold: 0.75,
+            height: 4,
+          ),
+          const SizedBox(height: 3),
+          Text(
+            '额度已用 ${(ratio * 100).round()}%',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  fontSize: 10.5,
+                  fontFeatures: compassTabularFigures,
+                ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _AccountAmountColumn extends StatelessWidget {
+  const _AccountAmountColumn({
+    required this.hasBilling,
+    required this.isNegativeCash,
+    required this.amount,
+    required this.currency,
+    required this.amountColor,
+    required this.baseEquivalent,
+    required this.baseCurrency,
+  });
+
+  final bool hasBilling;
+  final bool isNegativeCash;
+  final double amount;
+  final String currency;
+  final Color amountColor;
+  final double? baseEquivalent;
+  final String baseCurrency;
+
+  @override
+  Widget build(BuildContext context) => Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          if (hasBilling)
+            Text('当前欠款', style: Theme.of(context).textTheme.bodySmall),
+          const SizedBox(height: 3),
+          Text(
+            '${isNegativeCash ? '- ' : ''}${compassMoney(amount, currency: currency)}',
+            style: TextStyle(
+              color: amountColor,
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              fontFeatures: compassTabularFigures,
+            ),
+          ),
+          if (baseEquivalent case final eq?) ...[
+            const SizedBox(height: 2),
+            Text(
+              '≈ ${compassMoney(eq, currency: baseCurrency)}',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    fontSize: 11,
+                    fontFeatures: compassTabularFigures,
+                  ),
+            ),
+          ],
+        ],
+      );
 }
 
 class _AccountCardDisplay {

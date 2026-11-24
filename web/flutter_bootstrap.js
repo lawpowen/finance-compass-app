@@ -10,14 +10,39 @@
 // Flutter bundles the UI font with the app. CanvasKit's last-resort fonts
 // must also remain same-origin for user-entered names outside its coverage.
 // tool/build_web.* verify these fallback assets against web/fonts/SHA256SUMS.
-// Android can lose the WebGL surface while Chrome or its installed app is
-// backgrounded. Use CanvasKit's software path so the page can keep its state.
-const isAndroid =
-  navigator.userAgentData?.platform === 'Android' ||
-  /\bAndroid\b/i.test(navigator.userAgent);
+// Use hardware WebGL rendering by default for smooth 60/120fps Liquid Glass
+// backdrop blur, while allowing `?cpu=1` opt-in to software rendering and
+// reloading if an idle mobile WebGL surface fails to restore on resume.
+const renderParams = new URLSearchParams(window.location.search);
+const forceCpuOnly = renderParams.has('cpu');
+let webglLostAt = 0;
+window.addEventListener(
+  'webglcontextlost',
+  (event) => {
+    event.preventDefault();
+    webglLostAt = Date.now();
+  },
+  true,
+);
+window.addEventListener(
+  'webglcontextrestored',
+  () => {
+    webglLostAt = 0;
+  },
+  true,
+);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && webglLostAt > 0) {
+    window.setTimeout(() => {
+      if (webglLostAt > 0 && document.visibilityState === 'visible') {
+        window.location.reload();
+      }
+    }, 900);
+  }
+});
 _flutter.loader.load({
   config: {
-    canvasKitForceCpuOnly: isAndroid,
+    canvasKitForceCpuOnly: forceCpuOnly,
     fontFallbackBaseUrl: 'fonts/',
   },
 });

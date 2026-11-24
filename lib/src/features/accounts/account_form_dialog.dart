@@ -284,7 +284,11 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                 ],
                 if (isCreditCard) ...[
                   const SizedBox(height: 16),
-                  const CompassSectionLabel('额度与余额'),
+                  const CompassHelpHeading(
+                    title: CompassSectionLabel('额度与余额'),
+                    label: '信用卡余额',
+                    message: '欠款填负数，溢缴款填正数',
+                  ),
                   _AccountEditorRow(
                     icon: Icons.credit_card_rounded,
                     label: '信用额度',
@@ -314,13 +318,6 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                       validator: _finiteNumberRequired,
                     ),
                   ),
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Text(
-                      '欠款填负数，溢缴款填正数',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ),
                   const SizedBox(height: 16),
                   const CompassSectionLabel('账单周期'),
                   _AccountEditorRow(
@@ -347,7 +344,11 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                   ),
                 ] else if (isLoan) ...[
                   const SizedBox(height: 16),
-                  const CompassSectionLabel('贷款条件'),
+                  const CompassHelpHeading(
+                    title: CompassSectionLabel('贷款条件'),
+                    label: '贷款条件',
+                    message: '设置金额、利率和年限后，系统会生成还款计划。开始记账余额填开始记账日的剩余贷款，首期从下月计算。',
+                  ),
                   _AccountEditorRow(
                     icon: Icons.request_quote_outlined,
                     label: '贷款金额',
@@ -479,11 +480,6 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                   _LoanPaymentPreview(
                     schedule: _previewLoanSchedule(),
                     currency: currency,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '填写开始日的剩余贷款。首期从下月计算。',
-                    style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ] else ...[
                   const SizedBox(height: 16),
@@ -949,7 +945,12 @@ class _LoanPreviewMetric extends StatelessWidget {
           FittedBox(
             fit: BoxFit.scaleDown,
             alignment: Alignment.centerLeft,
-            child: Text(value, style: Theme.of(context).textTheme.titleMedium),
+            child: Text(
+              value,
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontFeatures: compassTabularFigures,
+                  ),
+            ),
           ),
         ],
       );

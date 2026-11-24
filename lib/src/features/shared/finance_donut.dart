@@ -1,9 +1,12 @@
 import 'dart:math' as math;
+import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/theme/finance_theme.dart';
+import 'compass_ui.dart'
+    show CompassHelpHeading, compassGlassHighlight, compassIsCpuSoftwareWeb;
 
 @immutable
 class FinanceDonutSlice {
@@ -19,7 +22,11 @@ class FinanceDonutSlice {
 }
 
 List<Color> financeDonutSeries(BuildContext context) {
-  if (financePaletteOf(context).monochrome) {
+  final palette = financePaletteOf(context);
+  if (palette.donutColors case final custom?) {
+    return custom;
+  }
+  if (palette.monochrome) {
     return const [
       Color(0xffdcdcdc),
       Color(0xffaaaaaa),
@@ -51,6 +58,7 @@ class FinanceDonutPanel extends StatelessWidget {
     required this.slices,
     this.footer,
     this.formatLegendAmount,
+    this.titleHelp,
   });
 
   final String title;
@@ -59,29 +67,32 @@ class FinanceDonutPanel extends StatelessWidget {
   final List<FinanceDonutSlice> slices;
   final Widget? footer;
   final String Function(double)? formatLegendAmount;
+  final String? titleHelp;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final palette = financePaletteOf(context);
     final mono = palette.monochrome;
+    final themedPanel = mono || palette.cardSurface != null;
     final dark = theme.brightness == Brightness.dark;
-    final surface = mono
-        ? palette.surface
-        : dark
-            ? const Color(0xff0b2731)
-            : Colors.white;
-    final border = mono
+    final surface = palette.cardSurface ??
+        (mono
+            ? palette.surface
+            : dark
+                ? const Color(0xff0b2731)
+                : Colors.white);
+    final border = themedPanel
         ? palette.border
         : dark
             ? const Color(0xff284852)
             : const Color(0xffccdfe0);
-    final text = mono
+    final text = themedPanel
         ? palette.textPrimary
         : dark
             ? const Color(0xfff0fafa)
             : const Color(0xff182e34);
-    final muted = mono
+    final muted = themedPanel
         ? palette.textMuted
         : dark
             ? const Color(0xffa7bfc4)
@@ -97,11 +108,57 @@ class FinanceDonutPanel extends StatelessWidget {
           (fraction: amounts[index] / total, color: slices[index].color),
     ];
 
-    return DecoratedBox(
+    final cardRadius = BorderRadius.circular(14);
+    final cpuSoftware = compassIsCpuSoftwareWeb;
+    final isLiquidGlass = palette.glassHighlightColor != null;
+    final usesBackdropBlur = !cpuSoftware && palette.cardBlurSigma > 0;
+    final panelShadows = [
+      if (palette.cardShadowColor case final shadow?)
+        BoxShadow(
+          color: shadow,
+          blurRadius: cpuSoftware ? 0 : (isLiquidGlass ? 18 : 10),
+          offset: Offset(0, cpuSoftware ? 1 : (isLiquidGlass ? 8 : 2)),
+        ),
+    ];
+    final heading = Semantics(
+      container: true,
+      header: true,
+      child: Text(
+        title,
+        style: theme.textTheme.titleMedium?.copyWith(
+          color: text,
+          fontSize: 16,
+          fontWeight: FontWeight.w600,
+          height: 1.4,
+        ),
+      ),
+    );
+    final panelBody = DecoratedBox(
       decoration: BoxDecoration(
-        color: surface,
-        border: Border.all(color: border),
-        borderRadius: BorderRadius.circular(14),
+        color: isLiquidGlass ? null : surface,
+        gradient: isLiquidGlass
+            ? LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: cpuSoftware
+                    ? [
+                        Colors.white.withValues(alpha: .84),
+                        surface.withValues(alpha: .78),
+                        const Color(0xFFEAF5FF).withValues(alpha: .82),
+                      ]
+                    : [
+                        Colors.white.withValues(alpha: .68),
+                        surface,
+                        const Color(0xFFEAF5FF).withValues(alpha: .56),
+                      ],
+              )
+            : null,
+        border: Border.all(
+          color: isLiquidGlass ? Colors.white.withValues(alpha: .62) : border,
+          width: isLiquidGlass ? 1.0 : 1.0,
+        ),
+        borderRadius: cardRadius,
+        boxShadow: usesBackdropBlur ? const [] : panelShadows,
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -114,53 +171,50 @@ class FinanceDonutPanel extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Semantics(
-                container: true,
-                header: true,
-                child: Text(
-                  title,
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    color: text,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    height: 1.4,
-                  ),
-                ),
-              ),
+              if (titleHelp case final message?)
+                CompassHelpHeading(
+                    title: heading, label: title, message: message)
+              else
+                heading,
               const SizedBox(height: 16),
               Center(
                 child: SizedBox.square(
                   dimension: 146,
-                  child: CustomPaint(
-                    painter: _DonutPainter(
-                      segments: segments,
-                      track: border,
-                      separator: mono ? surface : null,
-                    ),
-                    child: Center(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 29),
-                        child: FittedBox(
-                          fit: BoxFit.scaleDown,
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                totalLabel,
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: muted,
-                                  fontSize: 12,
-                                  height: 1.45,
+                  child: RepaintBoundary(
+                    child: CustomPaint(
+                      painter: _DonutPainter(
+                        segments: segments,
+                        track: border,
+                        separator: palette.donutSeparatorColor ??
+                            (mono ? surface : null),
+                      ),
+                      child: Center(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 29),
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  totalLabel,
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: muted,
+                                    fontSize: 12,
+                                    height: 1.45,
+                                  ),
                                 ),
-                              ),
-                              Text(
-                                totalValue,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w700,
-                                  fontFeatures: [FontFeature.tabularFigures()],
+                                Text(
+                                  totalValue,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                    fontFeatures: [
+                                      FontFeature.tabularFigures()
+                                    ],
+                                  ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ),
                       ),
@@ -229,6 +283,31 @@ class FinanceDonutPanel extends StatelessWidget {
         ),
       ),
     );
+    final highlightedPanel = compassGlassHighlight(
+      color: palette.glassHighlightColor,
+      borderRadius: cardRadius,
+      child: panelBody,
+    );
+    if (usesBackdropBlur) {
+      return DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: cardRadius,
+          boxShadow: panelShadows,
+        ),
+        child: ClipRRect(
+          borderRadius: cardRadius,
+          child: BackdropFilter(
+            filter: ImageFilter.blur(
+              sigmaX: palette.cardBlurSigma,
+              sigmaY: palette.cardBlurSigma,
+              tileMode: TileMode.clamp,
+            ),
+            child: highlightedPanel,
+          ),
+        ),
+      );
+    }
+    return highlightedPanel;
   }
 
   String _percent(double amount, double total) {
