@@ -53,27 +53,7 @@ class _BudgetsV2ScreenState extends ConsumerState<BudgetsV2Screen> {
     final daysInMonth =
         DateTime(selectedMonth.year, selectedMonth.month + 1, 0).day;
     final daysRemaining = isCurrentMonth ? (daysInMonth - now.day + 1) : null;
-    final allocation = FinanceDonutPanel(
-      title: '预算分配',
-      totalLabel: '已分配',
-      totalValue: compassMoney(
-        total,
-        currency: repository.baseCurrency,
-        decimals: 0,
-      ),
-      slices: _budgetAllocationSlices(context, rows),
-      formatLegendAmount: mono
-          ? (value) => compassMoney(value, decimals: 0, showCurrency: false)
-          : null,
-      footer: _BudgetUsageSummary(
-        actual: used,
-        planned: planned,
-        remaining: total + rollover - used - planned,
-        totalAvailable: total + rollover,
-        baseCurrency: repository.baseCurrency,
-        daysRemaining: daysRemaining,
-      ),
-    );
+    final remaining = total + rollover - used - planned;
     final monthControls = [
       IconButton(
         tooltip: '上个月',
@@ -108,6 +88,34 @@ class _BudgetsV2ScreenState extends ConsumerState<BudgetsV2Screen> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final desktop = constraints.maxWidth >= compassDesktopMinWidth;
+        final allocation = FinanceDonutPanel(
+          title: '预算分配',
+          totalLabel: '已分配',
+          totalValue: compassMoney(
+            total,
+            currency: repository.baseCurrency,
+            decimals: 0,
+          ),
+          slices: _budgetAllocationSlices(context, rows),
+          formatLegendAmount: desktop && mono
+              ? (value) => compassMoney(value, decimals: 0, showCurrency: false)
+              : null,
+          footer: desktop
+              ? _BudgetUsageSummary(
+                  actual: used,
+                  planned: planned,
+                  remaining: remaining,
+                  totalAvailable: total + rollover,
+                  baseCurrency: repository.baseCurrency,
+                  daysRemaining: daysRemaining,
+                )
+              : Text(
+                  '${remaining < 0 ? '超出' : '剩余'} '
+                  '${compassMoney(remaining.abs(), currency: repository.baseCurrency, decimals: 0)}',
+                  key: const Key('budget-mobile-total-remaining'),
+                  style: const TextStyle(fontFeatures: compassTabularFigures),
+                ),
+        );
         final details = [
           Row(
             children: [
@@ -119,27 +127,19 @@ class _BudgetsV2ScreenState extends ConsumerState<BudgetsV2Screen> {
                   child: Text('预算明细', style: textTheme.titleMedium),
                 ),
               ),
-              const SizedBox(width: 48),
-              if (!mono || desktop) ...[
-                const Expanded(
-                  flex: 2,
-                  child: _BudgetColumnLabel('占比'),
-                ),
+              if (desktop) const SizedBox(width: 48),
+              const Expanded(flex: 2, child: _BudgetColumnLabel('占比')),
+              if (desktop) ...[
                 Expanded(
-                  flex: desktop ? 5 : 3,
+                  flex: 5,
                   child: _BudgetSpendColumns(
-                    desktop: desktop,
-                    actual: _BudgetColumnLabel(
-                      desktop ? '实际支出' : '实际',
-                      alignment: desktop
-                          ? Alignment.centerRight
-                          : Alignment.centerLeft,
+                    actual: const _BudgetColumnLabel(
+                      '实际支出',
+                      alignment: Alignment.centerRight,
                     ),
-                    planned: _BudgetColumnLabel(
-                      desktop ? '预计支出' : '预计',
-                      alignment: desktop
-                          ? Alignment.centerRight
-                          : Alignment.centerLeft,
+                    planned: const _BudgetColumnLabel(
+                      '预计支出',
+                      alignment: Alignment.centerRight,
                     ),
                   ),
                 ),
@@ -147,15 +147,15 @@ class _BudgetsV2ScreenState extends ConsumerState<BudgetsV2Screen> {
                   flex: 2,
                   child: _BudgetColumnLabel('结转'),
                 ),
-                const Expanded(
-                  flex: 3,
-                  child: _BudgetColumnLabel(
-                    '剩余',
-                    alignment: Alignment.centerRight,
-                  ),
-                ),
-                const SizedBox(width: 20),
               ],
+              Expanded(
+                flex: desktop ? 3 : 4,
+                child: const _BudgetColumnLabel(
+                  '剩余',
+                  alignment: Alignment.centerRight,
+                ),
+              ),
+              const SizedBox(width: 20),
             ],
           ),
           const SizedBox(height: 8),
@@ -494,16 +494,22 @@ class _BudgetCategoryDetailPageState
                       ],
                     ),
                     const SizedBox(height: 10),
-                    _AmountLine(label: '基础预算', amount: row.budget),
+                    _AmountLine(
+                      label: '基础预算',
+                      amount: row.budget,
+                      currency: liveRepository.baseCurrency,
+                    ),
                     _AmountLine(
                       label: '上月结转',
                       amount: row.rollover,
+                      currency: liveRepository.baseCurrency,
                       positive: row.rollover >= 0,
                     ),
                     compassHairline,
                     _AmountLine(
                       label: '有效预算',
                       amount: effective,
+                      currency: liveRepository.baseCurrency,
                       emphasized: true,
                     ),
                   ],
@@ -683,6 +689,7 @@ class _BudgetEditorPageState extends State<BudgetEditorPage> {
   @override
   Widget build(BuildContext context) {
     final base = double.tryParse(amountController.text) ?? 0;
+    final currency = widget.repository.baseCurrency;
     final carried =
         (rollover ? widget.presentation?.rollover ?? 0 : 0).toDouble();
     final effective = base + carried;
@@ -716,14 +723,14 @@ class _BudgetEditorPageState extends State<BudgetEditorPage> {
                 child: Column(
                   children: [
                     Text(
-                      '${compassMoney(base, decimals: 0)}  +  结转 ${compassMoney(carried, decimals: 0)}',
+                      '${compassMoney(base, currency: currency, decimals: 0)}  +  结转 ${compassMoney(carried, currency: currency, decimals: 0)}',
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
                     const SizedBox(height: 14),
                     Text('有效预算', style: Theme.of(context).textTheme.bodySmall),
                     const SizedBox(height: 5),
                     Text(
-                      compassMoney(effective, decimals: 0),
+                      compassMoney(effective, currency: currency, decimals: 0),
                       style: TextStyle(
                         color: financePaletteOf(context).seed,
                         fontSize: 44,
@@ -742,6 +749,7 @@ class _BudgetEditorPageState extends State<BudgetEditorPage> {
                   actual: row.actual,
                   planned: row.planned,
                   remaining: effective - row.actual - row.planned,
+                  baseCurrency: currency,
                 ),
               ],
               const SizedBox(height: 26),
@@ -938,6 +946,7 @@ class _BudgetEditorPageState extends State<BudgetEditorPage> {
     required double base,
     required double carried,
   }) async {
+    final currency = widget.repository.baseCurrency;
     final actual = widget.presentation?.actual ?? 0;
     final planned = widget.presentation?.planned ?? 0;
     final projectedCarry = rollover ? base + carried - actual - planned : 0.0;
@@ -952,9 +961,9 @@ class _BudgetEditorPageState extends State<BudgetEditorPage> {
           message: '按当前实际与预计支出计算，月底前仍会随交易变化。',
         ),
         content: Text(
-          '基础预算：${compassMoney(base)}\n'
-          '预计结转：${compassMoney(projectedCarry)}\n'
-          '预计可用：${compassMoney(base + projectedCarry)}',
+          '基础预算：${compassMoney(base, currency: currency)}\n'
+          '预计结转：${compassMoney(projectedCarry, currency: currency)}\n'
+          '预计可用：${compassMoney(base + projectedCarry, currency: currency)}',
           style: const TextStyle(fontFeatures: compassTabularFigures),
         ),
         actions: [
@@ -1071,94 +1080,59 @@ class _BudgetRow extends StatelessWidget {
             : (row.actual > 0 || row.planned > 0
                 ? palette.income
                 : palette.textPrimary);
-    if (palette.monochrome && !desktop) {
-      String amount(double value) =>
-          compassMoney(value, decimals: 0, showCurrency: false);
+    if (!desktop) {
       final textTheme = Theme.of(context).textTheme;
+      final amount =
+          compassMoney(remaining.abs(), decimals: 0, showCurrency: false);
       return InkWell(
         onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Row(
             children: [
-              Row(
-                children: [
-                  CompassIconBadge(icon: row.icon, size: 36),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(row.name, style: textTheme.titleMedium),
-                        Text(
-                            '预算 ${amount(row.budget)} · ${share.toStringAsFixed(1)}%',
-                            style: textTheme.bodySmall),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 112),
-                    child: Text(
-                      '${remaining < 0 ? '超出' : '剩余'} ${amount(remaining.abs())}',
-                      textAlign: TextAlign.end,
-                      style: textTheme.titleSmall?.copyWith(
-                        color: remaining < 0
-                            ? palette.expense
-                            : (actualRatio + plannedRatio) >= threshold
-                                ? palette.warning
-                                : palette.textPrimary,
-                        fontFeatures: compassTabularFigures,
-                      ),
-                    ),
-                  ),
-                  const Icon(Icons.chevron_right_rounded, size: 20),
-                ],
-              ),
-              Padding(
-                padding: const EdgeInsets.only(left: 46, top: 8, right: 4),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+              Expanded(
+                flex: 6,
+                child: Row(
                   children: [
-                    CompassDualProgressBar(
-                      actualRatio: actualRatio,
-                      plannedRatio: plannedRatio,
-                      alertThreshold: threshold,
-                      height: 6,
-                    ),
-                    const SizedBox(height: 6),
-                    Wrap(
-                      spacing: 12,
-                      runSpacing: 4,
-                      children: [
-                        Text(
-                          '实际 ${amount(row.actual)}',
-                          style: textTheme.bodySmall?.copyWith(
-                            fontFeatures: compassTabularFigures,
-                          ),
-                        ),
-                        Text(
-                          '预计 ${amount(row.planned)}',
-                          style: textTheme.bodySmall?.copyWith(
-                            fontFeatures: compassTabularFigures,
-                          ),
-                        ),
-                        if (row.rollover != 0)
-                          Text(
-                            '结转 ${amount(row.rollover)}',
-                            style: textTheme.bodySmall?.copyWith(
-                              color: row.rollover > 0
-                                  ? palette.income
-                                  : palette.expense,
-                              fontFeatures: compassTabularFigures,
-                            ),
-                          ),
-                      ],
+                    CompassIconBadge(icon: row.icon, size: 36),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        row.name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: textTheme.titleSmall,
+                      ),
                     ),
                   ],
                 ),
               ),
+              Expanded(
+                flex: 2,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    '${share.toStringAsFixed(1)}%',
+                    style: const TextStyle(fontFeatures: compassTabularFigures),
+                  ),
+                ),
+              ),
+              Expanded(
+                flex: 4,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerRight,
+                  child: Text(
+                    remaining < 0 ? '超出 $amount' : amount,
+                    semanticsLabel: remaining >= 0 ? '剩余 $amount' : null,
+                    style: textTheme.titleSmall?.copyWith(
+                      color: remainingColor,
+                      fontFeatures: compassTabularFigures,
+                    ),
+                  ),
+                ),
+              ),
+              const Icon(Icons.chevron_right_rounded, size: 20),
             ],
           ),
         ),
@@ -1167,7 +1141,7 @@ class _BudgetRow extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       child: Padding(
-        padding: EdgeInsets.symmetric(vertical: desktop ? 12 : 18),
+        padding: const EdgeInsets.symmetric(vertical: 12),
         child: Row(
           children: [
             CompassIconBadge(icon: row.icon, size: 40),
@@ -1194,16 +1168,11 @@ class _BudgetRow extends StatelessWidget {
               ),
             ),
             Expanded(
-              flex: desktop ? 5 : 3,
+              flex: 5,
               child: _BudgetSpendColumns(
-                desktop: desktop,
-                actual: _BudgetSpendValue(
-                  value: row.actual,
-                  showMarker: !desktop,
-                ),
+                actual: _BudgetSpendValue(value: row.actual),
                 planned: _BudgetSpendValue(
                   value: row.planned,
-                  showMarker: !desktop,
                   planned: true,
                 ),
               ),
@@ -1228,7 +1197,6 @@ class _BudgetRow extends StatelessWidget {
             Expanded(
               flex: 3,
               child: _BudgetRemainingCell(
-                desktop: desktop,
                 remaining: remaining,
                 remainingAmount: remainingAmount,
                 remainingColor: remainingColor,
@@ -1292,13 +1260,11 @@ class _BudgetCategorySummary extends StatelessWidget {
 
 class _BudgetRemainingCell extends StatelessWidget {
   const _BudgetRemainingCell({
-    required this.desktop,
     required this.remaining,
     required this.remainingAmount,
     required this.remainingColor,
   });
 
-  final bool desktop;
   final double remaining;
   final String remainingAmount;
   final Color remainingColor;
@@ -1314,8 +1280,7 @@ class _BudgetRemainingCell extends StatelessWidget {
           alignment: Alignment.centerRight,
           child: Text(
             remainingAmount,
-            semanticsLabel:
-                desktop && remaining >= 0 ? '剩余 $remainingAmount' : null,
+            semanticsLabel: remaining >= 0 ? '剩余 $remainingAmount' : null,
             style: TextStyle(
               color: remainingColor,
               fontSize: 16,
@@ -1324,12 +1289,12 @@ class _BudgetRemainingCell extends StatelessWidget {
             ),
           ),
         ),
-        if (!desktop || remaining < 0)
+        if (remaining < 0)
           Text(
-            remaining < 0 ? '超出' : '剩余',
+            '超出',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: remaining < 0 ? palette.expense : null,
-                  fontWeight: remaining < 0 ? FontWeight.w600 : null,
+                  color: palette.expense,
+                  fontWeight: FontWeight.w600,
                 ),
           ),
       ],
@@ -1339,39 +1304,30 @@ class _BudgetRemainingCell extends StatelessWidget {
 
 class _BudgetSpendColumns extends StatelessWidget {
   const _BudgetSpendColumns({
-    required this.desktop,
     required this.actual,
     required this.planned,
   });
 
-  final bool desktop;
   final Widget actual;
   final Widget planned;
 
   @override
-  Widget build(BuildContext context) => desktop
-      ? Row(
-          children: [
-            Expanded(child: actual),
-            const SizedBox(width: 8),
-            Expanded(child: planned),
-          ],
-        )
-      : Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [actual, planned],
-        );
+  Widget build(BuildContext context) => Row(
+        children: [
+          Expanded(child: actual),
+          const SizedBox(width: 8),
+          Expanded(child: planned),
+        ],
+      );
 }
 
 class _BudgetSpendValue extends StatelessWidget {
   const _BudgetSpendValue({
     required this.value,
-    required this.showMarker,
     this.planned = false,
   });
 
   final double value;
-  final bool showMarker;
   final bool planned;
 
   @override
@@ -1382,25 +1338,13 @@ class _BudgetSpendValue extends StatelessWidget {
       excludeSemantics: true,
       child: FittedBox(
         fit: BoxFit.scaleDown,
-        alignment: showMarker ? Alignment.centerLeft : Alignment.centerRight,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (showMarker) ...[
-              _BudgetMarker(
-                color: financePaletteOf(context).expense,
-                outlined: planned,
-              ),
-              const SizedBox(width: 4),
-            ],
-            Text(
-              amount,
-              style: (planned && showMarker
-                      ? Theme.of(context).textTheme.bodySmall
-                      : Theme.of(context).textTheme.bodyMedium)
-                  ?.copyWith(fontFeatures: compassTabularFigures),
-            ),
-          ],
+        alignment: Alignment.centerRight,
+        child: Text(
+          amount,
+          style: Theme.of(context)
+              .textTheme
+              .bodyMedium
+              ?.copyWith(fontFeatures: compassTabularFigures),
         ),
       ),
     );
@@ -1427,7 +1371,7 @@ class _BudgetUsageSummary extends StatelessWidget {
     required this.planned,
     this.remaining,
     this.totalAvailable,
-    this.baseCurrency,
+    required this.baseCurrency,
     this.daysRemaining,
   });
 
@@ -1435,7 +1379,7 @@ class _BudgetUsageSummary extends StatelessWidget {
   final double planned;
   final double? remaining;
   final double? totalAvailable;
-  final String? baseCurrency;
+  final String baseCurrency;
   final int? daysRemaining;
 
   @override
@@ -1450,7 +1394,6 @@ class _BudgetUsageSummary extends StatelessWidget {
       if (remaining case final value?) '剩余 ${amount(value)}',
     ];
     final available = totalAvailable ?? 0;
-    final currency = baseCurrency ?? 'MYR';
     final usedTotal = actual + planned;
     final progressPct =
         available > 0 ? (usedTotal / available * 100).round() : null;
@@ -1460,12 +1403,12 @@ class _BudgetUsageSummary extends StatelessWidget {
     if (progressPct != null && rem != null) {
       if (rem < 0) {
         guidance =
-            '总进度 $progressPct% · 已超支 ${compassMoney(rem.abs(), currency: currency, decimals: 0)}';
+            '总进度 $progressPct% · 已超支 ${compassMoney(rem.abs(), currency: baseCurrency, decimals: 0)}';
         guidanceColor = palette.expense;
       } else if (daysRemaining != null && daysRemaining! > 0) {
         final daily = rem / daysRemaining!;
         guidance =
-            '总进度 $progressPct% · 剩 $daysRemaining 天 · 日均可用 ${compassMoney(daily, currency: currency, decimals: 0)}';
+            '总进度 $progressPct% · 剩 $daysRemaining 天 · 日均可用 ${compassMoney(daily, currency: baseCurrency, decimals: 0)}';
       } else {
         guidance = '总进度 $progressPct%';
       }
@@ -1501,33 +1444,17 @@ class _BudgetUsageSummary extends StatelessWidget {
   }
 }
 
-class _BudgetMarker extends StatelessWidget {
-  const _BudgetMarker({required this.color, required this.outlined});
-
-  final Color color;
-  final bool outlined;
-
-  @override
-  Widget build(BuildContext context) => Container(
-        width: 8,
-        height: 8,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: outlined ? null : color,
-          border: outlined ? Border.all(color: color) : null,
-        ),
-      );
-}
-
 class _AmountLine extends StatelessWidget {
   const _AmountLine({
     required this.label,
     required this.amount,
+    required this.currency,
     this.positive = false,
     this.emphasized = false,
   });
   final String label;
   final double amount;
+  final String currency;
   final bool positive;
   final bool emphasized;
 
@@ -1539,7 +1466,7 @@ class _AmountLine extends StatelessWidget {
             Text(label, style: Theme.of(context).textTheme.bodySmall),
             const Spacer(),
             Text(
-              '${positive ? '+ ' : emphasized ? '= ' : ''}${compassMoney(amount, decimals: 0)}',
+              '${positive ? '+ ' : emphasized ? '= ' : ''}${compassMoney(amount, currency: currency, decimals: 0)}',
               style: TextStyle(
                 color: positive || emphasized
                     ? financePaletteOf(context).seed

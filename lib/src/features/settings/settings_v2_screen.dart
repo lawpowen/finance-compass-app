@@ -18,7 +18,7 @@ const _financeCompassIssuesUrl =
     'https://github.com/lawpowen/finance-compass-app/issues';
 const _financeCompassSupportQrAsset =
     'assets/support/touch-n-go-support-qr.jpg';
-const _financeVersionDisplay = kIsWeb ? '0.10.1+45 · Web 21' : '0.10.1+45';
+const _financeVersionDisplay = kIsWeb ? '0.10.1+45 · Web 22' : '0.10.1+45';
 
 class SettingsV2Screen extends StatelessWidget {
   const SettingsV2Screen({
@@ -286,7 +286,10 @@ class SettingsV2Screen extends StatelessWidget {
       '类别、模板与周期规则' => FinanceRulesCenterPage(repository: repository),
       '备份、恢复与迁移' => BackupRestorePage(repository: repository),
       '导入与导出' => ImportExportPage(repository: repository),
-      '外观与主题' => AppearancePage(settingsController: settingsController),
+      '外观与主题' => AppearancePage(
+          settingsController: settingsController,
+          baseCurrency: repository.baseCurrency,
+        ),
       '通知与提醒' => NotificationsPage(repository: repository),
       '智能分析与网关' => AiGatewayPage(repository: repository),
       _ => Scaffold(

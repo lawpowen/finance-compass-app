@@ -23,6 +23,56 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('all report totals, expense ranks and chart labels use TWD',
+      (tester) async {
+    var repository = await _emptyRepository();
+    repository = await repository.updateExchangeRates(
+      const {'TWD': 1, 'MYR': 7},
+      const ['TWD', 'MYR'],
+    );
+    repository = await repository.addAccount(const Account(
+      id: 'cash',
+      name: '台币现金',
+      accountType: AccountType.cash,
+      reportGroup: ReportGroup.cash,
+      currency: 'TWD',
+      initialBalance: 1000,
+      currentBalance: 1000,
+    ));
+    repository = await _addExpenseCategories(repository, {'food': '伙食费'});
+    final now = DateTime.now();
+    final date = DateTime(now.year, now.month, 1);
+    repository = await repository.addTransactions([
+      FinanceTransaction(
+        id: 'twd-in',
+        type: TransactionType.income,
+        accountId: 'cash',
+        amount: 100,
+        currency: 'TWD',
+        transactionDate: date,
+      ),
+      FinanceTransaction(
+        id: 'twd-out',
+        type: TransactionType.expense,
+        accountId: 'cash',
+        categoryId: 'food',
+        amount: 245,
+        currency: 'TWD',
+        transactionDate: date,
+      ),
+    ]);
+
+    await _pumpReports(tester, repository);
+    expect(_text(tester, 'reports-cash-inflow'), 'TWD 100.00');
+    expect(_text(tester, 'reports-cash-outflow'), 'TWD 245.00');
+    expect(_text(tester, 'reports-cash-net'), '- TWD 145.00');
+    expect(_text(tester, 'reports-category-0-amount'), 'TWD 245.00');
+    expect(_text(tester, 'reports-category-total'), '已分类支出合计 TWD 245.00');
+    expect(find.textContaining(RegExp(r'月均净流入.*TWD')), findsOneWidget);
+    expect(find.textContaining('MYR'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('selected range drives net worth, cash flow and categories',
       (tester) async {
     final now = DateTime.now();

@@ -139,6 +139,12 @@ class _AssetSnapshotFormDialogState extends State<AssetSnapshotFormDialog> {
   @override
   Widget build(BuildContext context) {
     final investments = widget.repository.investmentAccounts();
+    final currency = investments
+            .where((account) => account.id == accountId)
+            .firstOrNull
+            ?.currency ??
+        widget.repository.baseCurrency;
+    String nativeAmount(double value) => formatMoney(value, currency: currency);
     return AlertDialog(
       title: Text(widget.initialSnapshot == null ? '更新市值' : '编辑市值记录'),
       content: SizedBox(
@@ -160,7 +166,7 @@ class _AssetSnapshotFormDialogState extends State<AssetSnapshotFormDialog> {
                       .map((account) => DropdownMenuItem(
                             value: account.id,
                             child: Text(
-                              account.name,
+                              '${account.name} · ${account.currency}',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -249,18 +255,18 @@ class _AssetSnapshotFormDialogState extends State<AssetSnapshotFormDialog> {
                           style: Theme.of(context).textTheme.titleSmall),
                       const SizedBox(height: 8),
                       if (_canEditInitialCostBasis)
-                        Text('累计成本基线: ${formatMoney(_manualCostBasis)}')
+                        Text('累计成本基线: ${nativeAmount(_manualCostBasis)}')
                       else ...[
                         Text(
-                            '累计投入: ${formatMoney(_totalFlowSummary.contribution)}'),
+                            '累计投入: ${nativeAmount(_totalFlowSummary.contribution)}'),
                         const SizedBox(height: 4),
                         Text(
-                            '累计取出: ${formatMoney(_totalFlowSummary.withdrawal)}'),
+                            '累计取出: ${nativeAmount(_totalFlowSummary.withdrawal)}'),
                         const SizedBox(height: 4),
                       ],
-                      Text('累计成本: ${formatMoney(_effectiveCostBasis)}'),
+                      Text('累计成本: ${nativeAmount(_effectiveCostBasis)}'),
                       const SizedBox(height: 4),
-                      Text('未实现盈亏: ${formatMoney(_unrealizedPnl)}'),
+                      Text('未实现盈亏: ${nativeAmount(_unrealizedPnl)}'),
                     ],
                   ),
                 ),

@@ -343,6 +343,7 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
           summaries: basisSummaries,
           selected: selectedBasis,
           desktop: desktop,
+          currency: baseCurrency,
           onSelected: (basis) => setState(() => selectedBasis = basis),
         ),
         if (!desktop) ...[
@@ -1334,7 +1335,10 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
                                     child: Text(item.merchant ?? '快速交易'),
                                   ),
                                   Text(
-                                    compassMoney(item.amount),
+                                    compassMoney(
+                                      item.amount,
+                                      currency: item.currency,
+                                    ),
                                     style: TextStyle(
                                       color: item.type == TransactionType.income
                                           ? financePaletteOf(context).seed
@@ -1714,12 +1718,14 @@ class _BasisCards extends StatelessWidget {
     required this.selected,
     required this.onSelected,
     required this.desktop,
+    required this.currency,
   });
 
   final Map<_TransactionBasis, _BasisSummary> summaries;
   final _TransactionBasis selected;
   final ValueChanged<_TransactionBasis> onSelected;
   final bool desktop;
+  final String currency;
 
   @override
   Widget build(BuildContext context) {
@@ -1735,6 +1741,7 @@ class _BasisCards extends StatelessWidget {
               summary: summaries[basis]!,
               selected: basis == selected,
               desktop: desktop,
+              currency: currency,
               onTap: () => onSelected(basis),
             ),
           ),
@@ -1780,12 +1787,14 @@ class _BasisCard extends StatelessWidget {
     required this.selected,
     required this.onTap,
     required this.desktop,
+    required this.currency,
   });
 
   final _BasisSummary summary;
   final bool selected;
   final VoidCallback onTap;
   final bool desktop;
+  final String currency;
 
   @override
   Widget build(BuildContext context) {
@@ -1852,7 +1861,7 @@ class _BasisCard extends StatelessWidget {
                 fit: BoxFit.scaleDown,
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  compassMoney(summary.value, decimals: 0),
+                  compassMoney(summary.value, currency: currency, decimals: 0),
                   key: selected
                       ? const Key('transaction-basis-selected-value')
                       : null,

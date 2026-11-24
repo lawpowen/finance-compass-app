@@ -18,6 +18,7 @@ class AssetGoalsPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final activeRepository =
         ref.watch(financeRepositoryProvider).valueOrNull ?? repository;
+    final currency = activeRepository.baseCurrency;
     // Goals are measured at the end of today: future-dated actual
     // transactions are not assets already held.
     final cutoff = activeRepository.assetGoalCutoffDate();
@@ -46,7 +47,8 @@ class AssetGoalsPage extends ConsumerWidget {
                   IconButton(
                     key: const Key('asset-goal-add'),
                     tooltip: '新增资产目标',
-                    onPressed: () => _editGoal(context, ref),
+                    onPressed: () =>
+                        _editGoal(context, ref, currency: currency),
                     icon: const Icon(Icons.add_rounded),
                   ),
                 ],
@@ -59,7 +61,7 @@ class AssetGoalsPage extends ConsumerWidget {
                     Text('当前总资产', style: Theme.of(context).textTheme.bodySmall),
                     const SizedBox(height: 5),
                     Text(
-                      compassMoney(currentAssets),
+                      compassMoney(currentAssets, currency: currency),
                       style: TextStyle(
                         color: financePaletteOf(context).seed,
                         fontSize: 30,
@@ -103,7 +105,8 @@ class AssetGoalsPage extends ConsumerWidget {
                       const SizedBox(height: 16),
                       FilledButton.icon(
                         key: const Key('asset-goal-empty-add'),
-                        onPressed: () => _editGoal(context, ref),
+                        onPressed: () =>
+                            _editGoal(context, ref, currency: currency),
                         icon: const Icon(Icons.add_rounded),
                         label: const Text('新增资产目标'),
                       ),
@@ -117,9 +120,11 @@ class AssetGoalsPage extends ConsumerWidget {
                     child: _AssetGoalCard(
                       key: Key('asset-goal-${summary.goal.id}'),
                       summary: summary,
+                      currency: currency,
                       onEdit: () => _editGoal(
                         context,
                         ref,
+                        currency: currency,
                         initialGoal: summary.goal,
                       ),
                       onDelete: () => _deleteGoal(
@@ -140,6 +145,7 @@ class AssetGoalsPage extends ConsumerWidget {
   Future<void> _editGoal(
     BuildContext context,
     WidgetRef ref, {
+    required String currency,
     AssetGoal? initialGoal,
   }) async {
     final nameController = TextEditingController(text: initialGoal?.name ?? '');
@@ -163,7 +169,10 @@ class AssetGoalsPage extends ConsumerWidget {
             FinanceAmountField(
               key: const Key('asset-goal-amount'),
               controller: amountController,
-              decoration: const InputDecoration(labelText: '目标金额'),
+              decoration: InputDecoration(
+                labelText: '目标金额',
+                prefixText: '$currency ',
+              ),
             ),
           ],
         ),
@@ -246,11 +255,13 @@ class _AssetGoalCard extends StatelessWidget {
   const _AssetGoalCard({
     super.key,
     required this.summary,
+    required this.currency,
     required this.onEdit,
     required this.onDelete,
   });
 
   final AssetGoalProgressSummary summary;
+  final String currency;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
 
@@ -281,7 +292,7 @@ class _AssetGoalCard extends StatelessWidget {
                     Text(summary.goal.name,
                         style: Theme.of(context).textTheme.titleMedium),
                     Text(
-                      '目标 ${compassMoney(summary.goal.targetAmount)}',
+                      '目标 ${compassMoney(summary.goal.targetAmount, currency: currency)}',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ],
@@ -315,7 +326,7 @@ class _AssetGoalCard extends StatelessWidget {
               Text(
                 summary.isReached
                     ? '已达成${_reachedLabel(summary.reachedAt)}'
-                    : '还差 ${compassMoney(remaining)}',
+                    : '还差 ${compassMoney(remaining, currency: currency)}',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ],

@@ -25,8 +25,9 @@ const _balanceField = Key('credit-card-balance-field');
 /// Opens the form for [initial]; the returned getter reads the popped result.
 Future<Account? Function()> _openForm(
   WidgetTester tester,
-  Account initial, {
+  Account? initial, {
   double width = 390,
+  String defaultCurrency = 'MYR',
 }) async {
   tester.view.physicalSize = Size(width, 844);
   tester.view.devicePixelRatio = 1;
@@ -42,7 +43,10 @@ Future<Account? Function()> _openForm(
             onPressed: () async {
               result = await showDialog<Account>(
                 context: context,
-                builder: (_) => AccountFormDialog(initialAccount: initial),
+                builder: (_) => AccountFormDialog(
+                  initialAccount: initial,
+                  defaultCurrency: defaultCurrency,
+                ),
               );
             },
             child: const Text('编辑信用卡'),
@@ -69,6 +73,22 @@ Future<void> _save(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets(
+      'new account starts in the ledger currency, edited account keeps its currency',
+      (tester) async {
+    final result = await _openForm(tester, null, defaultCurrency: 'USD');
+    final currency = find.byWidgetPredicate(
+      (widget) => widget is DropdownButton<String>,
+    );
+    expect(tester.widget<DropdownButton<String>>(currency).value, 'USD');
+    await tester.enterText(find.byType(TextFormField).first, 'Dollar account');
+    await _save(tester);
+    expect(result()!.currency, 'USD');
+
+    await _openForm(tester, _card(-250), defaultCurrency: 'USD');
+    expect(tester.widget<DropdownButton<String>>(currency).value, 'MYR');
+  });
+
   testWidgets('credit card balance field is signed and explained',
       (tester) async {
     await _openForm(tester, _card(-250), width: 320);

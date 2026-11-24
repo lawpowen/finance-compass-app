@@ -17,6 +17,7 @@ import '../../core/sync/ledger_sync.dart';
 import '../../core/sync/push_notifications.dart';
 import '../../core/theme/finance_colors.dart';
 import '../../core/theme/finance_theme.dart';
+import '../../core/utils/currency_formatter.dart';
 import '../../core/utils/month_range.dart';
 import '../categories/category_manage_screen.dart';
 import '../shared/compass_ui.dart';
@@ -139,13 +140,7 @@ class _CurrencyDisplayPageState extends ConsumerState<CurrencyDisplayPage> {
       RegExp(r'\B(?=(\d{3})+(?!\d))'),
       (_) => separator == 1 ? ' ' : ',',
     );
-    final prefix = symbol == 0
-        ? switch (currency) {
-            'MYR' => 'RM',
-            'CNY' => 'RMB',
-            _ => currency,
-          }
-        : currency;
+    final prefix = symbol == 0 ? currencyLabel(currency) : currency;
     return '$prefix $grouped${separator == 1 ? ',' : '.'}${parts.last}';
   }
 
@@ -165,23 +160,36 @@ class _CurrencyDisplayPageState extends ConsumerState<CurrencyDisplayPage> {
   }
 
   @override
-  Widget build(BuildContext context) => _SettingsDetailShell(
-        title: '货币、汇率与显示',
-        children: [
-          const CompassSectionLabel('换算预览'),
-          Row(
-            children: [
-              Expanded(
-                child: Container(
-                  padding: const EdgeInsets.all(18),
-                  decoration: BoxDecoration(
-                    border: Border.all(color: FinanceColors.compassTeal),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(_previewMoney(1000, 'MYR'),
-                      style: const TextStyle(fontSize: 18)),
+  Widget build(BuildContext context) {
+    final repository = widget.repository;
+    final base = repository.baseCurrency;
+    final secondary = repository.secondaryCurrency;
+    final rate = secondary == null
+        ? null
+        : exchangeRateToBase(
+            secondary,
+            repository.exchangeRatesToBase,
+            baseCurrency: base,
+          );
+
+    return _SettingsDetailShell(
+      title: '货币、汇率与显示',
+      children: [
+        const CompassSectionLabel('换算预览'),
+        Row(
+          children: [
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  border: Border.all(color: FinanceColors.compassTeal),
+                  borderRadius: BorderRadius.circular(6),
                 ),
+                child: Text(_previewMoney(1000, base),
+                    style: const TextStyle(fontSize: 18)),
               ),
+            ),
+            if (secondary != null && rate != null) ...[
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 12),
                 child: Icon(Icons.arrow_forward_rounded),
@@ -194,91 +202,94 @@ class _CurrencyDisplayPageState extends ConsumerState<CurrencyDisplayPage> {
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Text(
-                    _previewMoney(1538.46, 'CNY'),
+                    _previewMoney(1000 / rate, secondary),
                     style: const TextStyle(
                         color: FinanceColors.compassTeal, fontSize: 18),
                   ),
                 ),
               ),
             ],
-          ),
+          ],
+        ),
+        if (secondary != null && rate != null) ...[
           const SizedBox(height: 10),
-          const Center(child: Text('1 CNY = RM 0.6500')),
-          const SizedBox(height: 22),
-          CompassSettingsRow(
-            icon: Icons.monetization_on_outlined,
-            title: '主币种',
-            value: widget.repository.baseCurrency,
-            onTap: _openFullSettings,
-          ),
-          CompassSettingsRow(
-            icon: Icons.sell_outlined,
-            title: '辅助币种',
-            value: widget.repository.currencyPriority.length > 1
-                ? widget.repository.currencyPriority[1]
-                : '未设置',
-            onTap: _openFullSettings,
-          ),
-          const SizedBox(height: 20),
-          const CompassSectionLabel('显示方式'),
-          _ChoiceSetting(
-            icon: Icons.account_balance_wallet_outlined,
-            labels: const ['RM', 'MYR'],
-            selected: symbol,
-            onChanged: (value) => setState(() => symbol = value),
-          ),
-          _ChoiceSetting(
-            icon: Icons.format_quote_outlined,
-            labels: const ['1,234.56', '1 234,56'],
-            selected: separator,
-            onChanged: (value) => setState(() => separator = value),
-          ),
-          CompassSettingsRow(
-            icon: Icons.grid_view_rounded,
-            title: '小数位',
-            value: '2',
-            onTap: _openFullSettings,
-          ),
-          const SizedBox(height: 20),
-          const CompassSectionLabel('其他币种汇率'),
-          ...widget.repository.currencyPriority
-              .where((code) => code != widget.repository.baseCurrency)
-              .take(3)
-              .map(
-                (code) => _RateRow(
-                  code: code,
-                  value:
-                      '${widget.repository.baseCurrency} ${(widget.repository.exchangeRatesToBase[code] ?? 0).toStringAsFixed(4)}',
-                  onTap: _openFullSettings,
-                ),
-              ),
-          CompassSettingsRow(
-            icon: Icons.format_list_bulleted_rounded,
-            title: '管理币种顺序',
-            onTap: _openFullSettings,
-          ),
-          const SizedBox(height: 20),
-          const CompassSectionLabel('应用范围'),
-          CompassSettingsRow(
-            icon: Icons.bar_chart_rounded,
-            title: '总览与报表',
-            value: '使用主币种',
-            onTap: _openFullSettings,
-          ),
-          CompassSettingsRow(
-            icon: Icons.info_outline_rounded,
-            title: '非主币种金额',
-            value: '显示换算提示',
-            onTap: _openFullSettings,
-          ),
-          const SizedBox(height: 18),
-          CompassPrimaryButton(
-            label: '应用并保存',
-            color: FinanceColors.compassTeal,
-            onPressed: _saveDisplayPreferences,
-          ),
+          Center(
+              child: Text('1 $secondary = $base ${rate.toStringAsFixed(4)}')),
         ],
-      );
+        const SizedBox(height: 22),
+        CompassSettingsRow(
+          icon: Icons.monetization_on_outlined,
+          title: '主币种',
+          value: widget.repository.baseCurrency,
+          onTap: _openFullSettings,
+        ),
+        CompassSettingsRow(
+          icon: Icons.sell_outlined,
+          title: '辅助币种',
+          value: secondary ?? '未设置',
+          onTap: _openFullSettings,
+        ),
+        const SizedBox(height: 20),
+        const CompassSectionLabel('显示方式'),
+        _ChoiceSetting(
+          icon: Icons.account_balance_wallet_outlined,
+          labels: [currencyLabel(base), base],
+          selected: symbol,
+          onChanged: (value) => setState(() => symbol = value),
+        ),
+        _ChoiceSetting(
+          icon: Icons.format_quote_outlined,
+          labels: const ['1,234.56', '1 234,56'],
+          selected: separator,
+          onChanged: (value) => setState(() => separator = value),
+        ),
+        CompassSettingsRow(
+          icon: Icons.grid_view_rounded,
+          title: '小数位',
+          value: '2',
+          onTap: _openFullSettings,
+        ),
+        const SizedBox(height: 20),
+        const CompassSectionLabel('其他币种汇率'),
+        ...widget.repository.currencyPriority
+            .where((code) => code != widget.repository.baseCurrency)
+            .take(3)
+            .map(
+              (code) => _RateRow(
+                code: code,
+                value:
+                    '${widget.repository.baseCurrency} ${(widget.repository.exchangeRatesToBase[code] ?? 0).toStringAsFixed(4)}',
+                onTap: _openFullSettings,
+              ),
+            ),
+        CompassSettingsRow(
+          icon: Icons.format_list_bulleted_rounded,
+          title: '管理币种顺序',
+          onTap: _openFullSettings,
+        ),
+        const SizedBox(height: 20),
+        const CompassSectionLabel('应用范围'),
+        CompassSettingsRow(
+          icon: Icons.bar_chart_rounded,
+          title: '总览与报表',
+          value: '使用主币种',
+          onTap: _openFullSettings,
+        ),
+        CompassSettingsRow(
+          icon: Icons.info_outline_rounded,
+          title: '非主币种金额',
+          value: '显示换算提示',
+          onTap: _openFullSettings,
+        ),
+        const SizedBox(height: 18),
+        CompassPrimaryButton(
+          label: '应用并保存',
+          color: FinanceColors.compassTeal,
+          onPressed: _saveDisplayPreferences,
+        ),
+      ],
+    );
+  }
 
   Future<void> _saveDisplayPreferences() async {
     await ref
@@ -1164,9 +1175,14 @@ Future<String?> _saveBytes({
 }
 
 class AppearancePage extends StatefulWidget {
-  const AppearancePage({super.key, required this.settingsController});
+  const AppearancePage({
+    super.key,
+    required this.settingsController,
+    required this.baseCurrency,
+  });
 
   final AppSettingsController settingsController;
+  final String baseCurrency;
 
   @override
   State<AppearancePage> createState() => _AppearancePageState();
@@ -1238,6 +1254,7 @@ class _AppearancePageState extends State<AppearancePage> {
                           style: _previewStyle,
                           palette: palette,
                           donutColors: donutColors,
+                          baseCurrency: widget.baseCurrency,
                         ),
                         const SizedBox(height: 20),
                         CompassHelpHeading(
@@ -1288,11 +1305,13 @@ class _AppearanceLivePreview extends StatelessWidget {
     required this.style,
     required this.palette,
     required this.donutColors,
+    required this.baseCurrency,
   });
 
   final AppThemeStyle style;
   final FinanceThemePalette palette;
   final List<Color> donutColors;
+  final String baseCurrency;
 
   @override
   Widget build(BuildContext context) {
@@ -1312,7 +1331,7 @@ class _AppearanceLivePreview extends StatelessWidget {
                     Text('效果预览 · ${style.label}', style: textTheme.bodySmall),
                     const SizedBox(height: 4),
                     Text(
-                      'MYR 28,450',
+                      compassMoney(28450, currency: baseCurrency, decimals: 0),
                       style: TextStyle(
                         color: palette.textPrimary,
                         fontSize: 24,

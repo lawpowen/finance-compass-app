@@ -56,6 +56,8 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
   int recurrenceMonths = 1;
 
   FinanceRepository get repository => widget.repository;
+  String get _sourceCurrency =>
+      _account(accountId)?.currency ?? repository.baseCurrency;
 
   @override
   void initState() {
@@ -177,7 +179,7 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                       ),
                       decoration: InputDecoration(
                         hintText: '0.00',
-                        prefixText: '${account?.currency ?? 'MYR'} ',
+                        prefixText: '$_sourceCurrency ',
                         prefixStyle: TextStyle(
                           color: financePaletteOf(context).seed,
                           fontSize: 40,
@@ -201,7 +203,7 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                         vertical: 12,
                       ),
                     ),
-                    label: Text(account?.currency ?? 'MYR'),
+                    label: Text(_sourceCurrency),
                   ),
                 ],
               ),
@@ -527,7 +529,7 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
     if (!force && _toAmountEditedByUser && !_isSameCurrencyTransfer) return;
     final amount = double.tryParse(amountController.text.trim());
     if (amount == null || !amount.isFinite) return;
-    final sourceCurrency = _account(accountId)?.currency ?? 'MYR';
+    final sourceCurrency = _sourceCurrency;
     final targetCurrency = _account(toAccountId)?.currency ?? sourceCurrency;
     final converted = _isSameCurrencyTransfer
         ? amount
@@ -546,7 +548,7 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
     if (_isStructuredLoanPayment) {
       return '贷款月供 · 转出为本息合计，转入仅偿还本金';
     }
-    final sourceCurrency = _account(accountId)?.currency ?? 'MYR';
+    final sourceCurrency = _sourceCurrency;
     final targetCurrency = _account(toAccountId)?.currency;
     if (targetCurrency == null) {
       return '选择转入账户后会自动计算到账金额';
@@ -861,7 +863,7 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
     }
     final amount = double.parse(amountController.text.trim());
     final draft = widget.draft;
-    final sourceCurrency = _account(accountId)?.currency ?? 'MYR';
+    final sourceCurrency = _sourceCurrency;
     final targetCurrency = _account(toAccountId)?.currency ?? draft?.toCurrency;
     final isSameCurrencyTransfer = type == TransactionType.transfer &&
         sourceCurrency.trim().toUpperCase() ==

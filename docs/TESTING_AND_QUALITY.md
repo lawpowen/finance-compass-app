@@ -259,6 +259,7 @@ flutter build windows --debug
 基准视口宽度为 390 逻辑像素；本次原生 Windows 对照使用精确 390 像素客户区宽度和 713 像素可见高度，长页面通过滚动覆盖参考图完整内容。预算与外观页另使用 390×844 widget 截图，分别与 `supplemental-budget-overview.png` 和 `27-appearance.png` 合成同屏比较图。检查六个底部入口、无横向/纵向 RenderFlex 溢出、预算占比口径、实色/斜纹状态、主题拖动预览、交易筛选、账户详情、表单主按钮、信用卡日期、闪电/加号浮动按钮及深色对比度。视觉对照记录见项目根目录 `design-qa.md`，页面映射见 [UI 参考基线](UI_REFERENCE.md)。Flutter widget 截图环境缺少中文字体时会显示方框字形；该限制只影响测试截图文字外观，不影响 Android 系统字体渲染或布局断言。
 ## Homelab 账号同步验证
 
+- **Web 22 币种显示与手机预算。** Widget 回归覆盖 TWD 报表、TWD 账本的美元交易与模板、信用卡原币、新账户默认币种、设置换算预览、320 像素预算详情与桌面列。隔离 Chrome 在 390×844 与 1440×940 验证各主要页面的币种和预算响应式布局，并验证 Web 21 等待用户点击「更新」后载入 Web 22。Flutter 全量 285 项通过，2 项按设计跳过。Web 启动及 Node 同步服务 22 项通过。运行 `flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings lib test` 检查当前源码及测试，避免旧发布归档进入分析，结果 0 错误。浏览器截图见 [Design QA](../design-qa.md)。
 - **Web 21 页内说明与三主题。** 候选 Git 树的 175 个 Dart 文件格式检查通过，静态分析 0 错误。Flutter 全量 277 项通过，默认跳过离线 AI 网关用例与手动截图入口。Web 启动及 Node 同步服务共 22 项通过。Chrome 测试覆盖三主题与 1440×900、390×844、320×844，验证六个页签、问号、Dock 悬停和触控残留、WebGL 与 `?cpu=1` 回退。浏览器截图记录见 [Design QA](../design-qa.md)。另用 Web 17 到 Web 21 的实际 PWA 更新路径确认需用户同意后重载。
 
 - **Web 17 浮动导航。** 18 项 Flutter 定向测试通过，覆盖内容延伸、模糊裁切、底部安全区及页签交互。1440 像素 Chrome 在胶囊旁滚动时可见交易行的像素变化，最后一条记录与设置均可访问。Android 浏览器模拟验证灰阶画面和金额输入可重绘。已验证从 Web 16 更新到 Web 17，发布前检查 SQLite 备份，公网新版与健康接口正常。

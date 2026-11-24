@@ -156,6 +156,7 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
               label: '净资产',
               value: formatMoney(
                 repository.displayTotalAssets(cutoffDate: displayCutoff),
+                currency: repository.baseCurrency,
               ),
             ),
             _SummaryChip(
@@ -165,6 +166,7 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
                   includeCredit: false,
                   cutoffDate: displayCutoff,
                 ),
+                currency: repository.baseCurrency,
               ),
             ),
           ],
@@ -214,6 +216,7 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
                         padding: const EdgeInsets.only(bottom: 12),
                         child: _GoalCard(
                           summary: summary,
+                          currency: repository.baseCurrency,
                           isExpanded:
                               _expandedGoalIds.contains(summary.goal.id),
                           onToggleExpanded: summary.isReached
@@ -246,7 +249,8 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
             padding: const EdgeInsets.only(bottom: 16),
             child: SectionCard(
               title: _groupLabel(group),
-              subtitle: '总额 ${formatMoney(groupTotal)}',
+              subtitle:
+                  '总额 ${formatMoney(groupTotal, currency: repository.baseCurrency)}',
               child: Column(
                 children: accounts.asMap().entries.map((entry) {
                   final index = entry.key;
@@ -494,9 +498,10 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
             const SizedBox(height: 12),
             FinanceAmountField(
               controller: amountController,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: '目标金额',
-                border: OutlineInputBorder(),
+                prefixText: '${widget.repository.baseCurrency} ',
+                border: const OutlineInputBorder(),
               ),
             ),
           ],
@@ -573,7 +578,8 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
   Future<void> _showAddAccount(BuildContext context) async {
     final result = await showDialog<Account>(
       context: context,
-      builder: (_) => const AccountFormDialog(),
+      builder: (_) =>
+          AccountFormDialog(defaultCurrency: widget.repository.baseCurrency),
     );
     if (!context.mounted || result == null) {
       return;
@@ -788,9 +794,10 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
 }
 
 class _GoalStatusLine extends StatelessWidget {
-  const _GoalStatusLine({required this.summary});
+  const _GoalStatusLine({required this.summary, required this.currency});
 
   final AssetGoalProgressSummary summary;
+  final String currency;
 
   @override
   Widget build(BuildContext context) {
@@ -828,7 +835,7 @@ class _GoalStatusLine extends StatelessWidget {
     }
 
     return Text(
-      '还差 ${formatMoney(remaining)}$estimate',
+      '还差 ${formatMoney(remaining, currency: currency)}$estimate',
       style: Theme.of(context).textTheme.bodySmall,
     );
   }
@@ -837,6 +844,7 @@ class _GoalStatusLine extends StatelessWidget {
 class _GoalCard extends StatelessWidget {
   const _GoalCard({
     required this.summary,
+    required this.currency,
     required this.isExpanded,
     required this.onToggleExpanded,
     required this.onEdit,
@@ -844,6 +852,7 @@ class _GoalCard extends StatelessWidget {
   });
 
   final AssetGoalProgressSummary summary;
+  final String currency;
   final bool isExpanded;
   final VoidCallback? onToggleExpanded;
   final VoidCallback onEdit;
@@ -871,7 +880,7 @@ class _GoalCard extends StatelessWidget {
                       style: Theme.of(context).textTheme.titleSmall,
                     ),
                     const SizedBox(height: 4),
-                    _GoalStatusLine(summary: summary),
+                    _GoalStatusLine(summary: summary, currency: currency),
                   ],
                 ),
               ),
@@ -923,11 +932,13 @@ class _GoalCard extends StatelessWidget {
                     children: [
                       _MetricChip(
                         label: '目标金额',
-                        value: formatMoney(summary.goal.targetAmount),
+                        value: formatMoney(summary.goal.targetAmount,
+                            currency: currency),
                       ),
                       _MetricChip(
                         label: '当前总资产',
-                        value: formatMoney(summary.currentAssets),
+                        value: formatMoney(summary.currentAssets,
+                            currency: currency),
                       ),
                       _MetricChip(
                         label: '达成进度',

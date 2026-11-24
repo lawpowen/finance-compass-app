@@ -1,11 +1,53 @@
+import 'package:drift/native.dart';
 import 'package:finance_app/src/core/data/finance_repository.dart';
+import 'package:finance_app/src/core/database/app_database.dart'
+    show AppDatabase;
+import 'package:finance_app/src/core/models/account.dart';
+import 'package:finance_app/src/core/models/asset_snapshot.dart';
 import 'package:finance_app/src/core/providers/repository_provider.dart';
 import 'package:finance_app/src/features/accounts/account_detail_screen.dart';
+import 'package:finance_app/src/features/accounts/asset_snapshot_form_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets(
+      'snapshot preview uses investment currency, not the ledger currency',
+      (tester) async {
+    final database = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(database.close);
+    var repository = await FinanceRepository.load(database);
+    const account = Account(
+      id: 'usd-fund',
+      name: '美元基金',
+      accountType: AccountType.fund,
+      reportGroup: ReportGroup.investment,
+      currency: 'USD',
+      currentBalance: 0,
+    );
+    repository = await repository.addAccount(account);
+    final snapshot = AssetSnapshot(
+      id: 'usd-fund-snapshot',
+      accountId: account.id,
+      snapshotDate: DateTime.now(),
+      marketValue: 150,
+      costBasis: 120,
+    );
+    repository = await repository.addAssetSnapshot(snapshot);
+
+    await tester.pumpWidget(MaterialApp(
+      home: AssetSnapshotFormDialog(
+        repository: repository,
+        initialSnapshot: snapshot,
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('美元基金 · USD'), findsOneWidget);
+    expect(find.text(r'累计成本: US$ 120.00'), findsOneWidget);
+    expect(find.text(r'未实现盈亏: US$ 30.00'), findsOneWidget);
+  });
+
   testWidgets('investment detail exposes a locked market value update entry',
       (tester) async {
     tester.view.physicalSize = const Size(390, 844);
@@ -40,7 +82,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('更新市值'), findsOneWidget);
-    expect(find.text(account.name), findsWidgets);
+    expect(find.text('${account.name} · ${account.currency}'), findsOneWidget);
     final accountDropdown = tester.widget<DropdownButtonFormField<String>>(
       find.byType(DropdownButtonFormField<String>),
     );

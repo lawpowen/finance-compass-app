@@ -209,7 +209,7 @@ class _TemplateEditorPageState extends ConsumerState<TemplateEditorPage> {
                   FittedBox(
                     fit: BoxFit.scaleDown,
                     child: Text(
-                      '${row.sign}${compassMoney(row.amount)}',
+                      '${row.sign}${compassMoney(row.amount, currency: row.currency)}',
                       style: TextStyle(color: row.color, fontSize: 24),
                     ),
                   ),
@@ -254,7 +254,7 @@ class _TemplateEditorPageState extends ConsumerState<TemplateEditorPage> {
         _AutomationRow(
           icon: Icons.monetization_on_outlined,
           title: '默认金额',
-          value: compassMoney(row.amount),
+          value: compassMoney(row.amount, currency: row.currency),
         ),
         _AutomationRow(
           icon: Icons.account_balance_wallet_outlined,
@@ -638,7 +638,7 @@ class _RecurringRuleEditorPageState
                   Text(row.name,
                       style: Theme.of(context).textTheme.headlineSmall),
                   Text(
-                    '${row.sign}${compassMoney(row.amount)}',
+                    '${row.sign}${compassMoney(row.amount, currency: row.currency)}',
                     style: TextStyle(color: row.color, fontSize: 23),
                   ),
                   Text('${row.account} · ${row.category}',
@@ -702,7 +702,8 @@ class _RecurringRuleEditorPageState
         _AutomationRow(
           icon: Icons.account_balance_wallet_outlined,
           title: '金额与账户',
-          value: '${compassMoney(row.amount)} · ${row.account}',
+          value:
+              '${compassMoney(row.amount, currency: row.currency)} · ${row.account}',
           onTap: _editDraft,
         ),
         _AutomationRow(
@@ -1001,6 +1002,7 @@ class _TemplatePresentation {
     required this.account,
     required this.category,
     required this.amount,
+    required this.currency,
     required this.icon,
     required this.color,
     this.template,
@@ -1011,6 +1013,7 @@ class _TemplatePresentation {
   final String account;
   final String category;
   final double amount;
+  final String currency;
   final IconData icon;
   final Color color;
   final TransactionTemplate? template;
@@ -1024,6 +1027,7 @@ class _RecurringPresentation extends _TemplatePresentation {
     required super.account,
     required super.category,
     required super.amount,
+    required super.currency,
     required super.icon,
     required super.color,
     required this.date,
@@ -1084,7 +1088,7 @@ class _TemplateRow extends StatelessWidget {
                 child: FittedBox(
                   fit: BoxFit.scaleDown,
                   child: Text(
-                    '${row.sign}${compassMoney(row.amount)}',
+                    '${row.sign}${compassMoney(row.amount, currency: row.currency)}',
                     style: TextStyle(color: row.color),
                   ),
                 ),
@@ -1148,7 +1152,7 @@ class _RecurringRow extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Text(
-                    '${row.sign}${compassMoney(row.amount)}',
+                    '${row.sign}${compassMoney(row.amount, currency: row.currency)}',
                     style: TextStyle(color: row.color),
                   ),
                   Switch(value: enabled, onChanged: onToggle),
@@ -1255,6 +1259,7 @@ _TemplatePresentation _templateFromDraft(
         : _accountName(repository, draft.accountId),
     category: transfer ? '转账' : _categoryName(repository, draft.categoryId),
     amount: draft.amount,
+    currency: draft.currency,
     icon: income
         ? Icons.badge_outlined
         : transfer
@@ -1308,6 +1313,7 @@ _RecurringPresentation _recurringFromDraft(
     account: base.account,
     category: base.category,
     amount: base.amount,
+    currency: base.currency,
     icon: base.icon,
     color: base.color,
     sign: base.sign,

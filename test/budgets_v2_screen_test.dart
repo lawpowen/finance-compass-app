@@ -11,6 +11,7 @@ import 'package:finance_app/src/core/settings/app_theme_style.dart';
 import 'package:finance_app/src/core/theme/finance_theme.dart';
 import 'package:finance_app/src/core/utils/month_key.dart';
 import 'package:finance_app/src/features/budgets/budgets_v2_screen.dart';
+import 'package:finance_app/src/features/shared/compass_ui.dart';
 import 'package:finance_app/src/features/shared/finance_donut.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -52,8 +53,11 @@ void main() {
           predicate<Color>((color) => color.r == color.g && color.g == color.b),
         ));
     expect(find.text('MYR 4,000'), findsOneWidget);
-    expect(find.text('1,600'), findsOneWidget);
-    expect(find.text('实际 0'), findsWidgets);
+    expect(find.text('占比'), findsOneWidget);
+    expect(find.text('剩余'), findsOneWidget);
+    expect(find.text('超出 MYR 100'), findsOneWidget);
+    expect(find.textContaining(RegExp(r'实际|预计|结转')), findsNothing);
+    expect(find.byType(CompassDualProgressBar), findsNothing);
     expect(tester.takeException(), isNull);
     await tester.tap(find.widgetWithText(FilledButton, '调整'));
     await tester.pumpAndSettle();
@@ -95,14 +99,15 @@ void main() {
       panel.slices.map((slice) => (slice.label, slice.value)),
       [('Dining', 1600), ('交通', 1000), ('Insurance', 800), ('其他', 600)],
     );
-    expect(find.text('已用 2,600 · 预计 1,600 · 剩余 -100'), findsOneWidget);
+    expect(find.text('超出 MYR 100'), findsOneWidget);
     expect(find.byType(LinearProgressIndicator), findsNothing);
     expect(tester.getSize(chart).width, 350);
     final details = find.text('预算明细');
     expect(tester.getTopLeft(details).dy,
         greaterThan(tester.getRect(chart).bottom));
-    expect(tester.getTopLeft(find.text('实际')).dy,
-        lessThan(tester.getTopLeft(find.text('预计')).dy));
+    expect(find.text('占比'), findsOneWidget);
+    expect(find.text('剩余'), findsOneWidget);
+    expect(find.textContaining(RegExp(r'实际|预计|结转')), findsNothing);
 
     tester.view.physicalSize = const Size(960, 844);
     await tester.pumpAndSettle();

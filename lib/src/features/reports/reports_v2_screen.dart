@@ -52,6 +52,11 @@ class _ReportsV2ScreenState extends State<ReportsV2Screen> {
   _ReportsViewData? _cachedData;
 
   FinanceRepository get repository => widget.repository;
+  String _money(double value, {int decimals = 2}) => compassMoney(value,
+      currency: repository.baseCurrency, decimals: decimals);
+
+  String _changeAmount(double value, {int decimals = 2}) => _signedMoney(value,
+      currency: repository.baseCurrency, decimals: decimals);
 
   _ReportsViewData _viewDataFor(DateTime now) {
     final todayKey = now.year * 10000 + now.month * 100 + now.day;
@@ -176,12 +181,12 @@ class _ReportsV2ScreenState extends State<ReportsV2Screen> {
             ' · ${monthKeys.length} 个月';
     final shareText = [
       'Finance Compass 报表 · $rangeLabel（$periodLabel）',
-      '月末净资产 ${compassMoney(netWorth)}（${cutoff.month}月${cutoff.day}日）',
-      '$rangeLabel净资产变化 ${_signedMoney(growth)}',
+      '月末净资产 ${_money(netWorth)}（${cutoff.month}月${cutoff.day}日）',
+      '$rangeLabel净资产变化 ${_changeAmount(growth)}',
       hasCashFlow
-          ? '$rangeLabel实际现金净流入 ${_signedMoney(cashFlow.net)}'
-              '（流入 ${compassMoney(cashFlow.inflow)}'
-              ' / 流出 ${compassMoney(cashFlow.outflow)}）'
+          ? '$rangeLabel实际现金净流入 ${_changeAmount(cashFlow.net)}'
+              '（流入 ${_money(cashFlow.inflow)}'
+              ' / 流出 ${_money(cashFlow.outflow)}）'
           : '$rangeLabel没有实际现金流记录',
     ].join('\n');
 
@@ -380,7 +385,7 @@ class _ReportsV2ScreenState extends State<ReportsV2Screen> {
                 text: '$rangeLabel 变化 ',
                 children: [
                   TextSpan(
-                    text: _signedMoney(growth, decimals: 0),
+                    text: _changeAmount(growth, decimals: 0),
                     style: TextStyle(
                       color: _signColor(context, growth, decimals: 0),
                       fontWeight: FontWeight.w600,
@@ -425,7 +430,7 @@ class _ReportsV2ScreenState extends State<ReportsV2Screen> {
                     right: 0,
                     top: 0,
                     child: Text(
-                      '本月末  ${compassMoney(netWorth, decimals: 0)}',
+                      '本月末  ${_money(netWorth, decimals: 0)}',
                       style: TextStyle(
                         color: financePaletteOf(context).seed,
                         fontSize: 10,
@@ -439,7 +444,7 @@ class _ReportsV2ScreenState extends State<ReportsV2Screen> {
               children: [
                 Text(
                   wide
-                      ? '期初 ${compassMoney(startingNetWorth, decimals: 0)}'
+                      ? '期初 ${_money(startingNetWorth, decimals: 0)}'
                       : '${_monthLabel(monthKeys.first)}期初',
                   style: const TextStyle(fontSize: 10),
                 ),
@@ -487,7 +492,7 @@ class _ReportsV2ScreenState extends State<ReportsV2Screen> {
                   Expanded(
                     child: _Metric(
                       label: '净流入',
-                      value: _signedMoney(cashFlow.net),
+                      value: _changeAmount(cashFlow.net),
                       valueKey: const Key('reports-cash-net'),
                       color: _signColor(context, cashFlow.net),
                     ),
@@ -519,7 +524,7 @@ class _ReportsV2ScreenState extends State<ReportsV2Screen> {
               const SizedBox(height: 12),
               Text(
                 '现金结余率 $savingsRateLabel · 月均净流入 '
-                '${_signedMoney(averageMonthlyNet, decimals: 0)}',
+                '${_changeAmount(averageMonthlyNet, decimals: 0)}',
                 style: textTheme.bodySmall?.copyWith(
                   fontFeatures: compassTabularFigures,
                 ),
@@ -547,6 +552,7 @@ class _ReportsV2ScreenState extends State<ReportsV2Screen> {
                   index: index,
                   name: repository.categoryName(displayedExpenses[index].key),
                   amount: displayedExpenses[index].value,
+                  currency: repository.baseCurrency,
                   maxAmount: maxExpenseAmount,
                   share: expenseTotal <= 0
                       ? 0.0
@@ -561,7 +567,7 @@ class _ReportsV2ScreenState extends State<ReportsV2Screen> {
                 runSpacing: 4,
                 children: [
                   Text(
-                    '已分类支出合计 ${compassMoney(expenseTotal)}'
+                    '已分类支出合计 ${_money(expenseTotal)}'
                     '${rankedExpenses.length > 5 ? ' · 共 ${rankedExpenses.length} 个分类' : ''}',
                     key: const Key('reports-category-total'),
                     style: textTheme.bodySmall?.copyWith(
@@ -694,14 +700,14 @@ class _ReportsV2ScreenState extends State<ReportsV2Screen> {
               ),
               const SizedBox(height: 10),
               Text(
-                '已用 ${compassMoney(budgetUsed)} / 预算 ${compassMoney(budget)}',
+                '已用 ${_money(budgetUsed)} / 预算 ${_money(budget)}',
                 style: textTheme.bodySmall?.copyWith(
                   fontFeatures: compassTabularFigures,
                 ),
               ),
               Text(
-                '其中预计 ${compassMoney(budgetPlanned)} · '
-                '${budgetRemaining >= 0 ? '剩余 ${compassMoney(budgetRemaining)}' : '超支 ${compassMoney(-budgetRemaining)}'}',
+                '其中预计 ${_money(budgetPlanned)} · '
+                '${budgetRemaining >= 0 ? '剩余 ${_money(budgetRemaining)}' : '超支 ${_money(-budgetRemaining)}'}',
                 style: textTheme.bodySmall?.copyWith(
                   color: budgetRemaining < 0
                       ? financePaletteOf(context).expense
@@ -726,19 +732,19 @@ class _ReportsV2ScreenState extends State<ReportsV2Screen> {
                   Expanded(
                     child: _Metric(
                       label: '当前市值',
-                      value: compassMoney(marketValue),
+                      value: _money(marketValue),
                     ),
                   ),
                   Expanded(
                     child: _Metric(
                       label: '剩余成本',
-                      value: hasCost ? compassMoney(remainingCost) : '—',
+                      value: hasCost ? _money(remainingCost) : '—',
                     ),
                   ),
                   Expanded(
                     child: _Metric(
                       label: '未实现盈亏',
-                      value: hasCost ? _signedMoney(unrealizedPnl) : '—',
+                      value: hasCost ? _changeAmount(unrealizedPnl) : '—',
                       valueKey: const Key('reports-investment-pnl'),
                       color: hasCost
                           ? _signColor(context, unrealizedPnl)
@@ -1044,6 +1050,7 @@ class _CategoryRankRow extends StatelessWidget {
     required this.index,
     required this.name,
     required this.amount,
+    required this.currency,
     required this.maxAmount,
     required this.share,
     required this.wide,
@@ -1052,6 +1059,7 @@ class _CategoryRankRow extends StatelessWidget {
   final int index;
   final String name;
   final double amount;
+  final String currency;
   final double maxAmount;
   final double share;
   final bool wide;
@@ -1062,7 +1070,7 @@ class _CategoryRankRow extends StatelessWidget {
     final barRatio =
         maxAmount <= 0 ? 0.0 : (amount / maxAmount).clamp(0.0, 1.0);
     final amountLabel = Text(
-      compassMoney(amount),
+      compassMoney(amount, currency: currency),
       key: Key('reports-category-$index-amount'),
       style: const TextStyle(
         fontWeight: FontWeight.w600,
@@ -1217,7 +1225,8 @@ class _NetFlowLineState extends State<_NetFlowLine> {
     final palette = financePaletteOf(context);
     return Semantics(
       label: '所选期间每月实际现金净流入',
-      value: '最新月份 ${_signedMoney(widget.values.last)}',
+      value:
+          '最新月份 ${_signedMoney(widget.values.last, currency: widget.baseCurrency)}',
       child: Row(
         children: [
           Expanded(
@@ -1352,8 +1361,9 @@ class _NetFlowPainter extends CustomPainter {
       canvas.drawCircle(point, 3.6, Paint()..color = dotColor);
 
       final label = hoverIndex < monthLabels.length
-          ? '${monthLabels[hoverIndex]} · 净 ${_signedMoney(values[hoverIndex], decimals: 0)}'
-          : _signedMoney(values[hoverIndex], decimals: 0);
+          ? '${monthLabels[hoverIndex]} · 净 ${_signedMoney(values[hoverIndex], currency: baseCurrency, decimals: 0)}'
+          : _signedMoney(values[hoverIndex],
+              currency: baseCurrency, decimals: 0);
       final painter = TextPainter(
         text: TextSpan(
           text: label,
@@ -1435,11 +1445,12 @@ bool _isZero(double value, int decimals) =>
     value.abs() < 0.5 / math.pow(10, decimals);
 
 /// Signed amount for changes; a zero change never carries a gain sign.
-String _signedMoney(double value, {int decimals = 2}) {
+String _signedMoney(double value,
+    {required String currency, int decimals = 2}) {
   if (_isZero(value, decimals)) {
-    return compassMoney(0, decimals: decimals);
+    return compassMoney(0, currency: currency, decimals: decimals);
   }
-  final formatted = compassMoney(value, decimals: decimals);
+  final formatted = compassMoney(value, currency: currency, decimals: decimals);
   return value > 0 ? '+ $formatted' : formatted;
 }
 

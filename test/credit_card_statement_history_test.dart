@@ -14,6 +14,62 @@ import 'package:flutter_test/flutter_test.dart';
 import 'support/amount_entry.dart';
 
 void main() {
+  testWidgets(
+      'card limit and purchases keep native currency in a different base ledger',
+      (tester) async {
+    tester.view.physicalSize = const Size(390, 1080);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final database = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(database.close);
+    var repository = await FinanceRepository.load(database);
+    repository = await repository.updateExchangeRates(
+      const {'TWD': 1, 'USD': 30},
+      const ['TWD', 'USD'],
+    );
+    const card = Account(
+      id: 'dollar-card',
+      name: 'Dollar card',
+      accountType: AccountType.creditCard,
+      reportGroup: ReportGroup.credit,
+      currency: 'USD',
+      currentBalance: -100,
+      creditLimit: 1000,
+      statementDay: 25,
+      paymentDueDay: 14,
+    );
+    repository = await repository.addAccount(card);
+    final period = calculateCreditCardBillingPeriod(
+      statementDay: card.statementDay!,
+      paymentDueDay: card.paymentDueDay!,
+      now: DateTime.now(),
+    );
+    repository = await repository.addTransaction(FinanceTransaction(
+      id: 'dollar-purchase',
+      type: TransactionType.expense,
+      accountId: card.id,
+      amount: 75,
+      currency: 'USD',
+      transactionDate: period.statementDate,
+    ));
+
+    await tester.pumpWidget(ProviderScope(
+      overrides: [
+        financeRepositoryProvider.overrideWith(
+          () => _TestRepositoryNotifier(repository),
+        ),
+      ],
+      child: MaterialApp(
+        home: CreditCardDetailScreen(account: card, repository: repository),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('USD 175.00 / USD 1,000.00'), findsOneWidget);
+    expect(find.text('USD 75.00'), findsWidgets);
+    expect(find.textContaining('TWD '), findsNothing);
+  });
+
   testWidgets('credit-card repayment uses the loan-style cash account flow',
       (tester) async {
     tester.view.physicalSize = const Size(390, 844);

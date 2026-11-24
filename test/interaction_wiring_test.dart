@@ -166,10 +166,15 @@ void main() {
     expect(find.text('最近12个月'), findsOneWidget);
   });
 
-  testWidgets('currency display choices are persisted', (tester) async {
+  testWidgets('currency preview uses the ledger pair and persists choices',
+      (tester) async {
     final database = AppDatabase.forTesting(NativeDatabase.memory());
     addTearDown(database.close);
-    final repository = await FinanceRepository.load(database);
+    final initial = await FinanceRepository.load(database);
+    final repository = await initial.updateExchangeRates(
+      const {'TWD': 1, 'USD': 32},
+      const ['TWD', 'USD'],
+    );
     final container = ProviderContainer(
       overrides: [
         financeRepositoryProvider.overrideWith(
@@ -191,7 +196,10 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('RM'));
+    expect(find.text('TWD 1,000.00'), findsOneWidget);
+    expect(find.text('USD 31.25'), findsOneWidget);
+    expect(find.text('1 USD = TWD 32.0000'), findsOneWidget);
+    await tester.tap(find.text('NT\$'));
     await tester.tap(find.text('1 234,56'));
     await tester.scrollUntilVisible(find.text('应用并保存'), 420);
     await tester.tap(find.text('应用并保存'));

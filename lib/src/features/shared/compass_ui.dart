@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/theme/finance_colors.dart';
 import '../../core/theme/finance_theme.dart';
+import '../../core/utils/currency_formatter.dart' show activeBaseCurrencyCode;
 
 /// Allows tests to simulate the Android CPU-only CanvasKit rendering path.
 @visibleForTesting
@@ -41,7 +42,7 @@ void setCompassMoneyStyle({
 
 String compassMoney(
   double value, {
-  String currency = 'MYR',
+  String? currency,
   int decimals = 2,
   bool showCurrency = true,
 }) {
@@ -54,14 +55,15 @@ String compassMoney(
   final decimalMark = _compassUseEuropeanSeparators ? ',' : '.';
   final fraction = decimals == 0 ? '' : '$decimalMark${parts.last}';
   if (!showCurrency) return '${negative ? '-' : ''}$grouped$fraction';
+  final displayCurrency = currency ?? activeBaseCurrencyCode;
   final prefix = _compassUseCurrencyCode
-      ? currency
-      : switch (currency.toUpperCase()) {
+      ? displayCurrency
+      : switch (displayCurrency.toUpperCase()) {
           'MYR' => 'RM',
           'USD' => 'US\$',
           'CNY' => 'RMB',
           'TWD' => 'NT\$',
-          _ => currency,
+          _ => displayCurrency,
         };
   return '${negative ? '- ' : ''}$prefix $grouped$fraction';
 }

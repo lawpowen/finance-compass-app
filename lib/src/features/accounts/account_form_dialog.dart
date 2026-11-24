@@ -12,9 +12,11 @@ class AccountFormDialog extends StatefulWidget {
   const AccountFormDialog({
     super.key,
     this.initialAccount,
+    this.defaultCurrency = baseCurrencyCode,
   });
 
   final Account? initialAccount;
+  final String defaultCurrency;
 
   @override
   State<AccountFormDialog> createState() => _AccountFormDialogState();
@@ -53,7 +55,7 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
     nameController = TextEditingController(text: account?.name ?? '');
     institutionController =
         TextEditingController(text: account?.institution ?? '');
-    currency = normalizeCurrency(account?.currency ?? 'MYR');
+    currency = normalizeCurrency(account?.currency ?? widget.defaultCurrency);
     initialBalanceController = TextEditingController(
       text: (account?.initialBalance ?? 0).toStringAsFixed(2),
     );

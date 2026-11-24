@@ -12,6 +12,7 @@ import 'package:finance_app/src/core/services/asset_service.dart';
 import 'package:finance_app/src/core/services/currency_service.dart';
 import 'package:finance_app/src/core/settings/app_theme_style.dart';
 import 'package:finance_app/src/core/theme/finance_theme.dart';
+import 'package:finance_app/src/core/utils/currency_formatter.dart';
 import 'package:finance_app/src/features/accounts/accounts_v2_screen.dart';
 import 'package:finance_app/src/features/accounts/asset_goals_page.dart';
 import 'package:finance_app/src/features/shared/compass_ui.dart';
@@ -79,6 +80,41 @@ AssetGoalProgressSummary _goal(
 }
 
 void main() {
+  testWidgets(
+      'asset goals use the ledger base for current, target and remaining',
+      (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final (_, initialRepository) = await _cashRepository();
+    var repository = await initialRepository.updateExchangeRates(
+      const {'USD': 1, 'MYR': .25},
+      const ['USD', 'MYR'],
+    );
+    repository = await repository.addTransaction(
+      _cashIncome('existing-cash', _noon(-1), 800),
+    );
+    repository = await repository.addAssetGoal(name: '储备金', amount: 500);
+    // A separate ledger can change the process-global formatter default.
+    setActiveBaseCurrency('CNY');
+    addTearDown(() => setActiveBaseCurrency(baseCurrencyCode));
+
+    await tester.pumpWidget(ProviderScope(
+      overrides: [
+        financeRepositoryProvider.overrideWith(
+          () => _TestRepositoryNotifier(repository),
+        ),
+      ],
+      child: MaterialApp(home: AssetGoalsPage(repository: repository)),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('USD 200.00'), findsOneWidget);
+    expect(find.text('目标 USD 500.00'), findsOneWidget);
+    expect(find.text('还差 USD 300.00'), findsOneWidget);
+  });
+
   test('goal cutoff clamps omitted and future dates to the end of today',
       () async {
     final (_, repository) = await _cashRepository();

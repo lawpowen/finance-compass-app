@@ -474,9 +474,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byType(CompassDualProgressBar), findsAtLeastNWidgets(1));
+    expect(find.byType(CompassDualProgressBar), findsNothing);
     expect(find.byType(LinearProgressIndicator), findsNothing);
-    expect(find.textContaining('日均可用'), findsOneWidget);
+    expect(find.textContaining('日均可用'), findsNothing);
+    expect(
+        find.byKey(const Key('budget-mobile-total-remaining')), findsOneWidget);
 
     await tester.tap(find.widgetWithText(FilledButton, '调整'));
     await tester.pumpAndSettle();

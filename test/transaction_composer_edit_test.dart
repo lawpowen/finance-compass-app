@@ -16,6 +16,31 @@ import 'package:flutter_test/flutter_test.dart';
 import 'support/amount_entry.dart';
 
 void main() {
+  testWidgets('empty-account forms show the ledger base currency',
+      (tester) async {
+    final database = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(database.close);
+    final empty = await FinanceRepository.load(database);
+    final repository = await empty.updateExchangeRates(
+      {'TWD': 1, 'USD': 32, 'MYR': 7, 'CNY': 4.5},
+      ['TWD', 'USD', 'MYR', 'CNY'],
+    );
+    expect(repository.accounts, isEmpty);
+
+    await tester.pumpWidget(MaterialApp(
+      home: TransactionComposerPage(repository: repository),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(OutlinedButton, 'TWD'), findsOneWidget);
+
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(body: TransactionFormDialog(repository: repository)),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text(r'TWD (NT$)'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('saving reveals each missing amount or account inline',
       (tester) async {
     final database = AppDatabase.forTesting(NativeDatabase.memory());

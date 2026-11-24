@@ -33,8 +33,8 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
 
   TransactionType transactionType = TransactionType.expense;
   TransactionStatus transactionStatus = TransactionStatus.actual;
-  String currency = 'MYR';
-  String toCurrency = 'MYR';
+  late String currency;
+  late String toCurrency;
   DateTime recordDate = DateTime.now();
   DateTime? settlementDate;
   String? accountId;
@@ -58,6 +58,8 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
   @override
   void initState() {
     super.initState();
+    currency = widget.repository.baseCurrency;
+    toCurrency = currency;
     final initialTransaction = widget.initialTransaction;
     final draftTransaction = widget.draftTransaction;
     final seedTransaction = initialTransaction ?? draftTransaction;

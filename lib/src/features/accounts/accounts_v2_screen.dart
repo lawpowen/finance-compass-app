@@ -697,7 +697,8 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
   Future<void> _editAccount(BuildContext context) async {
     final account = await showDialog<Account>(
       context: context,
-      builder: (_) => const AccountFormDialog(),
+      builder: (_) =>
+          AccountFormDialog(defaultCurrency: repository.baseCurrency),
     );
     if (account != null) {
       await ref.read(accountMutationsProvider.notifier).addAccount(account);

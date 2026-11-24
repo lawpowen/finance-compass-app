@@ -14,6 +14,111 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets(
+      'TWD ledger totals and USD transaction presets keep their own units',
+      (tester) async {
+    tester.view.physicalSize = const Size(1440, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final database = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(database.close);
+    var repository = await FinanceRepository.load(database);
+    repository = await repository.updateExchangeRates(
+      {'TWD': 1, 'USD': 32, 'MYR': 7, 'CNY': 4.5},
+      ['TWD', 'USD', 'MYR', 'CNY'],
+    );
+    for (final currency in ['TWD', 'USD']) {
+      repository = await repository.addAccount(
+        Account(
+          id: currency,
+          name: '$currency Cash',
+          accountType: AccountType.cash,
+          reportGroup: ReportGroup.cash,
+          currency: currency,
+          currentBalance: 1000,
+        ),
+      );
+    }
+    final now = DateTime.now();
+    final localExpense = FinanceTransaction(
+      id: 'local-expense',
+      type: TransactionType.expense,
+      accountId: 'TWD',
+      amount: 64,
+      currency: 'TWD',
+      transactionDate: DateTime(now.year, now.month, 1),
+    );
+    final usdExpense = FinanceTransaction(
+      id: 'foreign-expense',
+      type: TransactionType.expense,
+      accountId: 'USD',
+      amount: 12.5,
+      currency: 'USD',
+      transactionDate: DateTime(now.year, now.month, 1),
+      merchant: 'Foreign purchase',
+    );
+    repository = await repository.addTransactions([localExpense, usdExpense]);
+    repository = await repository.addTransactionTemplate(
+      name: 'USD template',
+      transaction: usdExpense,
+    );
+    repository = await repository.addRecurringTransactionRule(
+      name: 'USD recurring payment',
+      transaction: FinanceTransaction(
+        id: 'rule-draft',
+        type: TransactionType.expense,
+        accountId: 'USD',
+        amount: 12.5,
+        currency: 'USD',
+        transactionDate: DateTime(now.year, now.month + 1, 1),
+        status: TransactionStatus.planned,
+      ),
+    );
+
+    await tester.pumpWidget(ProviderScope(
+      overrides: [
+        financeRepositoryProvider
+            .overrideWith(() => _TestRepositoryNotifier(repository)),
+      ],
+      child: MaterialApp(
+        theme: buildFinanceTheme(AppThemeStyle.monochrome),
+        home: Scaffold(body: TransactionsV2Screen(repository: repository)),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(_selectedBasisValue(tester), '- TWD 464');
+    expect(find.text('支出 TWD 464'), findsOneWidget);
+    expect(find.text('- USD 12.50'), findsOneWidget);
+    expect(find.text('- TWD 64.00'), findsOneWidget);
+
+    await tester.tap(find.text('快捷模板'));
+    await tester.pumpAndSettle();
+    expect(find.text('USD 12.50'), findsOneWidget);
+    await tester.tap(find.text('管理模板'));
+    await tester.pumpAndSettle();
+    expect(find.text('USD 12.50'), findsOneWidget);
+    await tester.tap(find.text('USD template'));
+    await tester.pumpAndSettle();
+    expect(find.text('USD 12.50'), findsNWidgets(2));
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('快捷模板'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('周期计划'));
+    await tester.pumpAndSettle();
+    expect(find.text('USD 12.50'), findsOneWidget);
+    await tester.tap(find.text('USD recurring payment'));
+    await tester.pumpAndSettle();
+    expect(find.text('USD 12.50'), findsOneWidget);
+    expect(find.text('USD 12.50 · USD Cash'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('three calculation bases use distinct financial scopes', (
     tester,
   ) async {

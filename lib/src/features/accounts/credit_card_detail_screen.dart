@@ -315,7 +315,8 @@ class _CreditCardDetailScreenState
                       fit: BoxFit.scaleDown,
                       alignment: Alignment.centerRight,
                       child: Text(
-                        '${compassMoney(usageAmount)} / ${compassMoney(limit)}',
+                        '${compassMoney(usageAmount, currency: liveAccount.currency)} / '
+                        '${compassMoney(limit, currency: liveAccount.currency)}',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                               fontFeatures: compassTabularFigures,
                             ),
@@ -976,7 +977,7 @@ class _PurchaseRow extends StatelessWidget {
             child: FittedBox(
               fit: BoxFit.scaleDown,
               child: Text(
-                compassMoney(item.amount),
+                compassMoney(item.amount, currency: item.transaction.currency),
                 style: Theme.of(context).textTheme.titleSmall?.copyWith(
                       fontFeatures: compassTabularFigures,
                     ),

@@ -1,4 +1,5 @@
 import 'package:finance_app/src/core/utils/currency_formatter.dart';
+import 'package:finance_app/src/features/shared/compass_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -47,5 +48,20 @@ void main() {
 
     setActiveBaseCurrency('MYR');
     expect(formatMoney(12.5), 'RM 12.50');
+  });
+
+  test('Compass typography defaults to the ledger currency', () {
+    addTearDown(() {
+      setActiveBaseCurrency(baseCurrencyCode);
+      setCompassMoneyStyle(useCurrencyCode: true, useEuropeanSeparators: false);
+    });
+    setActiveBaseCurrency('TWD');
+    setCompassMoneyStyle(useCurrencyCode: true, useEuropeanSeparators: false);
+
+    expect(compassMoney(-1234.5), '- TWD 1,234.50');
+    expect(compassMoney(12.5, currency: 'USD'), 'USD 12.50');
+
+    setCompassMoneyStyle(useCurrencyCode: false, useEuropeanSeparators: false);
+    expect(compassMoney(12.5), 'NT\$ 12.50');
   });
 }
