@@ -1,6 +1,8 @@
 # 测试与质量
 
-## Web 26 来源信用卡账单入账日（本地验收）
+## Web 26 来源信用卡账单入账日
+
+2026-11-25 Homelab 同时上线 `ed9208b` 的 Web 和同步后端。候选镜像在隔离账本中写入 MYR 241.94、发生日 11-25、来源入账日 11-26 的跨卡还款，重新登录后读回同一日期和修订号；试写早于发生日的日期返回 400，修订号保持不变。生产切换复核原数据卷、SQLite 完整性、账号、账本修订及同修订快照、VAPID 公钥。公网首页、主程序、启动脚本及 Worker 的 SHA-256 均与候选镜像一致，健康接口返回 200，匿名访问账本修订及推送配置返回 401。隔离 Chrome 模拟 Android standalone，从真实 Web 25 确认更新后激活 Web 26，原地址正常渲染 WebGL 首帧。
 
 使用项目 Flutter 3.44.1 运行 `flutter test --no-pub`，491 项通过，2 项条件跳过（本机 AI 网关集成和手工截图）。`flutter analyze --no-pub lib/ test/` 得到 0 error、0 warning、64 info，默认因 info 返回 1。`node --test server/*.test.mjs test/web_bootstrap.test.mjs` 通过 63 项。
 
@@ -11,7 +13,7 @@
 
 发布包 `build/finance-compass-web26-sync.zip` 使用 `--dart-define=FINANCE_SYNC_WEB=true` 构建，已通过渲染器 lint。144 个文件、38 个核心预缓存条目、104 份字体校验和、锁定的 SQLite WASM、同源 CanvasKit 与 ZIP CRC 均通过校验。SHA-256 为 `b7aeb9739eec3facdf9ba1b1baff59fff3d1f9951c36939b28bf0a5528024b93`。本地 Chrome 在生产 CSP 下加载发布构建，Web 26 首帧和离线 Worker 正常；真实本地 Node 服务接受并读回带入账日的 v3 修订 1，Flutter 完成认证账本恢复并开始轮询修订号。生产发布需将 Web 26 和同步后端一起更新。
 
-## 未发布：信用卡与 PayLater 还款
+## Web 26 信用卡与 PayLater 还款回归
 
 使用项目 Flutter 3.44.1 运行全仓测试，461 项通过，2 项条件跳过（本机 AI 网关、手工截图）。`flutter analyze --no-pub lib/ test/` 得到 0 error、0 warning、64 info。`node --test server/*.test.mjs test/web_bootstrap.test.mjs` 通过 57 项。
 
