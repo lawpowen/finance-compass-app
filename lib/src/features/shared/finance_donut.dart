@@ -6,7 +6,11 @@ import 'package:flutter/material.dart';
 
 import '../../core/theme/finance_theme.dart';
 import 'compass_ui.dart'
-    show CompassHelpHeading, compassGlassHighlight, compassIsCpuSoftwareWeb;
+    show
+        CompassHelpHeading,
+        compassGlassHighlight,
+        compassIsCpuSoftwareWeb,
+        compassUsesCardBackdropBlur;
 
 @immutable
 class FinanceDonutSlice {
@@ -111,7 +115,8 @@ class FinanceDonutPanel extends StatelessWidget {
     final cardRadius = BorderRadius.circular(14);
     final cpuSoftware = compassIsCpuSoftwareWeb;
     final isLiquidGlass = palette.glassHighlightColor != null;
-    final usesBackdropBlur = !cpuSoftware && palette.cardBlurSigma > 0;
+    final usesBackdropBlur =
+        compassUsesCardBackdropBlur(context, palette.cardBlurSigma);
     final panelShadows = [
       if (palette.cardShadowColor case final shadow?)
         BoxShadow(

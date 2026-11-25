@@ -38,7 +38,7 @@
 
 ## 主题体系与多外观扩展
 
-`core/settings/app_theme_style.dart` 定义 `selectableStyles`（`monochrome`、`dopamine`、`liquidGlass`）与 `normalize(raw)`，保留历史枚举兼容并将未知或已下线主题值统一归一至黑白极简；`AppSettingsController` 按设备保存用户选定外观。原生端写入 SQLite `app_meta['theme_style']`，Web 写入当前 origin 的 `localStorage['finance-compass.theme_style']`。持久化成功后通知界面刷新。`core/theme/finance_theme.dart` 的 `FinanceThemePalette` 通过声明式令牌（`warning`、`primaryAction`、`cardSurface`、`cardBlurSigma`、`cardShadowColor`、`dockBlurSigma`、`dockSurfaceAlpha`、`dockShadowColor`、`donutColors`、`donutSeparatorColor`、`backgroundMiddle`、`glassHighlightColor`、`selectedSurface`）统一驱动 `CompassBackground`（含三段冰蓝渐变）、`CompassCard` / `FinanceDonutPanel`（含可选零布局高光绘笔 `compassGlassHighlight` 与渐变描边）以及 `_CompassDock` 的毛玻璃胶囊与高亮选态。
+`core/settings/app_theme_style.dart` 定义 `selectableStyles`（`monochrome`、`dopamine`、`liquidGlass`）与 `normalize(raw)`，保留历史枚举兼容并将未知或已下线主题值统一归一至黑白极简；`AppSettingsController` 按设备保存用户选定外观。原生端写入 SQLite `app_meta['theme_style']`，Web 写入当前 origin 的 `localStorage['finance-compass.theme_style']`。持久化成功后通知界面刷新。`core/theme/finance_theme.dart` 的 `FinanceThemePalette` 通过声明式令牌（`warning`、`primaryAction`、`cardSurface`、`cardBlurSigma`、`cardShadowColor`、`dockBlurSigma`、`dockSurfaceAlpha`、`dockShadowColor`、`donutColors`、`donutSeparatorColor`、`backgroundMiddle`、`glassHighlightColor`、`selectedSurface`）统一驱动 `CompassBackground`（含三段冰蓝渐变）、`CompassCard` / `FinanceDonutPanel`（含可选零布局高光绘笔 `compassGlassHighlight` 与渐变描边）以及 `_CompassDock` 的毛玻璃胶囊与高亮选态。Web 25 的滚动卡片与环图仅在宽度至少 960 逻辑像素且使用 GPU 时采样模糊背景。窄屏 GPU 保留高光和悬浮 Dock 的模糊，CPU 模式直接绘制高光组件的子内容。
 
 ## 页面与兼容入口
 

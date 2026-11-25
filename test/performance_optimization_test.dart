@@ -14,8 +14,10 @@ import 'package:finance_app/src/core/theme/finance_theme.dart';
 import 'package:finance_app/src/features/dashboard/dashboard_v2_screen.dart';
 import 'package:finance_app/src/features/home/home_screen.dart';
 import 'package:finance_app/src/features/shared/compass_ui.dart';
+import 'package:finance_app/src/features/shared/finance_donut.dart';
 import 'package:finance_app/src/features/transactions/transactions_v2_screen.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show BackdropFilterLayer;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -32,9 +34,13 @@ void main() {
   driftRuntimeOptions.dontWarnAboutMultipleDatabases = true;
 
   testWidgets(
-      'dock BackdropFilter is disabled on Android CPU software web and enabled otherwise',
+      'narrow dashboard keeps live backdrop blur on the floating GPU dock',
       (tester) async {
     addTearDown(() => debugOverrideCompassCpuSoftwareWeb = null);
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
 
     final settingsController = AppSettingsController();
     addTearDown(settingsController.dispose);
@@ -67,47 +73,80 @@ void main() {
       find.ancestor(of: dock, matching: find.byType(BackdropFilter)),
     );
     expect(gpuFilter.enabled, isTrue);
+    final dashboard = find.byType(DashboardV2Screen);
+    expect(find.descendant(of: dashboard, matching: find.byType(CompassCard)),
+        findsWidgets);
+    final cardFilters =
+        find.descendant(of: dashboard, matching: find.byType(BackdropFilter));
+    expect({
+      'filters in scrolling dashboard': cardFilters.evaluate().length,
+      'composited blur layers including dock':
+          tester.layers.whereType<BackdropFilterLayer>().length,
+    }, {
+      'filters in scrolling dashboard': 0,
+      'composited blur layers including dock': 1,
+    });
+  });
+
+  test('emergency software rendering skips the glass highlight paint pass', () {
+    addTearDown(() => debugOverrideCompassCpuSoftwareWeb = null);
+    const content = Text('glass');
+    Widget highlight() => compassGlassHighlight(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        child: content);
+    debugOverrideCompassCpuSoftwareWeb = true;
+    expect(highlight(), same(content));
+    debugOverrideCompassCpuSoftwareWeb = false;
+    expect((highlight() as CustomPaint).foregroundPainter, isNotNull);
   });
 
   testWidgets(
-      'CompassCard enables BackdropFilter blur on liquidGlass GPU mode and skips on CPU fallback',
+      'static glass cards and donut panels blur only on wide GPU layouts',
       (tester) async {
     addTearDown(() => debugOverrideCompassCpuSoftwareWeb = null);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
 
     Widget buildCardHarness() => MaterialApp(
           theme: buildFinanceTheme(AppThemeStyle.liquidGlass),
           home: const Scaffold(
             body: CompassBackdropLayer(
-              child: Center(
-                child: CompassCard(
-                  child: Text('液态玻璃测试卡片'),
-                ),
+              child: Column(
+                children: [
+                  CompassCard(child: Text('液态玻璃测试卡片')),
+                  FinanceDonutPanel(
+                      title: '分布',
+                      totalLabel: '总额',
+                      totalValue: '100',
+                      slices: []),
+                ],
               ),
             ),
           ),
         );
 
+    tester.view.physicalSize = const Size(compassDesktopMinWidth, 844);
     debugOverrideCompassCpuSoftwareWeb = false;
     await tester.pumpWidget(buildCardHarness());
     await tester.pumpAndSettle();
-    expect(
-      find.ancestor(
-        of: find.text('液态玻璃测试卡片'),
-        matching: find.byType(BackdropFilter),
-      ),
-      findsOneWidget,
-    );
+    Finder frosts(String text) => find.ancestor(
+        of: find.text(text), matching: find.byType(BackdropFilter));
+    expect(frosts('液态玻璃测试卡片'), findsOneWidget);
+    expect(frosts('分布'), findsOneWidget);
 
+    tester.view.physicalSize = const Size(compassDesktopMinWidth - 1, 844);
+    await tester.pumpAndSettle();
+    expect(frosts('液态玻璃测试卡片'), findsNothing);
+    expect(frosts('分布'), findsNothing);
+
+    tester.view.physicalSize = const Size(compassDesktopMinWidth, 844);
     debugOverrideCompassCpuSoftwareWeb = true;
     await tester.pumpWidget(buildCardHarness());
     await tester.pumpAndSettle();
-    expect(
-      find.ancestor(
-        of: find.text('液态玻璃测试卡片'),
-        matching: find.byType(BackdropFilter),
-      ),
-      findsNothing,
-    );
+    expect(frosts('液态玻璃测试卡片'), findsNothing);
+    expect(frosts('分布'), findsNothing);
   });
 
   testWidgets(

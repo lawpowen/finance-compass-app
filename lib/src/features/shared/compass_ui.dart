@@ -10,7 +10,7 @@ import '../../core/theme/finance_colors.dart';
 import '../../core/theme/finance_theme.dart';
 import '../../core/utils/currency_formatter.dart' show activeBaseCurrencyCode;
 
-/// Allows tests to simulate the Android CPU-only CanvasKit rendering path.
+/// Allows tests to simulate CanvasKit's software fallback.
 @visibleForTesting
 bool? debugOverrideCompassCpuSoftwareWeb;
 
@@ -23,6 +23,13 @@ const compassDesktopPagePadding = EdgeInsets.fromLTRB(28, 24, 28, 32);
 const compassDesktopMinWidth = 960.0;
 const compassHairline = Divider(height: 1, thickness: .7);
 const compassTabularFigures = [FontFeature.tabularFigures()];
+
+/// Scrolling cards sit on the ambient gradient. On narrow layouts only the
+/// floating dock needs to sample the content passing beneath it.
+bool compassUsesCardBackdropBlur(BuildContext context, double sigma) =>
+    sigma > 0 &&
+    !compassIsCpuSoftwareWeb &&
+    MediaQuery.sizeOf(context).width >= compassDesktopMinWidth;
 
 EdgeInsets compassScrollPadding(BuildContext context, EdgeInsets padding) =>
     padding.copyWith(
@@ -167,7 +174,7 @@ Widget compassGlassHighlight({
   required Widget child,
   double intensity = 1,
 }) {
-  if (color == null) return child;
+  if (color == null || compassIsCpuSoftwareWeb) return child;
   return CustomPaint(
     foregroundPainter: _CompassGlassHighlightPainter(
       color,
@@ -391,7 +398,8 @@ class CompassCard extends StatelessWidget {
     final borderRadius = BorderRadius.circular(radius);
     final cpuSoftware = compassIsCpuSoftwareWeb;
     final isLiquidGlass = palette.glassHighlightColor != null;
-    final usesBackdropBlur = !cpuSoftware && palette.cardBlurSigma > 0;
+    final usesBackdropBlur =
+        compassUsesCardBackdropBlur(context, palette.cardBlurSigma);
     final inner = Padding(
       padding: padding,
       child: child,

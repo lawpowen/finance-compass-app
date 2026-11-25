@@ -14,7 +14,7 @@ RUN flutter pub get --enforce-lockfile
 COPY lib ./lib
 COPY assets ./assets
 COPY web ./web
-COPY tool/build_web.sh tool/drift_worker.dart tool/sqlite3_wasm.lock ./tool/
+COPY tool/build_web.sh tool/lint_web_renderer.dart tool/drift_worker.dart tool/sqlite3_wasm.lock ./tool/
 RUN sed -i 's/\r$//' pubspec.lock tool/build_web.sh tool/sqlite3_wasm.lock \
     && SKIP_PUB_GET=1 FINANCE_SYNC_WEB=true sh tool/build_web.sh
 

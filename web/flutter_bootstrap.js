@@ -3,17 +3,45 @@
 
 // pwa_bootstrap.js owns the app's offline worker and update consent.
 const renderParams = new URLSearchParams(window.location.search);
-// In 3.44.1 a native loss can throw before CkSurface acquires a replacement.
-// Android standalone must survive OS backgrounding with the current form intact.
-const installedAndroid =
-  (navigator.userAgentData?.platform === 'Android' || /Android/i.test(navigator.userAgent)) &&
-  window.matchMedia?.('(display-mode: standalone)').matches;
-const forceCpuOnly = renderParams.has('cpu') || (Boolean(installedAndroid) && renderParams.get('gpu') !== '1');
+const fallbackKey = 'finance-compass-cpu-fallback';
+const lastReloadKey = 'finance-compass-last-gl-reload';
+const fallbackLifetime = 10 * 60_000;
+const gpuRequested = renderParams.get('gpu') === '1';
+
+function temporaryFallbackActive(storage) {
+  const raw = storage.getItem(fallbackKey);
+  if (raw === null) return false;
+  const since = Number(raw);
+  const age = Date.now() - since;
+  if (since > 0 && age >= 0 && age < fallbackLifetime) return true;
+  storage.removeItem(fallbackKey);
+  return false;
+}
+
+function useSoftwareRenderer() {
+  if (renderParams.has('cpu')) return true;
+  try {
+    const storage = window.sessionStorage;
+    if (gpuRequested) {
+      storage.removeItem(fallbackKey);
+    } else {
+      return temporaryFallbackActive(storage);
+    }
+  } catch {
+    // Blocked session storage does not prevent a normal hardware launch.
+  }
+  return false;
+}
+
+const forceCpuOnly = useSoftwareRenderer();
 window.financeCompassCpuRendering = forceCpuOnly;
 const surfaces = new Set();
 let checkTimer;
 let repaintTimer;
 let navigating = false;
+let recoveryCover;
+let resumeLoss;
+let pageShown = false;
 
 window.addEventListener('flutter-first-frame', () => {
   document.getElementById('finance-boot')?.remove();
@@ -30,51 +58,96 @@ function requestRepaint() {
   }, 0);
 }
 
-function hasLostSurface() {
-  let lost = false;
+function lostSurface() {
   for (const reference of surfaces) {
     const gl = reference.deref();
     if (!gl) surfaces.delete(reference);
-    else if (gl.canvas.isConnected !== false && gl.isContextLost()) lost = true;
+    else if (gl.canvas.isConnected !== false && gl.isContextLost()) return reference;
   }
-  return lost;
 }
 
-function recoverRenderer() {
-  const key = 'finance-compass-last-gl-reload';
-  const now = Date.now();
-  let retryHardware = false;
+function clearRecoveryCover() {
+  recoveryCover?.remove();
+  recoveryCover = undefined;
+}
+
+function paintCoverThen(action) {
+  const cover = document.createElement('div');
+  cover.id = 'finance-recovery';
+  cover.lang = 'zh';
+  cover.setAttribute('role', 'status');
+  cover.textContent = '正在恢复画面…';
+  recoveryCover = cover;
+  document.body.appendChild(cover);
+  // Give the DOM cover a paint before a synchronous navigation tears it down.
+  window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+    if (recoveryCover === cover) action();
+  }));
+}
+
+function recoverRenderer(loss) {
+  let storage;
+  let previous;
   try {
-    const previous = Number(window.sessionStorage.getItem(key));
-    window.sessionStorage.setItem(key, String(now));
-    retryHardware = !previous || now - previous > 60_000;
+    const session = window.sessionStorage;
+    previous = Number(session.getItem(lastReloadKey));
+    storage = session;
   } catch {
-    // A CPU URL survives navigation even when session storage is blocked.
+    // The CPU URL below is the loop breaker when we cannot record a retry.
   }
-  navigating = true;
-  if (retryHardware) {
-    window.location.reload();
-  } else {
-    const url = new URL(window.location.href);
-    url.searchParams.set('cpu', '1');
-    window.location.replace(url.href);
+  const repeated = now => previous > 0 && now >= previous && now - previous <= 60_000;
+  const editing = window.financeCompassHasOpenEditor?.();
+  if (editing || (repeated(Date.now()) && gpuRequested)) {
+    const message = editing
+      ? '显示暂时无法恢复。重新加载可能丢失当前表单中未保存的内容。要继续吗？'
+      : '硬件绘图再次失活。要按当前指定的 GPU 模式重新加载吗？';
+    if (!window.confirm(message)) return;
   }
+
+  paintCoverThen(() => {
+    if (document.visibilityState !== 'visible' || lostSurface() !== loss ||
+        window.financeCompassProtectPendingChanges ||
+        (!editing && window.financeCompassHasOpenEditor?.())) {
+      clearRecoveryCover();
+      checkAfterGracePeriod();
+      return;
+    }
+    navigating = true;
+    if (storage) {
+      try {
+        const now = Date.now();
+        storage.setItem(lastReloadKey, String(now));
+        if (repeated(now) && !gpuRequested) storage.setItem(fallbackKey, String(now));
+      } catch {
+        storage = undefined;
+      }
+    }
+    if (storage) {
+      window.location.reload();
+    } else {
+      const url = new URL(window.location.href);
+      url.searchParams.set('cpu', '1');
+      window.location.replace(url.href);
+    }
+  });
 }
 
-function checkAfterGracePeriod() {
-  if (forceCpuOnly || navigating || checkTimer !== undefined ||
+function checkAfterGracePeriod(onResume = false) {
+  if (forceCpuOnly || navigating || recoveryCover || checkTimer !== undefined ||
       document.visibilityState !== 'visible') return;
-  const lostAtStart = hasLostSurface();
+  const loss = lostSurface();
+  resumeLoss = onResume ? loss : undefined;
   checkTimer = window.setTimeout(() => {
     checkTimer = undefined;
-    if (document.visibilityState !== 'visible' || !hasLostSurface()) return;
-    if (!lostAtStart || window.financeCompassProtectPendingChanges) {
+    resumeLoss = undefined;
+    const current = lostSurface();
+    if (document.visibilityState !== 'visible' || !current) return;
+    if (current !== loss || window.financeCompassProtectPendingChanges) {
       checkAfterGracePeriod();
-    } else if (!window.financeCompassHasOpenEditor?.() ||
-        window.confirm('显示暂时无法恢复。重新加载可能丢失当前表单中未保存的内容。要继续吗？')) {
-      recoverRenderer();
+    } else {
+      recoverRenderer(loss);
     }
-  }, 900);
+  }, resumeLoss ? 350 : 900);
 }
 
 if (!forceCpuOnly) {
@@ -98,14 +171,12 @@ if (!forceCpuOnly) {
         if (surfaces.has(reference)) handlingLoss = reference;
       }, true);
     }
-    if (canvasType === window.OffscreenCanvas) {
-      // Chromium dispatches OffscreenCanvas events in registration order even
-      // for capture listeners. CanvasProvider registers before requesting GL.
-      prototype.addEventListener = function(type) {
-        if (type === 'webglcontextlost') observeLossStart(this);
-        return Reflect.apply(addEventListener, this, arguments);
-      };
-    }
+    // Install before CanvasProvider, even on targets that invoke capture and
+    // non-capture listeners together in registration order.
+    prototype.addEventListener = function(type) {
+      if (type === 'webglcontextlost') observeLossStart(this);
+      return Reflect.apply(addEventListener, this, arguments);
+    };
     const getContext = prototype.getContext;
     prototype.getContext = function(type, options) {
       const gl = Reflect.apply(getContext, this, arguments);
@@ -128,6 +199,9 @@ if (!forceCpuOnly) {
       this.addEventListener('webglcontextlost', () => {
         handlingLoss = undefined;
         requestRepaint();
+        // A delayed native event for the loss already seen on resume must
+        // not turn the shorter foreground-return grace into another 900ms.
+        if (resumeLoss === reference) return;
         window.clearTimeout(checkTimer);
         checkTimer = undefined;
         checkAfterGracePeriod();
@@ -143,14 +217,44 @@ if (!forceCpuOnly) {
   track(window.OffscreenCanvas);
 }
 
-function onForeground() {
+function canReturnToHardware() {
+  if (!forceCpuOnly || renderParams.has('cpu') ||
+      document.visibilityState !== 'visible' || window.financeCompassProtectPendingChanges ||
+      window.financeCompassHasOpenEditor?.()) return false;
+  try {
+    return !temporaryFallbackActive(window.sessionStorage);
+  } catch {
+    return false;
+  }
+}
+
+function onForeground(event) {
+  const returning = event.type === 'visibilitychange' || event.persisted || pageShown;
+  if (event.type === 'pageshow') pageShown = true;
   if (document.visibilityState !== 'visible') {
     window.clearTimeout(checkTimer);
     checkTimer = undefined;
+    resumeLoss = undefined;
+    clearRecoveryCover();
     return;
   }
   requestRepaint();
-  checkAfterGracePeriod();
+  if (returning && !navigating && !recoveryCover && canReturnToHardware()) {
+    paintCoverThen(() => {
+      if (canReturnToHardware()) {
+        navigating = true;
+        window.location.reload();
+      } else {
+        clearRecoveryCover();
+      }
+    });
+    return;
+  }
+  if (checkTimer !== undefined && !resumeLoss && lostSurface()) {
+    window.clearTimeout(checkTimer);
+    checkTimer = undefined;
+  }
+  checkAfterGracePeriod(true);
 }
 
 document.addEventListener('visibilitychange', onForeground);

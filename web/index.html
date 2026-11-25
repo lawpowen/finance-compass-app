@@ -34,10 +34,10 @@
   <title>Finance Compass</title>
   <style>
     html, body { margin: 0; background: #123b3a; }
-    #finance-boot {
+    #finance-boot, #finance-recovery {
       position: fixed;
       inset: 0;
-      z-index: 1;
+      z-index: 2147483647;
       display: grid;
       place-content: center;
       justify-items: center;
@@ -46,7 +46,7 @@
       color: #f2f7f3;
       font: 500 1rem/1.5 system-ui, sans-serif;
     }
-    #finance-boot::before {
+    #finance-boot::before, #finance-recovery::before {
       content: "";
       width: 1.75rem;
       height: 1.75rem;
@@ -55,7 +55,7 @@
       border-radius: 50%;
     }
     @media (prefers-reduced-motion: no-preference) {
-      #finance-boot::before { animation: boot-spin 1s linear infinite; }
+      #finance-boot::before, #finance-recovery::before { animation: boot-spin 1s linear infinite; }
       @keyframes boot-spin { to { transform: rotate(1turn); } }
     }
   </style>

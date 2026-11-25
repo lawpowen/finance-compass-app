@@ -1,5 +1,23 @@
 # 测试与质量
 
+## 2026-11-25 Web 25 已安装 PWA 渲染性能与恢复
+
+渲染器源码 lint 可在仓库根目录运行 `dart tool/lint_web_renderer.dart`。它检查 Flutter 展开模板之前的 `web/flutter_bootstrap.js`。规则 `web-renderer/platform-default` 拦截浏览器 UA、平台、触摸点、安装标记及 `display-mode` 媒体查询，`web-renderer/always-cpu` 拦截将 CanvasKit 软件选项直接设为 `true` 或引用同值常量。安装界面等其他脚本不在检查范围内。显式 CPU、会话回退和保存中延迟重载等行为由 `test/web_bootstrap.test.mjs` 验证。
+
+PowerShell 与 shell 两个 Web 构建脚本在编译和清理输出目录前运行同一检查。静态及同步 Docker 源码构建沿用 shell 入口。直接调用 SDK 的 `flutter build web` 时先单独执行上述 lint。`flutter test --no-pub` 也会检查当前启动脚本和 lint 正反例。单独执行 `flutter analyze` 仅分析 Dart。
+
+使用提交 `0247c65` 的原始启动脚本复验，两个构建入口均在生成输出前报告 `web-renderer/platform-default` 并返回 1。Web 25 启动脚本返回 0。
+
+Windows 使用项目固定的 Flutter 3.44.1 及其随附 Dart SDK。Flutter 全仓测试 444 项通过，2 项条件跳过；Chrome 启动偏好测试 4 项通过。Node 启动与服务端测试通过 57 项，启用本机 Chrome 的原生画布回归通过 2 项。分析 `lib/ test/` 得到 0 error、0 warning、64 info；默认因 info 返回 1，使用 `--no-fatal-infos` 返回 0。同步发布包在本地生成，包含 144 个文件，校验了 38 个 Worker 核心预缓存条目、104 份字体校验和及整个 ZIP 的 CRC。
+
+- 对同一 Android 用户代理和无参数入口运行 Web 24 启动脚本，普通标签页读到 `canvasKitForceCpuOnly=false`，独立 PWA 读到 `true`。Web 25 的启动测试同时核对引擎配置和 Flutter 读取的渲染标记。
+- 同一 390×844 逻辑像素视口、相同总览样例与液态玻璃主题下，`test/performance_optimization_test.dart` 检查滚动内容与实际合成层。卡片背景滤镜从 5 个降至 0 个，包含悬浮底栏的 `BackdropFilterLayer` 从 6 层降至 1 层。959 和 960 像素边界分别验证窄屏与桌面卡片、环图效果，另验证 CPU 模式直接返回子组件。图层数衡量省去的背景采样次数，真机 FPS 需要设备实测。
+- `node --test test/web_bootstrap.test.mjs server/*.test.mjs` 覆盖渲染默认值、60 秒内再次失活、10 分钟标记到期、显式覆盖、存储异常、短暂离开、前后台两种宽限期、占位绘制时的竞态和表单保护。设置 `CHROME_EXECUTABLE` 后运行 `node --test test/web_bootstrap_browser.test.mjs`，使用原生 WebGL 丢失事件核验 OffscreenCanvas、闭合 Shadow DOM、绘制恢复占位和不改地址的会话级降级。
+
+本地回环站点先完整提供 Web 24，再切换至带生产 CSP 的 Web 25 同步构建。真实 Chrome 在 390×844 视口模拟 Android 安装模式，旧 Worker 等待确认，新 Worker 激活后出现登录首帧。安装模式和普通标签页均取得实际 CanvasKit WebGL 表面，驱动报告 Intel Iris Xe / ANGLE D3D11。健康页面离开再返回，页面时间原点与采样画面保持一致。
+
+对编译产物的主画布注入 `WEBGL_lose_context`，第一次在原 URL 恢复为 GPU；再次失活时仍使用原 URL，进入带时间戳的临时 CPU 模式。恢复前的品牌占位覆盖 390×844 视口，恢复后的登录页可见。将测试会话标记置为已过期，保存保护仍可阻止切换，随后安全返回前台会恢复 GPU。`?gpu=1` 的显式覆盖也已实际验证。以上设备模式由桌面 Chrome 模拟。
+
 ## 2026-11-25 Web 24 PWA 冷启动与图标回前台
 
 Homelab 生产部署运行 `0247c65`。升级前在线 SQLite 备份通过校验，仅替换 Web 容器。切换后复核了原同步容器、账本卷、SQLite 完整性和账本修订连续性。公网首页、启动脚本和 Worker 的 SHA-256 均与候选镜像一致，健康接口返回 200。独立 Chrome 配置先加载线上 Web 23，再确认更新，验证了 Web 24 缓存激活、启动占位消失及 Flutter 首帧显示。模拟 Android standalone 的公网入口无需查询参数即采用软件绘图。

@@ -43,6 +43,8 @@ function Resolve-PhysicalPath([string]$Path) {
 
 $root = Resolve-PhysicalPath (Split-Path -Parent $PSScriptRoot)
 Set-Location -LiteralPath $root
+& $Dart tool/lint_web_renderer.dart
+if ($LASTEXITCODE -ne 0) { throw 'Web renderer lint failed.' }
 $wasmLock = ConvertFrom-StringData (Get-Content -LiteralPath 'tool/sqlite3_wasm.lock' -Raw)
 $pubspecLock = Get-Content -LiteralPath 'pubspec.lock' -Raw
 $sqlite3Package = [regex]::Match(

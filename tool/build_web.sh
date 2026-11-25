@@ -9,6 +9,7 @@ BASE_HREF="${BASE_HREF:-/}"
 # path can delete files it has just written.
 ROOT=$(CDPATH= cd -P -- "$(dirname -- "$0")/.." && pwd -P)
 cd "$ROOT"
+"$DART" tool/lint_web_renderer.dart
 . tool/sqlite3_wasm.lock
 
 locked_sqlite3=$(awk '/^  sqlite3:/{in_sqlite3=1; next} in_sqlite3 && /^    version:/{gsub(/"/, "", $2); print $2; exit}' pubspec.lock)

@@ -23,12 +23,13 @@ class Target {
   emit(type, options = {}) { this.dispatchEvent({ type, ...options }); }
 }
 
-function browser({ url = 'https://example.test/finance/', storage = new Map(), blocked = false, userAgent = '', standalone = false } = {}) {
+function browser({ url = 'https://example.test/finance/', storage = new Map(), blocked = false, now = 100000,
+  userAgent = '', standalone = false, htmlRegistrationOrder = false } = {}) {
   const window = new Target();
   window.matchMedia = query => ({ matches: standalone && query === '(display-mode: standalone)' });
   const document = new Target();
   document.visibilityState = 'visible';
-  let now = 100000, config, repaints = 0, removals = 0;
+  let config, repaints = 0, removals = 0;
   const navigations = [], timers = new Map();
   let sequence = 0;
   window.location = {
@@ -38,9 +39,11 @@ function browser({ url = 'https://example.test/finance/', storage = new Map(), b
   window.sessionStorage = {
     getItem: key => { if (blocked) throw new Error('denied'); return storage.get(key) ?? null; },
     setItem: (key, value) => { if (blocked) throw new Error('denied'); storage.set(key, value); },
+    removeItem: key => { if (blocked) throw new Error('denied'); storage.delete(key); },
   };
   window.setTimeout = (fn, delay) => { timers.set(++sequence, { at: now + delay, fn }); return sequence; };
   window.clearTimeout = id => timers.delete(id);
+  window.requestAnimationFrame = fn => window.setTimeout(() => fn(now), 16);
   const advance = (ms = 1000) => {
     const until = now + ms;
     for (;;) {
@@ -58,8 +61,7 @@ function browser({ url = 'https://example.test/finance/', storage = new Map(), b
     lose() { this.context.lost = true; this.emit('webglcontextlost'); }
     restore() { this.context.lost = false; this.emit('webglcontextrestored'); }
   }
-  window.HTMLCanvasElement = class extends Canvas { isConnected = true; };
-  window.OffscreenCanvas = class extends Canvas {
+  class RegistrationOrderCanvas extends Canvas {
     // OffscreenCanvas is an EventTarget without a parent node. Chromium invokes
     // the listeners in registration order, including capture listeners.
     dispatchEvent(event) {
@@ -67,8 +69,13 @@ function browser({ url = 'https://example.test/finance/', storage = new Map(), b
         if (listener.type === event.type) listener.callback.call(this, event);
       }
     }
-  };
-  document.getElementById = id => id === 'finance-boot' ? { remove() { removals++; } } : null;
+  }
+  window.HTMLCanvasElement = class extends (htmlRegistrationOrder ? RegistrationOrderCanvas : Canvas) { isConnected = true; };
+  window.OffscreenCanvas = class extends RegistrationOrderCanvas {};
+  const elements = new Map([['finance-boot', { remove() { removals++; elements.delete('finance-boot'); } }]]);
+  document.createElement = () => ({ setAttribute() {}, remove() { elements.delete(this.id); } });
+  document.body = { appendChild(node) { elements.set(node.id, node); } };
+  document.getElementById = id => elements.get(id) ?? null;
   window.addEventListener('finance-compass-repaint', () => repaints++);
   runInNewContext(bootstrap, {
     window, document, URL, URLSearchParams, Event, Date: { now: () => now }, navigator: { userAgent },
@@ -98,10 +105,10 @@ test('hardware remains default, CPU opt-in preserves same-origin fonts; first fr
   assert.ok(cpu.repaints() > 0); assert.deepEqual(cpu.navigations, []);
 });
 
-test('installed Android uses software by default and shares its render mode with Flutter effects', () => {
+test('installed Android uses WebGL by default and shares its render mode with Flutter effects', () => {
   const userAgent = 'Mozilla/5.0 (Linux; Android 14; Pixel)';
   for (const [standalone, agent, query, expected] of [
-    [true, userAgent, '', true],
+    [true, userAgent, '', false],
     [false, userAgent, '', false],
     [true, 'Mozilla/5.0 (iPhone)', '', false],
     [true, 'Windows', '', false],
@@ -165,14 +172,162 @@ test('a late loss gets a full grace period after visible, even if detected by th
   }
 });
 
-test('consecutive failures switch this entry to CPU and denied session storage cannot loop', () => {
+test('two failures within a minute recover at the original URL; the CPU session expires', () => {
   const url = 'https://example.test/subpath/?account=x#detail';
   const storage = new Map();
-  for (const [blocked, expected] of [[false, url], [false, url.replace('#', '&cpu=1#')], [true, url.replace('#', '&cpu=1#')]]) {
-    const b = browser({ url, blocked, storage }), c = b.offscreen(); c.getGL(); c.lose(); b.advance();
-    b.window.emit('pageshow', { persisted: true }); b.advance();
-    assert.deepEqual(b.navigations, [expected]);
+  for (const now of [100000, 160000]) {
+    const b = browser({ url, storage, now }), c = b.offscreen();
+    assert.equal(b.config.canvasKitForceCpuOnly, false);
+    c.getGL(); c.lose(); b.advance();
+    assert.deepEqual(b.navigations, [url]);
   }
+  const at = Number(storage.get('finance-compass-cpu-fallback'));
+  assert.ok(at >= 160000 && at <= 161000);
+  assert.equal(browser({ url, storage, now: at + 599999 }).config.canvasKitForceCpuOnly, true);
+  assert.equal(browser({ url, now: at + 1000 }).config.canvasKitForceCpuOnly, false);
+  assert.equal(browser({ url, storage, now: at + 600000 }).config.canvasKitForceCpuOnly, false);
+  assert.equal(storage.has('finance-compass-cpu-fallback'), false);
+});
+
+test('separate losses over a minute apart remain hardware retries', () => {
+  const storage = new Map();
+  for (const now of [100000, 160001]) {
+    const b = browser({ storage, now }), c = b.html();
+    c.getGL(); c.lose(); b.advance();
+    assert.deepEqual(b.navigations, [b.window.location.href]);
+  }
+  assert.equal(browser({ storage, now: 162000 }).config.canvasKitForceCpuOnly, false);
+});
+
+test('GPU override clears the temporary session flag; explicit CPU wins', () => {
+  const storage = new Map([['finance-compass-cpu-fallback', '99000']]);
+  const boot = query => browser({ storage, url: 'https://example.test/' + query });
+  assert.equal(boot('?gpu=1&cpu=1').config.canvasKitForceCpuOnly, true);
+  assert.equal(boot('?gpu=1').config.canvasKitForceCpuOnly, false);
+  assert.equal(storage.has('finance-compass-cpu-fallback'), false);
+  assert.equal(boot('').config.canvasKitForceCpuOnly, false);
+});
+
+test('a warm installed PWA returns from expired CPU fallback only on a safe foreground', () => {
+  for (const protectedBy of ['editor', 'write']) {
+    const storage = new Map([['finance-compass-cpu-fallback', '100000']]);
+    const b = browser({ storage, userAgent: 'Android', standalone: true });
+    assert.equal(b.config.canvasKitForceCpuOnly, true);
+    b.advance(600000);
+    assert.deepEqual(b.navigations, []);
+    b.window.emit('pageshow'); b.advance(); // initial display, not an app return
+    assert.deepEqual(b.navigations, []);
+    b.window.financeCompassHasOpenEditor = () => protectedBy === 'editor';
+    b.window.financeCompassProtectPendingChanges = protectedBy === 'write';
+    b.window.emit('pageshow', {persisted: true}); b.advance();
+    assert.equal(b.document.getElementById('finance-recovery'), null);
+    assert.deepEqual(b.navigations, []);
+    b.window.financeCompassHasOpenEditor = () => false;
+    b.window.financeCompassProtectPendingChanges = false;
+    b.visible('hidden'); b.visible('visible'); b.advance(32);
+    b.window.emit('pageshow', {persisted: true}); b.advance();
+    assert.deepEqual(b.navigations, [b.window.location.href]);
+    assert.equal(browser({ storage, now: 800000 }).config.canvasKitForceCpuOnly, false);
+  }
+});
+
+test('manual CPU choice stays put on warm return; a newly opened editor cancels a pending GPU return', () => {
+  const cpu = browser({ url: 'https://example.test/?cpu=1' });
+  cpu.advance(900000); cpu.visible('hidden'); cpu.visible('visible'); cpu.advance();
+  assert.deepEqual(cpu.navigations, []);
+  const storage = new Map([['finance-compass-cpu-fallback', '100000']]);
+  const b = browser({storage});
+  storage.clear();
+  b.window.emit('pageshow', {persisted: true});
+  assert.ok(b.document.getElementById('finance-recovery'));
+  b.window.financeCompassHasOpenEditor = () => true;
+  b.advance(); assert.deepEqual(b.navigations, []);
+  assert.equal(b.document.getElementById('finance-recovery'), null);
+});
+
+test('storage denial alone uses the CPU URL escape hatch', () => {
+  const url = 'https://example.test/subpath/?account=x#detail';
+  const b = browser({ url, blocked: true }), c = b.offscreen();
+  assert.equal(b.config.canvasKitForceCpuOnly, false);
+  c.getGL(); c.lose(); b.advance();
+  assert.deepEqual(b.navigations, [url.replace('#', '&cpu=1#')]);
+  const reopened = browser({ url: b.navigations[0], blocked: true });
+  assert.equal(reopened.config.canvasKitForceCpuOnly, true);
+});
+
+test('a background loss uses a shorter grace, then paints a branded cover before reload', () => {
+  const b = browser(), c = b.html();
+  c.getGL(); b.visible('hidden'); c.lose(); b.advance();
+  b.visible('visible'); b.advance(349);
+  assert.equal(b.document.getElementById('finance-recovery'), null);
+  b.advance(1);
+  const overlay = b.document.getElementById('finance-recovery');
+  assert.ok(overlay?.textContent);
+  assert.deepEqual(b.navigations, []);
+  b.advance(16); assert.deepEqual(b.navigations, []);
+  b.advance(16); assert.deepEqual(b.navigations, [b.window.location.href]);
+});
+
+test('BFCache restore speeds up an outstanding probe and a delayed native loss keeps its deadline', () => {
+  const b = browser(), c = b.html(); c.getGL();
+  b.window.emit('pageshow'); b.advance(20);
+  c.context.lost = true;
+  b.window.emit('pageshow', {persisted: true}); b.advance(300);
+  c.lose(); b.advance(49);
+  assert.equal(b.document.getElementById('finance-recovery'), null);
+  b.advance(1);
+  assert.ok(b.document.getElementById('finance-recovery'));
+});
+
+test('a different surface losing context during the cover paint gets its own full grace', () => {
+  const b = browser(), first = b.html(), second = b.offscreen();
+  first.getGL(); second.getGL(); first.lose(); b.advance(900);
+  assert.ok(b.document.getElementById('finance-recovery'));
+  first.restore(); second.lose(); b.advance(32);
+  assert.deepEqual(b.navigations, []);
+  assert.equal(b.document.getElementById('finance-recovery'), null);
+  second.restore(); b.advance(1000);
+  assert.deepEqual(b.navigations, []);
+});
+
+test('a foreground loss receives 900ms, and recovery or protected state during paint cancels navigation', () => {
+  for (const change of ['restored', 'saving', 'hidden', 'new-editor']) {
+    const b = browser(), c = b.html();
+    b.window.emit('flutter-first-frame');
+    c.getGL(); c.lose(); b.advance(899);
+    assert.equal(b.document.getElementById('finance-recovery'), null);
+    b.advance(1); assert.ok(b.document.getElementById('finance-recovery'));
+    if (change === 'restored') c.restore();
+    if (change === 'saving') b.window.financeCompassProtectPendingChanges = true;
+    if (change === 'hidden') b.visible('hidden');
+    if (change === 'new-editor') {
+      b.window.financeCompassHasOpenEditor = () => true;
+      b.window.confirm = () => false;
+    }
+    b.advance(2000);
+    assert.deepEqual(b.navigations, []);
+    assert.equal(b.document.getElementById('finance-recovery'), null);
+  }
+});
+
+test('HTML canvas engines with registration-order AT_TARGET dispatch retire the exact replaced surface', () => {
+  const b = browser({htmlRegistrationOrder: true}), c = b.html();
+  c.addEventListener('webglcontextlost', () => b.html().getGL());
+  c.getGL(); c.lose(); b.advance();
+  assert.ok(b.repaints() > 0); assert.deepEqual(b.navigations, []);
+});
+
+test('persistent explicit GPU override cannot automatically cycle through repeated reloads', () => {
+  const storage = new Map(), url = 'https://example.test/?gpu=1';
+  const first = browser({ storage, url }), c = first.html();
+  c.getGL(); c.lose(); first.advance();
+  assert.deepEqual(first.navigations, [url]);
+  const again = browser({ storage, url, now: 102000 }), d = again.html();
+  let prompts = 0;
+  again.window.confirm = () => { prompts++; return false; };
+  d.getGL(); d.lose(); again.advance(5000);
+  assert.equal(prompts, 1); assert.deepEqual(again.navigations, []);
+  assert.equal(again.document.getElementById('finance-recovery'), null);
 });
 
 test('in-memory pending changes survive loss and may recover after the write completes', () => {

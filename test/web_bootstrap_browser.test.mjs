@@ -43,25 +43,91 @@ async function probe() {
   await fetch('/result?' + new URLSearchParams({checks: JSON.stringify(result)}));
 }
 
-test('Chrome keeps an edited page after replacing real Offscreen and Shadow DOM GL surfaces', {
+// Each visit runs with Chrome's real sessionStorage and location. Keep the
+// observations across navigations so the last document can report the result.
+async function probePersistentLoss() {
+  const key = 'probe.visits';
+  const visits = JSON.parse(sessionStorage.getItem(key) ?? '[]');
+  const current = {
+    url: location.pathname + location.search + location.hash,
+    software: window.financeCompassCpuRendering,
+    loaderSoftware: window.probeLoaderSoftware,
+    coverVisibleInFrame: false,
+  };
+  visits.push(current);
+  sessionStorage.setItem(key, JSON.stringify(visits));
+  if (visits.length <= 2) {
+    const canvas = document.body.appendChild(document.createElement('canvas'));
+    const gl = canvas.getContext('webgl2', {majorVersion: 2});
+    let coveredFrames = 0;
+    // Two animation ticks give the browser a paint opportunity between them.
+    // Record at navigation start, independent of the next HTTP response time.
+    window.navigation.addEventListener('navigate', () => {
+      current.coverVisibleInFrame = coveredFrames >= 2;
+      sessionStorage.setItem(key, JSON.stringify(visits));
+    }, {once: true});
+    function observeFrame() {
+      const cover = document.getElementById('finance-recovery');
+      if (cover) {
+        const rect = cover.getBoundingClientRect();
+        const style = getComputedStyle(cover);
+        const covering =
+          rect.left <= 0 && rect.top <= 0 &&
+          rect.right >= innerWidth && rect.bottom >= innerHeight &&
+          style.backgroundColor === 'rgb(18, 59, 58)' &&
+          style.visibility === 'visible' && style.opacity === '1' &&
+          cover.contains(document.elementFromPoint(innerWidth / 2, innerHeight / 2)) &&
+          cover.textContent.trim().length > 0;
+        coveredFrames = covering ? coveredFrames + 1 : 0;
+      }
+      if (coveredFrames < 2) requestAnimationFrame(observeFrame);
+    }
+    requestAnimationFrame(observeFrame);
+    gl.getExtension('WEBGL_lose_context').loseContext();
+    return;
+  }
+  if (visits.length === 3 || visits.length === 4) {
+    const next = new URL(location.href);
+    if (visits.length === 3) next.searchParams.set('gpu', '1');
+    else next.searchParams.delete('gpu');
+    location.assign(next);
+    return;
+  }
+  await fetch('/result?' + new URLSearchParams({checks: JSON.stringify(visits)}));
+}
+
+const chromeRequired = {
   skip: !process.env.CHROME_EXECUTABLE && 'Set CHROME_EXECUTABLE to the local Chrome executable',
-}, async t => {
-  const source = await readFile(new URL('../web/flutter_bootstrap.js', import.meta.url), 'utf8');
-  const bootstrap = source.replace('{{flutter_js}}', 'window._flutter = {loader: {load() {}}};')
+};
+
+async function runBrowser(t, scenario, maxVisits) {
+  const [source, index, caddy] = await Promise.all([
+    '../web/flutter_bootstrap.js', '../web/index.html', '../deploy/sync/Caddyfile',
+  ].map(name => readFile(new URL(name, import.meta.url), 'utf8')));
+  const bootstrap = source.replace('{{flutter_js}}',
+    'window._flutter = {loader: {load({config}) { window.probeLoaderSoftware = config.canvasKitForceCpuOnly; }}};')
     .replace('{{flutter_build_config}}', '');
+  const bootStyle = index.match(/<style>[\s\S]*?<\/style>/)[0];
+  const csp = caddy.match(/Content-Security-Policy\s+"([^"]+)"/)[1];
   let visits = 0;
   const result = Promise.withResolvers();
   const server = createServer((req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
-    if (url.pathname === '/') {
+    if (url.pathname === '/ledger') {
       visits++;
       res.setHeader('content-type', 'text/html');
-      if (visits > 1) result.reject(new Error('A lost, replaced surface reloaded the edited document'));
-      res.end(`<!doctype html><input><main></main>
-        <script src="/bootstrap.js"></script><script>(${probe})()</script>`);
+      res.setHeader('content-security-policy', csp);
+      if (visits > maxVisits) result.reject(new Error('Unexpected navigation during WebGL recovery'));
+      res.end(`<!doctype html><meta charset="utf-8">${bootStyle}
+        <body><div id="finance-boot" role="status">正在打开 Finance Compass…</div>
+        <input><main></main><script src="/bootstrap.js"></script><script src="/probe.js"></script>`);
     } else if (url.pathname === '/bootstrap.js') {
       res.setHeader('content-type', 'text/javascript');
       res.end(bootstrap);
+    } else if (url.pathname === '/probe.js') {
+      res.setHeader('content-type', 'text/javascript');
+      res.end(`window.dispatchEvent(new Event('flutter-first-frame'));
+        (${scenario})().catch(error => fetch('/result?' + new URLSearchParams({checks: JSON.stringify(String(error))})));`);
     } else if (url.pathname === '/result') {
       result.resolve(url.searchParams.get('checks'));
       res.end();
@@ -86,7 +152,7 @@ test('Chrome keeps an edited page after replacing real Offscreen and Shadow DOM 
     '--headless=new', '--remote-debugging-pipe', '--no-first-run', '--no-default-browser-check',
     '--disable-background-networking', '--disable-extensions',
     '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
-    '--user-data-dir=' + profile, 'http://127.0.0.1:' + server.address().port,
+    '--user-data-dir=' + profile, 'http://127.0.0.1:' + server.address().port + '/ledger?account=a#form',
   ], {windowsHide: true, stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe']});
   const exited = once(chrome, 'close');
   const timeout = setTimeout(() => result.reject(new Error('Timed out waiting for WebGL recovery')), 90000);
@@ -94,7 +160,7 @@ test('Chrome keeps an edited page after replacing real Offscreen and Shadow DOM 
     const checks = await Promise.race([result.promise, exited.then(() => {
       throw new Error('Chrome closed before the WebGL check completed');
     })]);
-    assert.deepEqual(JSON.parse(checks), [true, true], 'both renderers should repaint and preserve the input');
+    return JSON.parse(checks);
   } finally {
     clearTimeout(timeout);
     if (chrome.pid && chrome.exitCode === null) {
@@ -105,4 +171,19 @@ test('Chrome keeps an edited page after replacing real Offscreen and Shadow DOM 
       try { await exited; } finally { clearTimeout(stop); }
     }
   }
+}
+
+test('Chrome keeps an edited page after replacing real Offscreen and Shadow DOM GL surfaces', chromeRequired, async t => {
+  const checks = await runBrowser(t, probe, 1);
+  assert.deepEqual(checks, [true, true], 'both renderers should repaint and preserve the input');
+});
+
+test('Chrome displays the recovery shell, reloads the original URL and can leave temporary software mode', chromeRequired, async t => {
+  const visits = await runBrowser(t, probePersistentLoss, 5);
+  const original = '/ledger?account=a#form';
+  assert.deepEqual(visits.map(v => v.url),
+    [original, original, original, '/ledger?account=a&gpu=1#form', original]);
+  assert.deepEqual(visits.map(v => v.software), [false, false, true, false, false]);
+  assert.deepEqual(visits.map(v => v.loaderSoftware), visits.map(v => v.software));
+  assert.deepEqual(visits.map(v => v.coverVisibleInFrame), [true, true, false, false, false]);
 });

@@ -4,6 +4,8 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import '../tool/lint_web_renderer.dart';
+
 void main() {
   final root = Directory.current;
 
@@ -150,6 +152,7 @@ void main() {
       () async {
     final bootstrap =
         await File('${root.path}/web/flutter_bootstrap.js').readAsString();
+    expect(lintWebRenderer(bootstrap, 'web/flutter_bootstrap.js'), isEmpty);
     expect(bootstrap, contains('{{flutter_js}}'));
     expect(bootstrap, contains('{{flutter_build_config}}'));
     expect(bootstrap, contains("fontFallbackBaseUrl: 'fonts/'"));
@@ -227,7 +230,16 @@ void main() {
     // A failed build must not leave a partial webroot for packaging.
     expect(ps1, contains('trap {'));
     expect(sh, contains("trap 'status=\$?"));
-    for (final script in [ps1, sh]) {
+    for (final (script, invocation) in [
+      (ps1, r'& $Dart tool/lint_web_renderer.dart'),
+      (sh, r'"$DART" tool/lint_web_renderer.dart'),
+    ]) {
+      final lines =
+          const LineSplitter().convert(script).map((s) => s.trim()).toList();
+      final lintLine = lines.indexOf(invocation);
+      expect(lintLine, greaterThanOrEqualTo(0));
+      expect(lintLine,
+          lessThan(lines.indexWhere((s) => s.contains('compile js'))));
       expect(script, contains('const CORE'));
       expect(script, contains('SHA256SUMS'));
       expect(script, contains('useLocalCanvasKit'));
@@ -236,6 +248,9 @@ void main() {
       expect(script, isNot(contains('flutter_service_worker.js')));
     }
     expect(dockerfile, contains('sh tool/build_web.sh'));
+    final syncImage =
+        await File('${root.path}/deploy/sync/Dockerfile').readAsString();
+    expect(syncImage, contains('tool/lint_web_renderer.dart'));
   });
 
   test(
