@@ -38,6 +38,8 @@ class AccountSyncPage extends ConsumerStatefulWidget {
 class _AccountSyncPageState extends ConsumerState<AccountSyncPage> {
   @override
   Widget build(BuildContext context) {
+    final ledger =
+        ref.watch(financeRepositoryProvider).valueOrNull ?? widget.repository;
     if (ref.watch(ledgerSyncSessionProvider) != null) {
       return _SettingsDetailShell(
         title: '账户与同步',
@@ -52,18 +54,18 @@ class _AccountSyncPageState extends ConsumerState<AccountSyncPage> {
             onTap: () => Navigator.push(
               context,
               MaterialPageRoute(
-                builder: (_) =>
-                    BackupRestorePage(repository: widget.repository),
+                builder: (_) => BackupRestorePage(repository: ledger),
               ),
             ),
           ),
         ],
       );
     }
-    return _buildLocal(context);
+    return _buildLocal(context, ledger);
   }
 
-  Widget _buildLocal(BuildContext context) => _SettingsDetailShell(
+  Widget _buildLocal(BuildContext context, FinanceRepository ledger) =>
+      _SettingsDetailShell(
         title: '账户与同步',
         children: [
           Row(
@@ -79,7 +81,7 @@ class _AccountSyncPageState extends ConsumerState<AccountSyncPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text('本地模式', style: Theme.of(context).textTheme.titleLarge),
-                    Text('${widget.repository.transactions.length} 条交易仅保存在此设备',
+                    Text('${ledger.transactions.length} 条交易仅保存在此设备',
                         style: Theme.of(context).textTheme.bodySmall),
                   ],
                 ),
@@ -95,8 +97,7 @@ class _AccountSyncPageState extends ConsumerState<AccountSyncPage> {
             onPressed: () => Navigator.push(
               context,
               MaterialPageRoute(
-                builder: (_) =>
-                    BackupRestorePage(repository: widget.repository),
+                builder: (_) => BackupRestorePage(repository: ledger),
               ),
             ),
           ),
@@ -119,22 +120,11 @@ class CurrencyDisplayPage extends ConsumerStatefulWidget {
 }
 
 class _CurrencyDisplayPageState extends ConsumerState<CurrencyDisplayPage> {
-  late int symbol;
-  late int separator;
+  int? _symbolDraft;
+  int? _separatorDraft;
 
-  @override
-  void initState() {
-    super.initState();
-    symbol = widget.repository.metaValues['currency_symbol_style'] == 'symbol'
-        ? 0
-        : 1;
-    separator =
-        widget.repository.metaValues['number_separator_style'] == 'space_comma'
-            ? 1
-            : 0;
-  }
-
-  String _previewMoney(double value, String currency) {
+  String _previewMoney(
+      double value, String currency, int symbol, int separator) {
     final parts = value.toStringAsFixed(2).split('.');
     final grouped = parts.first.replaceAllMapped(
       RegExp(r'\B(?=(\d{3})+(?!\d))'),
@@ -145,13 +135,15 @@ class _CurrencyDisplayPageState extends ConsumerState<CurrencyDisplayPage> {
   }
 
   void _openFullSettings() {
+    final ledger =
+        ref.read(financeRepositoryProvider).valueOrNull ?? widget.repository;
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => Scaffold(
           appBar: AppBar(title: const Text('编辑货币与汇率')),
           body: SettingsScreen(
-            repository: widget.repository,
+            repository: ledger,
             settingsController: widget.settingsController,
           ),
         ),
@@ -161,7 +153,16 @@ class _CurrencyDisplayPageState extends ConsumerState<CurrencyDisplayPage> {
 
   @override
   Widget build(BuildContext context) {
-    final repository = widget.repository;
+    final repository =
+        ref.watch(financeRepositoryProvider).valueOrNull ?? widget.repository;
+    final savedSymbol =
+        repository.metaValues['currency_symbol_style'] == 'symbol' ? 0 : 1;
+    final savedSeparator =
+        repository.metaValues['number_separator_style'] == 'space_comma'
+            ? 1
+            : 0;
+    final symbol = _symbolDraft ?? savedSymbol;
+    final separator = _separatorDraft ?? savedSeparator;
     final base = repository.baseCurrency;
     final secondary = repository.secondaryCurrency;
     final rate = secondary == null
@@ -185,7 +186,7 @@ class _CurrencyDisplayPageState extends ConsumerState<CurrencyDisplayPage> {
                   border: Border.all(color: FinanceColors.compassTeal),
                   borderRadius: BorderRadius.circular(6),
                 ),
-                child: Text(_previewMoney(1000, base),
+                child: Text(_previewMoney(1000, base, symbol, separator),
                     style: const TextStyle(fontSize: 18)),
               ),
             ),
@@ -202,7 +203,7 @@ class _CurrencyDisplayPageState extends ConsumerState<CurrencyDisplayPage> {
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Text(
-                    _previewMoney(1000 / rate, secondary),
+                    _previewMoney(1000 / rate, secondary, symbol, separator),
                     style: const TextStyle(
                         color: FinanceColors.compassTeal, fontSize: 18),
                   ),
@@ -220,7 +221,7 @@ class _CurrencyDisplayPageState extends ConsumerState<CurrencyDisplayPage> {
         CompassSettingsRow(
           icon: Icons.monetization_on_outlined,
           title: '主币种',
-          value: widget.repository.baseCurrency,
+          value: base,
           onTap: _openFullSettings,
         ),
         CompassSettingsRow(
@@ -235,13 +236,15 @@ class _CurrencyDisplayPageState extends ConsumerState<CurrencyDisplayPage> {
           icon: Icons.account_balance_wallet_outlined,
           labels: [currencyLabel(base), base],
           selected: symbol,
-          onChanged: (value) => setState(() => symbol = value),
+          onChanged: (value) => setState(
+              () => _symbolDraft = value == savedSymbol ? null : value),
         ),
         _ChoiceSetting(
           icon: Icons.format_quote_outlined,
           labels: const ['1,234.56', '1 234,56'],
           selected: separator,
-          onChanged: (value) => setState(() => separator = value),
+          onChanged: (value) => setState(
+              () => _separatorDraft = value == savedSeparator ? null : value),
         ),
         CompassSettingsRow(
           icon: Icons.grid_view_rounded,
@@ -251,14 +254,12 @@ class _CurrencyDisplayPageState extends ConsumerState<CurrencyDisplayPage> {
         ),
         const SizedBox(height: 20),
         const CompassSectionLabel('其他币种汇率'),
-        ...widget.repository.currencyPriority
-            .where((code) => code != widget.repository.baseCurrency)
-            .take(3)
-            .map(
+        ...repository.currencyPriority.where((code) => code != base).map(
               (code) => _RateRow(
                 code: code,
-                value:
-                    '${widget.repository.baseCurrency} ${(widget.repository.exchangeRatesToBase[code] ?? 0).toStringAsFixed(4)}',
+                value: repository.hasExchangeRate(code)
+                    ? '$base ${repository.exchangeRatesToBase[code]!.toStringAsFixed(4)}'
+                    : '未估值',
                 onTap: _openFullSettings,
               ),
             ),
@@ -292,72 +293,87 @@ class _CurrencyDisplayPageState extends ConsumerState<CurrencyDisplayPage> {
   }
 
   Future<void> _saveDisplayPreferences() async {
-    await ref
-        .read(financeRepositoryProvider.notifier)
-        .mutate((repository) async {
-      await repository.database.transaction(() async {
-        await repository.database.setMetaValue(
-          'currency_symbol_style',
-          symbol == 0 ? 'symbol' : 'code',
-        );
-        await repository.database.setMetaValue(
-          'number_separator_style',
-          separator == 1 ? 'space_comma' : 'comma_dot',
-        );
+    final symbol = _symbolDraft;
+    final separator = _separatorDraft;
+    try {
+      final saved = await ref
+          .read(financeRepositoryProvider.notifier)
+          .mutate((repository) async {
+        await repository.database.transaction(() async {
+          if (symbol != null) {
+            await repository.database.setMetaValue(
+                'currency_symbol_style', symbol == 0 ? 'symbol' : 'code');
+          }
+          if (separator != null) {
+            await repository.database.setMetaValue('number_separator_style',
+                separator == 1 ? 'space_comma' : 'comma_dot');
+          }
+        });
+        return repository.refresh();
       });
-      return repository.refresh();
-    });
-    setCompassMoneyStyle(
-      useCurrencyCode: symbol == 1,
-      useEuropeanSeparators: separator == 1,
-    );
-    if (mounted) {
+      if (!mounted || saved == null) return;
+      setCompassMoneyStyle(
+        useCurrencyCode: saved.metaValues['currency_symbol_style'] != 'symbol',
+        useEuropeanSeparators:
+            saved.metaValues['number_separator_style'] == 'space_comma',
+      );
+      setState(() {
+        if (_symbolDraft == symbol) _symbolDraft = null;
+        if (_separatorDraft == separator) _separatorDraft = null;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('金额显示方式已保存。')),
       );
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('保存失败：$error')));
+      }
     }
   }
 }
 
-class FinanceRulesCenterPage extends StatelessWidget {
+class FinanceRulesCenterPage extends ConsumerWidget {
   const FinanceRulesCenterPage({super.key, required this.repository});
   final FinanceRepository repository;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final ledger =
+        ref.watch(financeRepositoryProvider).valueOrNull ?? repository;
     return _SettingsDetailShell(
       title: '规则中心',
       children: [
         _LargeRuleRow(
           icon: Icons.sell_outlined,
           title: '类别管理',
-          value: '${repository.categories.length} 个',
+          value: '${ledger.categories.length} 个',
           onTap: () => Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (_) => CategoryManageScreen(repository: repository),
+              builder: (_) => CategoryManageScreen(repository: ledger),
             ),
           ),
         ),
         _LargeRuleRow(
           icon: Icons.bolt_rounded,
           title: '快速模板',
-          value: '${repository.transactionTemplates.length} 个',
+          value: '${ledger.transactionTemplates.length} 个',
           onTap: () => Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (_) => QuickTemplateManagerPage(repository: repository),
+              builder: (_) => QuickTemplateManagerPage(repository: ledger),
             ),
           ),
         ),
         _LargeRuleRow(
           icon: Icons.event_repeat_outlined,
           title: '周期交易',
-          value: '${repository.recurringTransactionRules.length} 条',
+          value: '${ledger.recurringTransactionRules.length} 条',
           onTap: () => Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (_) => RecurringPlanPage(repository: repository),
+              builder: (_) => RecurringPlanPage(repository: ledger),
             ),
           ),
         ),
@@ -624,15 +640,14 @@ class NotificationsPage extends ConsumerStatefulWidget {
 }
 
 class _NotificationsPageState extends ConsumerState<NotificationsPage> {
-  bool enabled = true;
-  bool _loanReminders = true;
-  bool _preferencesReady = false;
+  bool? _enabledDraft;
+  bool? _loanDraft;
+  final _switchDrafts = <int, bool>{};
   bool _saving = false;
   bool _pushBusy = false;
   BrowserPushStatus? _pushStatus;
   String? _pushError;
   String? _saveError;
-  final switches = <bool>[true, true, true, true, true, false, true];
 
   DevicePushNotifications? get _push {
     final session = ref.read(ledgerSyncSessionProvider);
@@ -642,46 +657,31 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
   @override
   void initState() {
     super.initState();
-    _load();
     _inspectPush();
   }
 
-  Future<void> _load() async {
+  List<bool> _switches(FinanceRepository ledger) {
+    final values = <bool>[true, true, true, true, true, false, true];
+    final raw = ledger.metaValues['notification_preferences_json'];
+    if (raw == null) return values;
     try {
-      final database = widget.repository.database;
-      final prefs = await Future.wait([
-        database.getMetaValue('notifications_enabled'),
-        database.getMetaValue('notification_preferences_json'),
-        database.getMetaValue('loan_payment_push_enabled'),
-      ]);
-      Object? decoded;
-      try {
-        decoded = jsonDecode(prefs[1] ?? 'null');
-      } on FormatException {
-        // Imported ledgers can contain an older or invalid preference value.
-      }
-      if (!mounted) return;
-      setState(() {
-        enabled = prefs[0] != 'false';
-        _loanReminders = prefs[2] != 'false';
-        if (decoded is List) {
-          final values = decoded;
-          for (var i = 0; i < switches.length && i < values.length; i++) {
-            if (values[i] is bool) switches[i] = values[i] as bool;
-          }
+      final decoded = jsonDecode(raw);
+      if (decoded is List) {
+        for (var i = 0; i < values.length && i < decoded.length; i++) {
+          if (decoded[i] is bool) values[i] = decoded[i] as bool;
         }
-        _preferencesReady = true;
-        _saveError = null;
-      });
-    } catch (_) {
-      if (mounted) {
-        setState(() => _saveError = '无法加载提醒设置。');
       }
+    } on FormatException {
+      // Earlier ledgers can lack readable switch preferences.
     }
+    return values;
   }
 
   Future<void> _save() async {
-    if (!_preferencesReady || _saving) return;
+    if (_saving) return;
+    final enabled = _enabledDraft;
+    final loan = _loanDraft;
+    final updates = Map.of(_switchDrafts);
     setState(() {
       _saving = true;
       _saveError = null;
@@ -692,19 +692,29 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
           .mutate((repository) async {
         final database = repository.database;
         await database.transaction(() async {
-          await database.setMetaValue('notifications_enabled', '$enabled');
-          await database.setMetaValue(
-            'notification_preferences_json',
-            jsonEncode(switches),
-          );
-          await database.setMetaValue(
-            'loan_payment_push_enabled',
-            '$_loanReminders',
-          );
+          if (enabled != null) {
+            await database.setMetaValue('notifications_enabled', '$enabled');
+          }
+          if (updates.isNotEmpty) {
+            final switches = _switches(repository);
+            for (final entry in updates.entries) {
+              switches[entry.key] = entry.value;
+            }
+            await database.setMetaValue(
+                'notification_preferences_json', jsonEncode(switches));
+          }
+          if (loan != null) {
+            await database.setMetaValue('loan_payment_push_enabled', '$loan');
+          }
         });
         return repository.refresh();
       });
-      if (mounted) _showMessage('提醒偏好已保存。');
+      if (mounted) {
+        _enabledDraft = null;
+        _loanDraft = null;
+        _switchDrafts.clear();
+        _showMessage('提醒偏好已保存。');
+      }
     } on SyncException catch (error) {
       if (mounted) setState(() => _saveError = error.message);
     } catch (_) {
@@ -824,8 +834,28 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final repository =
+        ref.watch(financeRepositoryProvider).valueOrNull ?? widget.repository;
+    final savedEnabled =
+        repository.metaValues['notifications_enabled'] != 'false';
+    final savedLoan =
+        repository.metaValues['loan_payment_push_enabled'] != 'false';
+    final savedSwitches = _switches(repository);
+    final switches = [
+      for (var i = 0; i < savedSwitches.length; i++)
+        _switchDrafts[i] ?? savedSwitches[i],
+    ];
+    final enabled = _enabledDraft ?? savedEnabled;
+    final loanReminders = _loanDraft ?? savedLoan;
     final push = _push;
-    final canEdit = _preferencesReady && !_saving;
+    final canEdit = !_saving;
+    void setSwitch(int index, bool value) => setState(() {
+          if (savedSwitches[index] == value) {
+            _switchDrafts.remove(index);
+          } else {
+            _switchDrafts[index] = value;
+          }
+        });
     return _SettingsDetailShell(
       title: '通知与提醒',
       children: [
@@ -837,8 +867,10 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
                 icon: Icons.notifications_active_outlined,
                 title: '账本提醒',
                 value: enabled,
-                onChanged:
-                    canEdit ? (value) => setState(() => enabled = value) : null,
+                onChanged: canEdit
+                    ? (value) => setState(() =>
+                        _enabledDraft = value == savedEnabled ? null : value)
+                    : null,
               ),
             ),
             CompassHelpButton(
@@ -852,19 +884,19 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
           title: const CompassSectionLabel('信用卡'),
           label: '信用卡提醒',
           message: push == null
-              ? '还款提醒在总览“需要关注”显示待还账单，结算提醒在结算后显示账单状态。'
+              ? '还款提醒在总览“需要关注”显示待还账单，结算提醒在信用卡结算日显示。'
               : '还款提醒在未还账单到期前 3 天发送。结算提醒在信用卡设定的结算日发送，也可开启到期当天提醒。',
         ),
         _NotificationToggle(
             icon: Icons.credit_card_rounded,
             title: '还款提醒',
             value: switches[0],
-            onChanged: canEdit ? (v) => setState(() => switches[0] = v) : null),
+            onChanged: canEdit ? (v) => setSwitch(0, v) : null),
         _NotificationToggle(
             icon: Icons.calendar_month_outlined,
             title: '账单结算提醒',
             value: switches[1],
-            onChanged: canEdit ? (v) => setState(() => switches[1] = v) : null),
+            onChanged: canEdit ? (v) => setSwitch(1, v) : null),
         if (push != null) ...[
           const SizedBox(height: 16),
           const CompassHelpHeading(
@@ -875,16 +907,17 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
           _NotificationToggle(
             icon: Icons.account_balance_outlined,
             title: '贷款还款提醒',
-            value: _loanReminders,
+            value: loanReminders,
             onChanged: canEdit
-                ? (value) => setState(() => _loanReminders = value)
+                ? (value) => setState(
+                    () => _loanDraft = value == savedLoan ? null : value)
                 : null,
           ),
           _NotificationToggle(
             icon: Icons.notification_important_outlined,
             title: '到期当天提醒',
             value: switches[6],
-            onChanged: canEdit ? (v) => setState(() => switches[6] = v) : null,
+            onChanged: canEdit ? (v) => setSwitch(6, v) : null,
           ),
         ],
         const SizedBox(height: 16),
@@ -897,12 +930,10 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
             icon: Icons.pie_chart_outline_rounded,
             title: '预算临界提醒',
             value: switches[4],
-            onChanged: canEdit ? (v) => setState(() => switches[4] = v) : null),
+            onChanged: canEdit ? (v) => setSwitch(4, v) : null),
         const SizedBox(height: 12),
         if (_saveError case final error?) ...[
           Semantics(liveRegion: true, child: Text(error)),
-          if (!_preferencesReady)
-            TextButton(onPressed: _load, child: const Text('重试加载')),
           const SizedBox(height: 8),
         ],
         CompassPrimaryButton(
@@ -915,25 +946,26 @@ class _NotificationsPageState extends ConsumerState<NotificationsPage> {
   }
 }
 
-class AiGatewayPage extends StatefulWidget {
+class AiGatewayPage extends ConsumerStatefulWidget {
   const AiGatewayPage({super.key, required this.repository});
   final FinanceRepository repository;
 
   @override
-  State<AiGatewayPage> createState() => _AiGatewayPageState();
+  ConsumerState<AiGatewayPage> createState() => _AiGatewayPageState();
 }
 
-class _AiGatewayPageState extends State<AiGatewayPage> {
+class _AiGatewayPageState extends ConsumerState<AiGatewayPage> {
   bool _busy = false;
 
-  String get _analysisText => AiAnalysisService.buildExternalAnalysisText(
-        widget.repository,
+  String _analysisText(FinanceRepository ledger) =>
+      AiAnalysisService.buildExternalAnalysisText(
+        ledger,
         monthCount: 6,
         futureMonthCount: 6,
       );
 
-  Future<void> _preview() async {
-    final text = _analysisText;
+  Future<void> _preview(FinanceRepository ledger) async {
+    final text = _analysisText(ledger);
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -952,7 +984,7 @@ class _AiGatewayPageState extends State<AiGatewayPage> {
     );
   }
 
-  Future<void> _share() async {
+  Future<void> _share(FinanceRepository ledger) async {
     if (_busy) return;
     setState(() => _busy = true);
     try {
@@ -961,7 +993,7 @@ class _AiGatewayPageState extends State<AiGatewayPage> {
           box == null ? null : box.localToGlobal(Offset.zero) & box.size;
       await SharePlus.instance.share(
         ShareParams(
-          text: _analysisText,
+          text: _analysisText(ledger),
           subject: 'Finance Compass 财务分析',
           sharePositionOrigin: origin,
         ),
@@ -972,36 +1004,42 @@ class _AiGatewayPageState extends State<AiGatewayPage> {
   }
 
   @override
-  Widget build(BuildContext context) => _SettingsDetailShell(
-        title: '外部 AI 分析',
-        children: [
-          const CompassSectionLabel('分析范围'),
-          const CompassSettingsRow(
-              icon: Icons.calendar_month_outlined,
-              title: '历史资料',
-              value: '最近 6 个月'),
-          const CompassSettingsRow(
-              icon: Icons.calendar_month_outlined,
-              title: '未来计划',
-              value: '未来 6 个月'),
-          const CompassSettingsRow(
-              icon: Icons.description_outlined, title: '包含预计交易与预算', value: '是'),
-          const SizedBox(height: 18),
-          const CompassHelpHeading(
-            title: CompassSectionLabel('发送前检查'),
-            label: '分享隐私',
-            message: '选择分享对象后，摘要会发送给所选应用。可以先打开预览检查拟分享的财务资料。',
-          ),
-          CompassSettingsRow(
-              icon: Icons.search_rounded, title: '预览分析资料', onTap: _preview),
-          const SizedBox(height: 14),
-          CompassPrimaryButton(
-              label: '选择外部 AI App',
-              icon: Icons.ios_share_rounded,
-              color: FinanceColors.compassTeal,
-              onPressed: _busy ? null : () => _share()),
-        ],
-      );
+  Widget build(BuildContext context) {
+    final ledger =
+        ref.watch(financeRepositoryProvider).valueOrNull ?? widget.repository;
+    return _SettingsDetailShell(
+      title: '外部 AI 分析',
+      children: [
+        const CompassSectionLabel('分析范围'),
+        const CompassSettingsRow(
+            icon: Icons.calendar_month_outlined,
+            title: '历史资料',
+            value: '最近 6 个月'),
+        const CompassSettingsRow(
+            icon: Icons.calendar_month_outlined,
+            title: '未来计划',
+            value: '未来 6 个月'),
+        const CompassSettingsRow(
+            icon: Icons.description_outlined, title: '包含预计交易与预算', value: '是'),
+        const SizedBox(height: 18),
+        const CompassHelpHeading(
+          title: CompassSectionLabel('发送前检查'),
+          label: '分享隐私',
+          message: '选择分享对象后，摘要会发送给所选应用。可以先打开预览检查拟分享的财务资料。',
+        ),
+        CompassSettingsRow(
+            icon: Icons.search_rounded,
+            title: '预览分析资料',
+            onTap: () => _preview(ledger)),
+        const SizedBox(height: 14),
+        CompassPrimaryButton(
+            label: '选择外部 AI App',
+            icon: Icons.ios_share_rounded,
+            color: FinanceColors.compassTeal,
+            onPressed: _busy ? null : () => _share(ledger)),
+      ],
+    );
+  }
 }
 
 class _SettingsDetailShell extends StatelessWidget {

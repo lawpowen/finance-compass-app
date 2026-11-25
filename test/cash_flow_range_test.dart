@@ -71,7 +71,297 @@ void main() {
       40,
     );
   });
+  test('closing a card does not remove an unpaid statement from cash needs',
+      () async {
+    var repo = await _ledger([
+      _cash,
+      const Account(
+          id: 'closed',
+          name: 'Closed card',
+          accountType: AccountType.creditCard,
+          reportGroup: ReportGroup.credit,
+          currency: 'MYR',
+          currentBalance: 0,
+          creditLimit: 1000,
+          statementDay: 1,
+          paymentDueDay: 12),
+    ]);
+    repo = await repo.addTransaction(
+        _spend('purchase', 'closed', 100, 'MYR', DateTime(2026, 9, 25)));
+    repo = await repo.setAccountActive('closed', false);
+    final forecast = repo.cashForecast(
+        asOf: DateTime(2026, 10, 2), endInclusive: DateTime(2026, 10, 12));
+    expect(forecast.openingCash - forecast.endingCash, 100);
+    expect(repo.monthlyFundingNeedForMonth('2026-10').totalCashRequired, 100);
+  });
+
+  test('each card uses its own statement and the same end-of-day cash cutoff',
+      () async {
+    var repo = await _ledger([
+      _cash,
+      _invest,
+      _card('first', 'MYR', 10, 25),
+      _card('second', 'MYR', 20, 28),
+    ]);
+    repo = await repo.addTransactions([
+      _spend('a', 'first', 100, 'MYR', DateTime(2026, 10, 5)),
+      _spend('b', 'second', 200, 'MYR', DateTime(2026, 10, 12)),
+      _pay('same-day', 'first', 40, DateTime(2026, 10, 10, 15)),
+      _pay('scheduled', 'second', 50, DateTime(2026, 10, 22), planned: true),
+      _pay('noncash-plan', 'second', 150, DateTime(2026, 10, 23),
+          source: 'invest', planned: true),
+    ]);
+    var month = repo.monthlyFundingNeedForMonth('2026-10');
+    expect(month.knownCashOutflow, 90);
+    expect(month.creditDue, 300);
+    expect(month.coveredDebtPayments, 90);
+    expect(month.totalCashRequired, 300);
+    final actualOnly =
+        repo.monthlyFundingNeedForMonth('2026-10', includePlanned: false);
+    expect(actualOnly.knownCashOutflow, 40);
+    expect(actualOnly.coveredDebtPayments, 40);
+    expect(actualOnly.totalCashRequired, 300);
+
+    repo = await repo.addTransaction(_pay(
+        'settled-from-investment', 'second', 70, DateTime(2026, 10, 24),
+        source: 'invest'));
+    month = repo.monthlyFundingNeedForMonth('2026-10');
+    expect(month.creditDue, 230);
+    expect(month.coveredDebtPayments, 90);
+    expect(month.totalCashRequired, 230);
+  });
+
+  test(
+      'foreign bills appear when due, cross-currency payments debit actual cash once',
+      () async {
+    var repo = await _ledger([
+      _cash,
+      _card('usd', 'USD', 5, 18),
+      _card('cny', 'CNY', 25, 3),
+      _card('local', 'MYR', 20, 28),
+    ]);
+    repo = await repo.updateExchangeRates(
+        {'MYR': 1, 'USD': 4, 'CNY': .5, 'TWD': .15},
+        ['MYR', 'USD', 'CNY', 'TWD']);
+    repo = await repo.addTransactions([
+      _spend('cny1', 'cny', 40, 'CNY', DateTime(2026, 9, 20)),
+      _spend('local1', 'local', 80, 'MYR', DateTime(2026, 9, 24)),
+      _spend('usd1', 'usd', 100, 'USD', DateTime(2026, 10, 3)),
+      _spend('usd2', 'usd', 50, 'USD', DateTime(2026, 10, 24)),
+      _pay('cash-fx', 'usd', 210, DateTime(2026, 10, 4, 15),
+          planned: true, toAmount: 50, toCurrency: 'USD'),
+    ]);
+    final forecast = repo.cashForecast(
+        asOf: DateTime(2026, 10, 1), endInclusive: DateTime(2026, 11, 28));
+    expect(forecast.openingCash, 1000);
+    expect(forecast.balanceAt(DateTime(2026, 10, 3)), 980);
+    expect(forecast.balanceAt(DateTime(2026, 10, 4)), 770);
+    expect(forecast.balanceAt(DateTime(2026, 10, 18)), 570);
+    expect(forecast.balanceAt(DateTime(2026, 10, 28)), 490);
+    expect(forecast.creditDue, 700);
+    expect(forecast.uncoveredCreditDue, 500);
+    expect(forecast.endingCash, 290);
+  });
+
+  test('both short-month statements can mature on the same payment date',
+      () async {
+    var repo = await _ledger([_cash, _card('card', 'MYR', 30, 31)]);
+    repo = await repo.addTransactions([
+      _spend('feb-charge', 'card', 100, 'MYR', DateTime(2026, 2, 2)),
+      _spend('mar-charge', 'card', 70, 'MYR', DateTime(2026, 3, 2)),
+      _pay('march-cash', 'card', 120, DateTime(2026, 3, 31), planned: true),
+    ]);
+    final forecast = repo.cashForecast(
+        asOf: DateTime(2026, 2, 15), endInclusive: DateTime(2026, 3, 31));
+    expect(forecast.creditDue, 170);
+    expect(forecast.uncoveredCreditDue, 50);
+    expect(forecast.endingCash, 830);
+    final month =
+        repo.monthlyFundingNeedForMonth('2026-03', asOf: DateTime(2026, 2, 15));
+    expect(month.totalCashRequired, 170);
+    expect(month.coveredDebtPayments, 120);
+  });
+
+  test(
+      'a scheduled advance before a future month reduces that month opening obligation',
+      () async {
+    var repo = await _ledger([_cash, _card('card', 'MYR', 25, 10)]);
+    repo = await repo.addTransactions([
+      _spend('jan-charge', 'card', 100, 'MYR', DateTime(2026, 1, 20)),
+      _pay('early-cash', 'card', 60, DateTime(2026, 1, 30), planned: true),
+    ]);
+    final feb =
+        repo.monthlyFundingNeedForMonth('2026-02', asOf: DateTime(2026, 1, 26));
+    expect(feb.creditDue, 40);
+    expect(feb.knownCashOutflow, 0);
+    expect(feb.coveredDebtPayments, 0);
+    expect(feb.totalCashRequired, 40);
+    final actual = repo.monthlyFundingNeedForMonth('2026-02',
+        asOf: DateTime(2026, 1, 26), includePlanned: false);
+    expect(actual.totalCashRequired, 100);
+  });
+
+  test(
+      'a merchant refund after maturity stays on the card and funds a later bill',
+      () async {
+    var repo = await _ledger([_cash, _card('card', 'MYR', 1, 12)]);
+    repo = await repo.addTransactions([
+      _spend('sep-purchase', 'card', 100, 'MYR', DateTime(2026, 9, 25)),
+      _spend('merchant-refund', 'card', -100, 'MYR', DateTime(2026, 10, 13)),
+      _spend('oct-purchase', 'card', 160, 'MYR', DateTime(2026, 10, 16)),
+    ]);
+    final forecast = repo.cashForecast(
+        asOf: DateTime(2026, 10, 11), endInclusive: DateTime(2026, 11, 15));
+    expect(forecast.balanceAt(DateTime(2026, 10, 12)), 900);
+    expect(forecast.balanceAt(DateTime(2026, 10, 13)), 900);
+    expect(forecast.balanceAt(DateTime(2026, 11, 12)), 840);
+    expect(repo.monthlyFundingNeedForMonth('2026-10').totalCashRequired, 100);
+  });
+
+  test(
+      'a later cash settlement can replace only the bill amount left after a noncash payment',
+      () async {
+    var repo = await _ledger([_cash, _invest, _card('card', 'USD', 1, 12)]);
+    repo = await repo.updateExchangeRates(
+        {'MYR': 1, 'USD': 4, 'CNY': .5, 'TWD': .15},
+        ['MYR', 'USD', 'CNY', 'TWD']);
+    repo = await repo.addTransactions([
+      _spend('purchase', 'card', 100, 'USD', DateTime(2026, 9, 25)),
+      _pay('noncash', 'card', 160, DateTime(2026, 10, 13, 9),
+          source: 'invest', toAmount: 40, toCurrency: 'USD'),
+      _pay('cash', 'card', 320, DateTime(2026, 10, 13, 15),
+          planned: true, toAmount: 80, toCurrency: 'USD'),
+    ]);
+    final forecast = repo.cashForecast(
+        asOf: DateTime(2026, 10, 10), endInclusive: DateTime(2026, 10, 31));
+    expect(forecast.balanceAt(DateTime(2026, 10, 12)), 600);
+    // USD 40 settled via investments. Only the USD 60 remaining on that
+    // bill offsets the late cash posting. The excess USD 20 is an advance.
+    expect(forecast.endingCash, 520);
+    expect(forecast.uncoveredCreditDue, 160);
+  });
+
+  test(
+      'late repayment replaces the same projected bill and cannot debit it twice',
+      () async {
+    var repo = await _ledger([_cash, _card('card', 'MYR', 1, 12)]);
+    repo = await repo.addTransactions([
+      _spend('spent', 'card', 100, 'MYR', DateTime(2026, 9, 25)),
+      _pay('late-payment', 'card', 100, DateTime(2026, 10, 20, 10)),
+    ]);
+    final forecast = repo.cashForecast(
+        asOf: DateTime(2026, 10, 10), endInclusive: DateTime(2026, 10, 31));
+    expect(forecast.openingCash, 1000);
+    expect(forecast.balanceAt(DateTime(2026, 10, 12)), 900);
+    expect(forecast.balanceAt(DateTime(2026, 10, 20)), 900);
+    expect(forecast.uncoveredCreditDue, 0);
+    expect(forecast.endingCash, 900);
+    final bill =
+        repo.creditCardPaymentReminders(asOf: DateTime(2026, 10, 10)).single;
+    expect(bill.billingMonthDate.month, 9);
+  });
+
+  test(
+      'cash funding allocates a cross-period advance and reversal only to their installment',
+      () async {
+    var repo = await _ledger([
+      _cash,
+      Account(
+          id: 'loan',
+          name: 'Loan',
+          currency: 'MYR',
+          accountType: AccountType.loan,
+          reportGroup: ReportGroup.credit,
+          initialBalance: -1200,
+          currentBalance: -1200,
+          loanPrincipal: 1200,
+          loanAnnualInterestRate: 0,
+          loanTermMonths: 3,
+          loanStartDate: DateTime(2026, 1, 1),
+          loanPaymentDay: 10,
+          loanRepaymentMethod: LoanRepaymentMethod.equalPrincipal),
+    ]);
+    repo = await repo.addTransactions([
+      _pay('prior-partial', 'loan', 120, DateTime(2026, 1, 25), number: 1),
+      _pay('next-period', 'loan', 400, DateTime(2026, 2, 8), number: 2),
+      _pay('part', 'loan', 100, DateTime(2026, 2, 9), number: 1, planned: true),
+      _pay('reversal', 'loan', -40, DateTime(2026, 2, 12), number: 1),
+      _pay('unallocated', 'loan', 25, DateTime(2026, 2, 15)),
+    ]);
+    final need = repo.monthlyFundingNeedForMonth('2026-02');
+    expect(need.loanDue, 280);
+    expect(need.knownCashOutflow, 525);
+    expect(need.cashInflow, 40);
+    expect(need.coveredDebtPayments, 60);
+    expect(need.totalCashRequired, 745);
+    expect(repo.monthlyFundingNeedForMonth('2026-03').loanDue, 0);
+  });
 }
+
+const _cash = Account(
+    id: 'cash',
+    name: 'Cash',
+    currency: 'MYR',
+    accountType: AccountType.cash,
+    reportGroup: ReportGroup.cash,
+    currentBalance: 1000);
+const _invest = Account(
+    id: 'invest',
+    name: 'Investment',
+    currency: 'MYR',
+    accountType: AccountType.trading,
+    reportGroup: ReportGroup.investment,
+    currentBalance: 500);
+
+Account _card(String id, String currency, int statement, int due) => Account(
+    id: id,
+    name: id,
+    currency: currency,
+    accountType: AccountType.creditCard,
+    reportGroup: ReportGroup.credit,
+    currentBalance: 0,
+    creditLimit: 3000,
+    statementDay: statement,
+    paymentDueDay: due);
+
+Future<FinanceRepository> _ledger(List<Account> accounts) async {
+  final db = AppDatabase.forTesting(NativeDatabase.memory());
+  addTearDown(db.close);
+  var repo = await FinanceRepository.load(db);
+  for (final account in accounts) {
+    repo = await repo.addAccount(account);
+  }
+  return repo;
+}
+
+FinanceTransaction _spend(String id, String account, double amount,
+        String currency, DateTime date) =>
+    FinanceTransaction(
+        id: id,
+        accountId: account,
+        amount: amount,
+        type: TransactionType.expense,
+        currency: currency,
+        transactionDate: date);
+
+FinanceTransaction _pay(String id, String target, double amount, DateTime date,
+        {String source = 'cash',
+        double? toAmount,
+        String toCurrency = 'MYR',
+        int? number,
+        bool planned = false}) =>
+    FinanceTransaction(
+        id: id,
+        accountId: source,
+        toAccountId: target,
+        type: TransactionType.transfer,
+        amount: amount,
+        toAmount: toAmount ?? (number != null ? amount : null),
+        currency: 'MYR',
+        toCurrency: toCurrency,
+        loanInstallmentNumber: number,
+        transactionDate: date,
+        status: planned ? TransactionStatus.planned : TransactionStatus.actual);
 
 FinanceTransaction _transaction(
   String id,

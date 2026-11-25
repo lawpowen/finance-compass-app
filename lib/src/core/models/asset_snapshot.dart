@@ -16,4 +16,14 @@ class AssetSnapshot {
   final double costBasis;
   final double cashBalance;
   final double unrealizedPnl;
+
+  bool matchesObservation(AssetSnapshot? other) =>
+      other != null &&
+      id == other.id &&
+      accountId == other.accountId &&
+      snapshotDate.isAtSameMomentAs(other.snapshotDate) &&
+      marketValue == other.marketValue &&
+      costBasis == other.costBasis &&
+      cashBalance == other.cashBalance &&
+      unrealizedPnl == other.unrealizedPnl;
 }

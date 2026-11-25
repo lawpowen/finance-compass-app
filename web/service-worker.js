@@ -1,6 +1,6 @@
 // Keep "consent-" in future release cache names so installed clients can
 // choose when to activate the next worker.
-const CACHE_NAME = 'finance-compass-shell-consent-v0.10.1-sync22';
+const CACHE_NAME = 'finance-compass-shell-consent-v0.10.1-sync23';
 const SHELL_CACHE_PREFIX = 'finance-compass-shell-';
 const CONSENT_CACHE_PREFIX = 'finance-compass-shell-consent-';
 // Keep the complete rendering and local-database runtime available after a
@@ -84,11 +84,13 @@ self.addEventListener('install', (event) => {
   })());
 });
 
+let pushGeneration = 0;
+
 self.addEventListener('message', (event) => {
   const client = event.source;
-  if (event.data?.type !== 'finance-compass-activate-update' ||
-      client?.type !== 'window' || !client.url.startsWith(self.registration.scope)) return;
-  event.waitUntil(self.skipWaiting());
+  if (client?.type !== 'window' || !client.url.startsWith(self.registration.scope)) return;
+  if (event.data?.type === 'finance-compass-push-transition') pushGeneration++;
+  if (event.data?.type === 'finance-compass-activate-update') event.waitUntil(self.skipWaiting());
 });
 
 self.addEventListener('activate', (event) => {
@@ -123,24 +125,38 @@ self.addEventListener('fetch', (event) => {
   })());
 });
 
-self.addEventListener('push', (event) => {
-  let message;
+// A push can be queued while another account owns this browser. The message
+// carries its intended recipient; the server checks the live cookie AND the
+// current endpoint before any account-specific text reaches the lock screen.
+self.addEventListener('push', (event) => event.waitUntil((async () => {
   try {
-    message = event.data?.json();
+    const generation = pushGeneration;
+    const { accountId, notification } = event.data.json();
+    if (typeof accountId !== 'string' || !accountId || !notification) return;
+    const sub = await self.registration.pushManager.getSubscription();
+    if (!sub) return;
+    const verified = await fetch(new URL('/api/sync/v1/push/verify-delivery', self.registration.scope), {
+      method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error',
+      headers: { 'Content-Type': 'application/json', 'X-Finance-Account': accountId },
+      body: JSON.stringify({ endpoint: sub.endpoint }),
+    });
+    if (verified.status !== 204 || generation !== pushGeneration) return;
+    const { title, body, tag } = notification;
+    if (typeof title !== 'string' || typeof body !== 'string') return;
+    await self.registration.showNotification(title.slice(0, 100), {
+      body: body.slice(0, 300), icon: new URL('icons/Icon-192.png', self.registration.scope).href,
+      tag: typeof tag === 'string' ? tag.slice(0, 160) : undefined,
+      data: { accountId },
+    });
+    if (generation !== pushGeneration) {
+      for (const item of await self.registration.getNotifications()) {
+        if (item.data?.accountId === accountId && item.tag === tag) item.close();
+      }
+    }
   } catch (_) {
-    // Always show an observable notification, including on Safari.
+    // Offline, malformed, expired and unbound deliveries have no verified recipient.
   }
-  const title = typeof message?.title === 'string' && message.title.trim()
-    ? message.title.slice(0, 100) : 'Finance Compass';
-  const body = typeof message?.body === 'string' && message.body.trim()
-    ? message.body.slice(0, 300) : '你有一条账本提醒。';
-  const tag = typeof message?.tag === 'string' ? message.tag.slice(0, 160) : undefined;
-  event.waitUntil(self.registration.showNotification(title, {
-    body,
-    icon: new URL('icons/Icon-192.png', self.registration.scope).href,
-    tag,
-  }));
-});
+})()));
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();

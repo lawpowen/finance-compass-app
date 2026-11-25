@@ -20,11 +20,41 @@ enum ReportGroup {
   retirement,
 }
 
+/// The first group is the default for a new account of this type.
+List<ReportGroup> allowedReportGroups(AccountType type) => switch (type) {
+      AccountType.creditCard || AccountType.loan => const [ReportGroup.credit],
+      AccountType.cash ||
+      AccountType.bankSaving ||
+      AccountType.eWallet =>
+        const [ReportGroup.cash],
+      AccountType.pension => const [ReportGroup.retirement],
+      AccountType.stock ||
+      AccountType.crypto ||
+      AccountType.trading ||
+      AccountType.fund =>
+        const [ReportGroup.investment, ReportGroup.retirement],
+      AccountType.moneyMarketFund || AccountType.other => const [
+          ReportGroup.investment,
+          ReportGroup.cash,
+          ReportGroup.retirement,
+        ],
+    };
+
+ReportGroup effectiveReportGroupFor(AccountType type, ReportGroup stored) {
+  final groups = allowedReportGroups(type);
+  return groups.contains(stored) ? stored : groups.first;
+}
+
 enum LoanRepaymentMethod {
   equalInstallment,
   equalPrincipal,
   flatRate,
 }
+
+/// Loan contract and tracking dates represent local calendar days.
+bool validLoanTrackingDate(DateTime contract, DateTime tracking) =>
+    !DateTime(tracking.year, tracking.month, tracking.day)
+        .isBefore(DateTime(contract.year, contract.month, contract.day));
 
 class Account {
   const Account({
@@ -73,6 +103,9 @@ class Account {
   final LoanRepaymentMethod? loanRepaymentMethod;
   final double? loanQuotedMonthlyPayment;
 
+  ReportGroup get effectiveReportGroup =>
+      effectiveReportGroupFor(accountType, reportGroup);
+
   bool get hasCompleteCreditCardProfile =>
       accountType != AccountType.creditCard ||
       (creditLimit != null && statementDay != null && paymentDueDay != null);
@@ -80,14 +113,23 @@ class Account {
   bool get hasCompleteLoanProfile =>
       accountType != AccountType.loan ||
       (loanPrincipal != null &&
+          loanPrincipal!.isFinite &&
           loanPrincipal! > 0 &&
           loanAnnualInterestRate != null &&
+          loanAnnualInterestRate!.isFinite &&
           loanAnnualInterestRate! >= 0 &&
           loanTermMonths != null &&
           loanTermMonths! > 0 &&
+          loanTermMonths! <= 1200 &&
           loanStartDate != null &&
+          (loanTrackingStartDate == null ||
+              validLoanTrackingDate(loanStartDate!, loanTrackingStartDate!)) &&
           loanPaymentDay != null &&
           loanPaymentDay! >= 1 &&
           loanPaymentDay! <= 31 &&
-          loanRepaymentMethod != null);
+          loanRepaymentMethod != null &&
+          initialBalance.isFinite &&
+          (loanQuotedMonthlyPayment == null ||
+              (loanQuotedMonthlyPayment!.isFinite &&
+                  loanQuotedMonthlyPayment! > 0)));
 }

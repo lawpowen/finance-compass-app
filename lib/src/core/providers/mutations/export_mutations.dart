@@ -98,5 +98,6 @@ class ExportMutations extends Notifier<void> {
 }
 
 /// Provider for export / import mutations.
-final exportMutationsProvider =
-    NotifierProvider<ExportMutations, void>(ExportMutations.new);
+final exportMutationsProvider = NotifierProvider<ExportMutations, void>(
+    ExportMutations.new,
+    dependencies: [financeRepositoryProvider]);

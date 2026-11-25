@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../shared/category_icons.dart';
+
 import '../../core/models/category.dart';
 import '../../core/models/category_hierarchy.dart';
 import '../../core/theme/finance_colors.dart';
@@ -18,10 +20,12 @@ class CategoryFormDialog extends StatefulWidget {
     super.key,
     required this.categories,
     this.initialCategory,
+    this.typeLocked = false,
   });
 
   final List<Category> categories;
   final Category? initialCategory;
+  final bool typeLocked;
 
   @override
   State<CategoryFormDialog> createState() => _CategoryFormDialogState();
@@ -39,16 +43,6 @@ class _CategoryFormDialogState extends State<CategoryFormDialog> {
 
   bool get isEdit => widget.initialCategory != null;
 
-  static const icons = <String, IconData>{
-    'restaurant': Icons.restaurant_outlined,
-    'transport': Icons.directions_bus_outlined,
-    'shopping': Icons.shopping_bag_outlined,
-    'home': Icons.home_outlined,
-    'salary': Icons.work_outline_rounded,
-    'investment': Icons.trending_up_rounded,
-    'transfer': Icons.swap_horiz_rounded,
-    'other': Icons.category_outlined,
-  };
   static const colors = [
     0xFF58D1C2,
     0xFFFF7A2C,
@@ -80,15 +74,17 @@ class _CategoryFormDialogState extends State<CategoryFormDialog> {
   @override
   Widget build(BuildContext context) {
     final color = Color(colorValue);
-    final parentsById = {
-      for (final category in widget.categories) category.id: category.parentId,
-    };
+    final hierarchy = CategoryHierarchy(widget.categories);
+    final excluded = hierarchy.descendantsOf(categoryId);
+    final typeLocked = widget.typeLocked ||
+        widget.categories.any((category) => category.parentId == categoryId);
     final parentOptions = <Category?>[
       null,
-      for (final category in widget.categories)
-        if ((!category.isArchived ||
+      for (final category in hierarchy.ordered)
+        if (category.type == categoryType &&
+            (!category.isArchived ||
                 category.id == widget.initialCategory?.parentId) &&
-            !categoryParentWouldCycle(categoryId, category.id, parentsById))
+            !excluded.contains(category.id))
           category,
     ];
     final selectedParent =
@@ -128,7 +124,11 @@ class _CategoryFormDialogState extends State<CategoryFormDialog> {
                     CircleAvatar(
                       radius: 34,
                       backgroundColor: color.withValues(alpha: .22),
-                      child: Icon(icons[iconKey], color: color, size: 34),
+                      child: Icon(
+                          categoryIconChoices[iconKey] ??
+                              Icons.category_outlined,
+                          color: color,
+                          size: 34),
                     ),
                     const SizedBox(width: 18),
                     Expanded(
@@ -177,12 +177,23 @@ class _CategoryFormDialogState extends State<CategoryFormDialog> {
                             ),
                           )
                           .toList(),
-                      onChanged: (value) {
-                        if (value != null) setState(() => categoryType = value);
-                      },
+                      onChanged: typeLocked
+                          ? null
+                          : (value) {
+                              if (value == null || value == categoryType) {
+                                return;
+                              }
+                              setState(() {
+                                categoryType = value;
+                                if (hierarchy.byId[parentId]?.type != value) {
+                                  parentId = null;
+                                }
+                              });
+                            },
                     ),
                   ),
                 ),
+                if (typeLocked) const Text('类别已有关联记录或子类别，类型已锁定。'),
                 _CategoryEditorRow(
                   icon: Icons.folder_outlined,
                   title: '父类别',
@@ -234,7 +245,12 @@ class _CategoryFormDialogState extends State<CategoryFormDialog> {
                     child: DropdownButton<String>(
                       value: iconKey,
                       alignment: Alignment.centerRight,
-                      items: icons.entries
+                      items: {
+                        ...categoryIconChoices,
+                        if (!categoryIconChoices.containsKey(iconKey))
+                          iconKey: Icons.category_outlined,
+                      }
+                          .entries
                           .map(
                             (entry) => DropdownMenuItem(
                               value: entry.key,

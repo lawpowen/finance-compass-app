@@ -78,10 +78,28 @@ void main() {
     list.onReorder!(5, 0);
     await tester.pumpAndSettle();
 
-    final refreshed = await container.read(financeRepositoryProvider.future);
+    var refreshed = await container.read(financeRepositoryProvider.future);
     expect(refreshed.transactionTemplates.first.id, 'tpl-5');
     expect(refreshed.transactionTemplates.take(5).map((item) => item.id),
         ['tpl-5', 'tpl-0', 'tpl-1', 'tpl-2', 'tpl-3']);
+
+    // Downward drag to the end passes newIndex == length (6) and mid-list (0 -> 3).
+    tester.widget<ReorderableListView>(find.byType(ReorderableListView)).onReorder!(
+      0,
+      6,
+    );
+    await tester.pumpAndSettle();
+    refreshed = await container.read(financeRepositoryProvider.future);
+    expect(refreshed.transactionTemplates.last.id, 'tpl-5');
+
+    tester.widget<ReorderableListView>(find.byType(ReorderableListView)).onReorder!(
+      0,
+      3,
+    );
+    await tester.pumpAndSettle();
+    refreshed = await container.read(financeRepositoryProvider.future);
+    expect(refreshed.transactionTemplates.map((item) => item.id),
+        ['tpl-1', 'tpl-2', 'tpl-0', 'tpl-3', 'tpl-4', 'tpl-5']);
   });
 
   testWidgets(

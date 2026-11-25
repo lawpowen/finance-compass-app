@@ -10,13 +10,15 @@ external JSPromise<JSString> _inspect(JSString accountId);
 external JSPromise<JSString> _subscribe(JSString accountId, JSString publicKey);
 
 @JS('FinanceCompassPush.confirm')
-external void _confirm(JSString accountId, JSString endpoint);
+external void _confirm(
+    JSString accountId, JSString endpoint, JSString timezone);
 
 @JS('FinanceCompassPush.unsubscribe')
 external JSPromise<JSString> _unsubscribe(JSString accountId);
 
 @JS('FinanceCompassPush.reconcile')
-external JSPromise<JSAny?> _reconcile(JSString accountId);
+external JSPromise<JSAny?> _reconcile(
+    JSString accountId, JSBoolean verifiedTransition);
 
 Future<String> inspectPushBrowser(String accountId) async {
   if (_bridge == null) return '{"supported":false,"permission":"denied"}';
@@ -30,8 +32,8 @@ Future<String> subscribePushBrowser(String accountId, String publicKey) =>
         .toDart
         .then((value) => value.toDart);
 
-void confirmPushBrowser(String accountId, String endpoint) =>
-    _confirm(accountId.toJS, endpoint.toJS);
+void confirmPushBrowser(String accountId, String endpoint, String timezone) =>
+    _confirm(accountId.toJS, endpoint.toJS, timezone.toJS);
 
 Future<String?> unsubscribePushBrowser(String accountId) async {
   if (_bridge == null) return null;
@@ -39,7 +41,8 @@ Future<String?> unsubscribePushBrowser(String accountId) async {
   return endpoint.isEmpty ? null : endpoint;
 }
 
-Future<void> reconcilePushBrowser(String accountId) async {
+Future<void> reconcilePushBrowser(
+    String accountId, bool verifiedTransition) async {
   if (_bridge == null) return;
-  await _reconcile(accountId.toJS).toDart;
+  await _reconcile(accountId.toJS, verifiedTransition.toJS).toDart;
 }

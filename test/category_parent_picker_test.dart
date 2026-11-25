@@ -31,36 +31,43 @@ final _parentPicker = find.byKey(const Key('category-parent-picker'));
 final _save = find.widgetWithText(TextButton, '保存');
 
 void main() {
-  testWidgets('keeps a valid archived parent across type changes',
+  testWidgets(
+      'referenced parent is locked and cannot select a descendant or income parent',
       (tester) async {
     CategoryFormResult? result;
-    await _openEditor(
-      tester,
-      initial: _current,
-      onResult: (picked) => result = picked,
-    );
-
+    await _openEditor(tester,
+        initial: _current, onResult: (value) => result = value);
+    final type = tester.widget<DropdownButton<CategoryType>>(
+        find.byType(DropdownButton<CategoryType>));
+    expect(type.onChanged, isNull);
     expect(find.text('Archived bucket（已归档）'), findsOneWidget);
+    await tester.tap(_parentPicker);
+    await tester.pumpAndSettle();
+    expect(find.text('Income bucket'), findsNothing);
+    expect(find.text('Descendant bucket'), findsNothing);
+    expect(find.widgetWithText(DropdownMenuItem<int>, 'Current bucket'),
+        findsNothing);
+    await tester.tap(find.text('Archived bucket（已归档）').last);
+    await tester.pumpAndSettle();
+    await tester.tap(_save);
+    await tester.pumpAndSettle();
+    expect(result?.category.parentId, _archived.id);
+    expect(result?.category.type, CategoryType.expense);
+  });
+
+  testWidgets('changing an unused category type clears an incompatible parent',
+      (tester) async {
+    CategoryFormResult? result;
+    await _openEditor(tester,
+        initial: _child, onResult: (value) => result = value);
     await tester.tap(find.byType(DropdownButton<CategoryType>));
     await tester.pumpAndSettle();
     await tester.tap(find.text('收入').last);
     await tester.pumpAndSettle();
-    expect(find.text('Archived bucket（已归档）'), findsOneWidget);
-
-    await tester.tap(_parentPicker);
-    await tester.pumpAndSettle();
-    expect(find.text('Descendant bucket'), findsNothing);
-    expect(
-      find.widgetWithText(DropdownMenuItem<int>, 'Current bucket'),
-      findsNothing,
-    );
-    await tester.tap(find.text('Archived bucket（已归档）').last);
-    await tester.pumpAndSettle();
-
     await tester.tap(_save);
     await tester.pumpAndSettle();
     expect(result?.category.type, CategoryType.income);
-    expect(result?.category.parentId, 'archived-id');
+    expect(result?.category.parentId, isNull);
   });
 
   testWidgets('requires an explicit choice for a missing legacy parent',
@@ -101,12 +108,13 @@ void main() {
     await tester.tap(_parentPicker);
     await tester.pumpAndSettle();
     expect(find.text('Archived bucket（已归档）'), findsNothing);
-    await tester.tap(find.text('Income bucket').last);
+    expect(find.text('Income bucket'), findsNothing);
+    await tester.tap(find.text('Current bucket').last);
     await tester.pumpAndSettle();
 
     await tester.tap(_save);
     await tester.pumpAndSettle();
-    expect(result?.category.parentId, 'income-id');
+    expect(result?.category.parentId, _current.id);
   });
 }
 

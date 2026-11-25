@@ -6,15 +6,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/data/finance_repository.dart';
 import '../../core/models/account.dart';
 import '../../core/models/loan_amortization.dart';
+import '../../core/models/loan_settlement.dart';
 import '../../core/models/transaction.dart';
 import '../../core/providers/mutations/account_mutations.dart';
 import '../../core/providers/mutations/transaction_mutations.dart';
 import '../../core/providers/repository_provider.dart';
 import '../../core/theme/finance_theme.dart';
 import '../../core/utils/currency_formatter.dart';
-import '../../core/utils/id_generator.dart';
 import '../shared/compass_ui.dart';
 import 'account_form_dialog.dart';
+import 'repayment_account_picker.dart';
+import 'unavailable_account_page.dart';
 
 class LoanDetailScreen extends ConsumerStatefulWidget {
   const LoanDetailScreen({
@@ -39,12 +41,11 @@ class _LoanDetailScreenState extends ConsumerState<LoanDetailScreen> {
   DateTime? _historicalCutoff;
 
   FinanceRepository get _repository =>
-      ref.watch(financeRepositoryProvider).valueOrNull ?? widget.repository;
+      ref.read(financeRepositoryProvider).valueOrNull ?? widget.repository;
 
-  Account get _account => _repository.accounts.firstWhere(
-        (item) => item.id == widget.account.id,
-        orElse: () => widget.account,
-      );
+  Account? _findAccount(FinanceRepository ledger) => identical(ledger.database, widget.repository.database)
+      ? ledger.accounts.where((a) => a.id == widget.account.id && a.accountType == AccountType.loan).firstOrNull
+      : null;
 
   @override
   void initState() {
@@ -55,10 +56,11 @@ class _LoanDetailScreenState extends ConsumerState<LoanDetailScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
       if (_historicalCutoff != null) return;
-      final account = _account;
-      if (!account.hasCompleteLoanProfile) return;
-      final schedule = _scheduleFor(account);
-      await _upgradeLegacyPlannedTransactions(account, schedule);
+      final account = _findAccount(_repository);
+    if (account == null) return;
+      final schedule = _tryScheduleFor(account);
+      if (schedule == null || !account.isActive) return;
+      await _upgradeLegacyPlannedTransactions(account);
       if (widget.promptForPlannedGeneration && mounted) {
         await _offerPlannedGeneration(account, schedule);
       }
@@ -67,12 +69,18 @@ class _LoanDetailScreenState extends ConsumerState<LoanDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final account = _account;
+    final ledger = ref.watch(financeRepositoryProvider).valueOrNull ?? widget.repository;
+    final account = _findAccount(ledger);
+    if (account == null) return const UnavailableAccountPage();
     final isHistorical = _historicalCutoff != null;
-    final cutoffDate =
-        _historicalCutoff ?? _repository.currentMonthCutoffDate();
-    if (account.accountType != AccountType.loan ||
-        !account.hasCompleteLoanProfile) {
+    final today = DateTime.now();
+    final cutoffDate = _historicalCutoff ??
+        DateTime(today.year, today.month, today.day, 23, 59, 59, 999);
+    final schedule = account.accountType == AccountType.loan
+        ? _tryScheduleFor(account)
+        : null;
+    if (account.accountType != AccountType.loan || schedule == null) {
+      final hasFields = account.hasCompleteLoanProfile;
       return Scaffold(
         body: CompassBackground(
           child: SafeArea(
@@ -95,14 +103,16 @@ class _LoanDetailScreenState extends ConsumerState<LoanDetailScreen> {
                         title: Text('还款计划',
                             style: Theme.of(context).textTheme.titleMedium),
                         label: '贷款条件',
-                        message: isHistorical
-                            ? '设置金额、利率和年限后，系统会生成还款计划。历史统计状态不可修改贷款条件。'
-                            : '设置金额、利率和年限后，系统会生成还款计划。',
+                        message: hasFields
+                            ? '贷款合同参数不完整或无效，请编辑修正后再查看还款计划。'
+                            : isHistorical
+                                ? '设置金额、利率和年限后，系统会生成还款计划。历史统计状态不可修改贷款条件。'
+                                : '设置金额、利率和年限后，系统会生成还款计划。',
                       ),
                       const SizedBox(height: 8),
                       if (!isHistorical)
                         CompassPrimaryButton(
-                          label: '设置贷款条件',
+                          label: hasFields ? '修正贷款条件' : '设置贷款条件',
                           onPressed: () => _editAccount(account),
                         )
                       else
@@ -117,28 +127,47 @@ class _LoanDetailScreenState extends ConsumerState<LoanDetailScreen> {
       );
     }
 
-    final schedule = _scheduleFor(account);
-    final paidNumbers = _paidInstallmentNumbers(
-      account.id,
-      cutoffDate: isHistorical ? cutoffDate : null,
-    );
-    final plannedNumbers = _plannedInstallmentNumbers(account.id);
-    final missingPlannedCount = schedule.installments
-        .where(
-          (item) =>
-              !paidNumbers.contains(item.number) &&
-              !plannedNumbers.contains(item.number),
-        )
-        .length;
+    final allocations = LoanSettlement.forLoan(
+        loanId: account.id,
+        currency: account.currency,
+        transactions: _repository.transactions,
+        cutoff: cutoffDate);
+    final residuals = {
+      for (final item in schedule.installments)
+        item.number: allocations.remaining(item)
+    };
+    final unpaid = residuals.values.where((item) => item.payment > 0).toList();
+    final remainingInterest = unpaid.fold<int>(
+            0, (cents, item) => cents + (item.interest * 100).round()) /
+        100;
+    final remainingPayment = unpaid.fold<int>(
+            0, (cents, item) => cents + (item.payment * 100).round()) /
+        100;
+    final missingPlannedCount = isHistorical
+        ? 0
+        : unplannedLoanInstallments(
+                loanId: account.id,
+                currency: account.currency,
+                transactions: _repository.transactions,
+                schedule: schedule)
+            .length;
     final coveredPlannedCount =
         schedule.installments.length - missingPlannedCount;
-    final nextInstallment =
-        schedule.installments.cast<LoanInstallment?>().firstWhere(
-              (item) => item != null && !paidNumbers.contains(item.number),
-              orElse: () => null,
-            );
-    final outstanding =
-        _repository.accountBalanceAt(account.id, cutoffDate).abs();
+    final nextDue = schedule.installments
+        .where((item) => residuals[item.number]!.payment > 0)
+        .firstOrNull;
+    final nextInstallment = isHistorical || nextDue == null
+        ? null
+        : installmentAvailableToRecord(
+            nextDue,
+            allocations,
+            LoanSettlement.forLoan(
+              loanId: account.id,
+              currency: account.currency,
+              transactions: _repository.transactions,
+            ));
+    final balance = _repository.accountBalanceAt(account.id, cutoffDate);
+    final outstanding = (-balance).clamp(0.0, double.infinity).toDouble();
 
     final sidePadding =
         math.max(20.0, (MediaQuery.sizeOf(context).width - 840) / 2);
@@ -181,6 +210,9 @@ class _LoanDetailScreenState extends ConsumerState<LoanDetailScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    if (balance > 0)
+                      Text(
+                          '贷款溢还 ${formatMoney(balance, currency: account.currency)}'),
                     Text(isHistorical ? '截至当月剩余贷款' : '当前剩余贷款',
                         style: Theme.of(context).textTheme.bodySmall),
                     const SizedBox(height: 6),
@@ -209,7 +241,7 @@ class _LoanDetailScreenState extends ConsumerState<LoanDetailScreen> {
                           child: _Metric(
                             label: '剩余利息',
                             value: formatMoney(
-                              schedule.totalInterest,
+                              remainingInterest,
                               currency: account.currency,
                             ),
                           ),
@@ -218,7 +250,7 @@ class _LoanDetailScreenState extends ConsumerState<LoanDetailScreen> {
                           child: _Metric(
                             label: '剩余还款',
                             value: formatMoney(
-                              schedule.totalPayment,
+                              remainingPayment,
                               currency: account.currency,
                             ),
                           ),
@@ -228,9 +260,9 @@ class _LoanDetailScreenState extends ConsumerState<LoanDetailScreen> {
                     const SizedBox(height: 14),
                     Text(
                       '${_methodLabel(account.loanRepaymentMethod!)} · '
-                      '${schedule.installments.length} 期待记录'
+                      '${unpaid.length} 期未付清'
                       '${schedule.installments.length == account.loanTermMonths ? '' : ' · 原合同 ${account.loanTermMonths} 期'} · '
-                      '年利率 ${account.loanAnnualInterestRate!.toStringAsFixed(2)}%',
+                      '年利率 ${account.loanAnnualInterestRate!}%',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ],
@@ -240,9 +272,13 @@ class _LoanDetailScreenState extends ConsumerState<LoanDetailScreen> {
               if (!isHistorical && nextInstallment != null)
                 CompassPrimaryButton(
                   key: const Key('record-loan-installment'),
-                  label: '记录第 ${nextInstallment.number} 期还款',
+                  label: nextInstallment.payment > 0
+                      ? '记录第 ${nextInstallment.number} 期还款'
+                      : '第 ${nextInstallment.number} 期已有未来实还记录',
                   icon: Icons.payments_outlined,
-                  onPressed: () => _recordInstallment(account, nextInstallment),
+                  onPressed: account.isActive && nextInstallment.payment > 0
+                      ? () => _recordInstallment(account, nextInstallment)
+                      : null,
                 )
               else if (!isHistorical)
                 CompassCard(
@@ -266,7 +302,7 @@ class _LoanDetailScreenState extends ConsumerState<LoanDetailScreen> {
                           : '补齐 $missingPlannedCount 期预计交易',
                   icon: Icons.event_repeat_outlined,
                   outlined: true,
-                  onPressed: missingPlannedCount == 0
+                  onPressed: !account.isActive || missingPlannedCount == 0
                       ? null
                       : () => _generatePlannedTransactions(account, schedule),
                 ),
@@ -288,7 +324,7 @@ class _LoanDetailScreenState extends ConsumerState<LoanDetailScreen> {
                 (item) => _InstallmentRow(
                   installment: item,
                   currency: account.currency,
-                  isPaid: paidNumbers.contains(item.number),
+                  remaining: residuals[item.number]!,
                 ),
               ),
             ],
@@ -298,63 +334,17 @@ class _LoanDetailScreenState extends ConsumerState<LoanDetailScreen> {
     );
   }
 
-  Set<int> _paidInstallmentNumbers(
-    String accountId, {
-    DateTime? cutoffDate,
-  }) {
-    final result = <int>{};
-    final expression = RegExp(r'^贷款(?:月供|本金) #(\d+)$');
-    for (final transaction in _repository.transactions) {
-      if (cutoffDate != null &&
-          transaction.transactionDate.isAfter(cutoffDate)) {
-        continue;
-      }
-      if (!transaction.affectsBalance ||
-          transaction.type != TransactionType.transfer ||
-          transaction.toAccountId != accountId) {
-        continue;
-      }
-      final match = expression.firstMatch(transaction.description ?? '');
-      final number = match == null ? null : int.tryParse(match.group(1)!);
-      if (number != null) result.add(number);
-    }
-    return result;
-  }
-
   Future<void> _returnToCurrent() async {
     setState(() => _historicalCutoff = null);
-    final account = _account;
-    if (!account.hasCompleteLoanProfile) return;
-    await _upgradeLegacyPlannedTransactions(account, _scheduleFor(account));
+    final account = _findAccount(_repository);
+    if (account == null || !account.isActive) return;
+    final schedule = _tryScheduleFor(account);
+    if (schedule == null) return;
+    await _upgradeLegacyPlannedTransactions(account);
   }
 
-  Set<int> _plannedInstallmentNumbers(String accountId) {
-    final result = <int>{};
-    final expression = RegExp(r'^贷款(?:月供|本金) #(\d+)$');
-    for (final transaction in _repository.transactions) {
-      if (transaction.status != TransactionStatus.planned ||
-          transaction.type != TransactionType.transfer ||
-          transaction.toAccountId != accountId) {
-        continue;
-      }
-      final match = expression.firstMatch(transaction.description ?? '');
-      final number = match == null ? null : int.tryParse(match.group(1)!);
-      if (number != null) result.add(number);
-    }
-    return result;
-  }
-
-  LoanAmortizationSchedule _scheduleFor(Account account) =>
-      calculateLoanAmortization(
-        principal: account.loanPrincipal!,
-        annualInterestRatePercent: account.loanAnnualInterestRate!,
-        termMonths: account.loanTermMonths!,
-        startDate: account.loanTrackingStartDate ?? account.loanStartDate!,
-        paymentDay: account.loanPaymentDay!,
-        method: account.loanRepaymentMethod!,
-        quotedMonthlyPayment: account.loanQuotedMonthlyPayment,
-        openingPrincipal: account.initialBalance.abs(),
-      );
+  LoanAmortizationSchedule? _tryScheduleFor(Account account) =>
+      tryCalculateLoanScheduleForAccount(account);
 
   Future<void> _offerPlannedGeneration(
     Account loan,
@@ -387,44 +377,8 @@ class _LoanDetailScreenState extends ConsumerState<LoanDetailScreen> {
     }
   }
 
-  Future<Account?> _choosePaymentAccount(Account loan) async {
-    final sources = _repository.accounts
-        .where(
-          (item) =>
-              item.id != loan.id &&
-              item.reportGroup == ReportGroup.cash &&
-              item.currency == loan.currency,
-        )
-        .toList();
-    if (sources.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('请先建立一个 ${loan.currency} 资金账户。')),
-      );
-      return null;
-    }
-    return showModalBottomSheet<Account>(
-      context: context,
-      showDragHandle: true,
-      builder: (sheetContext) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-          children: [
-            Text('选择还款账户', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 8),
-            ...sources.map(
-              (item) => ListTile(
-                title: Text(item.name),
-                subtitle: Text(item.currency),
-                trailing: const Icon(Icons.chevron_right_rounded),
-                onTap: () => Navigator.pop(sheetContext, item),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  Future<Account?> _choosePaymentAccount(Account loan) =>
+      pickRepaymentAccount(context, _repository, loan);
 
   Future<void> _generatePlannedTransactions(
     Account loan,
@@ -432,12 +386,11 @@ class _LoanDetailScreenState extends ConsumerState<LoanDetailScreen> {
   ) async {
     final source = await _choosePaymentAccount(loan);
     if (!mounted || source == null) return;
-    final paid = _paidInstallmentNumbers(loan.id);
-    final planned = _plannedInstallmentNumbers(loan.id);
-    final pending = schedule.installments
-        .where((item) =>
-            !paid.contains(item.number) && !planned.contains(item.number))
-        .toList();
+    final pending = unplannedLoanInstallments(
+        loanId: loan.id,
+        currency: loan.currency,
+        transactions: _repository.transactions,
+        schedule: schedule);
     if (pending.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('全部待还期数已经有预计交易。')),
@@ -465,37 +418,22 @@ class _LoanDetailScreenState extends ConsumerState<LoanDetailScreen> {
         ) ??
         false;
     if (!confirmed || !mounted) return;
-    final transactions = <FinanceTransaction>[];
-    for (final installment in pending) {
-      transactions.add(
-        FinanceTransaction(
-          id: '${buildId('txn_loan_payment_plan')}_${installment.number}',
-          type: TransactionType.transfer,
-          accountId: source.id,
-          toAccountId: loan.id,
-          amount: installment.payment,
-          toAmount: installment.principal,
-          currency: source.currency,
-          toCurrency: loan.currency,
-          transactionDate: installment.dueDate,
-          status: TransactionStatus.planned,
-          description: '贷款月供 #${installment.number}',
-        ),
-      );
-    }
-    await ref
+    final count = await ref
         .read(transactionMutationsProvider.notifier)
-        .addTransactions(transactions);
+        .generateLoanInstallmentPlans(
+            loanId: loan.id, payerId: source.id, confirmed: pending);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('已生成 ${pending.length} 期预计还款交易。')),
+      SnackBar(
+          content: Text(count > 0 ? '已生成 $count 期预计还款交易。' : '还款计划已更新，请重新查看。')),
     );
   }
 
   Future<void> _editAccount(Account account) async {
+    final live = ref.read(financeRepositoryProvider).valueOrNull ?? widget.repository;
     final updated = await showDialog<Account>(
       context: context,
-      builder: (_) => AccountFormDialog(initialAccount: account),
+      builder: (_) => AccountFormDialog.edit(account, live),
     );
     if (!mounted || updated == null) return;
     await ref.read(accountMutationsProvider.notifier).updateAccount(updated);
@@ -508,44 +446,8 @@ class _LoanDetailScreenState extends ConsumerState<LoanDetailScreen> {
     Account loan,
     LoanInstallment installment,
   ) async {
-    final sources = _repository.accounts
-        .where(
-          (item) =>
-              item.id != loan.id &&
-              item.reportGroup == ReportGroup.cash &&
-              item.currency == loan.currency,
-        )
-        .toList();
-    if (sources.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('请先建立一个 ${loan.currency} 资金账户。')),
-      );
-      return;
-    }
-    final source = await showModalBottomSheet<Account>(
-      context: context,
-      showDragHandle: true,
-      builder: (sheetContext) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-          children: [
-            Text('选择还款账户', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 8),
-            ...sources.map(
-              (item) => ListTile(
-                title: Text(item.name),
-                subtitle: Text(item.currency),
-                trailing: const Icon(Icons.chevron_right_rounded),
-                onTap: () => Navigator.pop(sheetContext, item),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+    final source = await _choosePaymentAccount(loan);
     if (!mounted || source == null) return;
-
     final confirmed = await showDialog<bool>(
           context: context,
           builder: (dialogContext) => AlertDialog(
@@ -571,120 +473,29 @@ class _LoanDetailScreenState extends ConsumerState<LoanDetailScreen> {
         false;
     if (!mounted || !confirmed) return;
 
-    final now = DateTime.now();
-    final transactions = <FinanceTransaction>[
-      FinanceTransaction(
-        id: buildId('txn_loan_payment'),
-        type: TransactionType.transfer,
-        accountId: source.id,
-        toAccountId: loan.id,
-        amount: installment.payment,
-        toAmount: installment.principal,
-        currency: source.currency,
-        toCurrency: loan.currency,
-        transactionDate: now,
-        description: '贷款月供 #${installment.number}',
-      ),
-    ];
-    final plannedIds = _repository.transactions
-        .where(
-          (item) =>
-              item.status == TransactionStatus.planned &&
-              item.accountId == source.id &&
-              _sameDay(item.transactionDate, installment.dueDate) &&
-              ((item.type == TransactionType.transfer &&
-                      item.toAccountId == loan.id &&
-                      (item.description == '贷款月供 #${installment.number}' ||
-                          item.description == '贷款本金 #${installment.number}')) ||
-                  (item.type == TransactionType.expense &&
-                      item.description == '贷款利息 #${installment.number}')),
-        )
-        .map((item) => item.id)
-        .toList();
-    if (plannedIds.isNotEmpty) {
-      await ref
-          .read(transactionMutationsProvider.notifier)
-          .deleteTransactions(plannedIds);
-    }
-    await ref
+    final recorded = await ref
         .read(transactionMutationsProvider.notifier)
-        .addTransactions(transactions);
+        .recordLoanInstallment(
+            loanId: loan.id, payerId: source.id, confirmed: installment);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('第 ${installment.number} 期还款已记录')),
+      SnackBar(
+          content: Text(recorded
+              ? '第 ${installment.number} 期还款已记录'
+              : '本期剩余款项已更新，请重新确认。')),
     );
   }
 
-  Future<void> _upgradeLegacyPlannedTransactions(
-    Account loan,
-    LoanAmortizationSchedule schedule,
-  ) async {
-    final legacyTransfers = _repository.transactions.where(
-      (item) =>
-          item.status == TransactionStatus.planned &&
-          item.type == TransactionType.transfer &&
-          item.toAccountId == loan.id &&
-          RegExp(r'^贷款本金 #\d+$').hasMatch(item.description ?? ''),
-    );
-    final replacements = <FinanceTransaction>[];
-    final deleteIds = <String>[];
-    for (final transfer in legacyTransfers) {
-      final number = int.tryParse(
-        RegExp(r'^贷款本金 #(\d+)$')
-                .firstMatch(transfer.description ?? '')
-                ?.group(1) ??
-            '',
-      );
-      if (number == null) continue;
-      final installment =
-          schedule.installments.cast<LoanInstallment?>().firstWhere(
-                (item) => item?.number == number,
-                orElse: () => null,
-              );
-      if (installment == null) continue;
-      deleteIds.add(transfer.id);
-      deleteIds.addAll(
-        _repository.transactions
-            .where(
-              (item) =>
-                  item.status == TransactionStatus.planned &&
-                  item.accountId == transfer.accountId &&
-                  item.type == TransactionType.expense &&
-                  item.description == '贷款利息 #$number' &&
-                  _sameDay(item.transactionDate, transfer.transactionDate),
-            )
-            .map((item) => item.id),
-      );
-      replacements.add(
-        FinanceTransaction(
-          id: '${buildId('txn_loan_payment_plan_upgrade')}_$number',
-          type: TransactionType.transfer,
-          accountId: transfer.accountId,
-          toAccountId: loan.id,
-          amount: installment.payment,
-          toAmount: installment.principal,
-          currency: transfer.currency,
-          toCurrency: loan.currency,
-          recordDate: transfer.recordDate,
-          transactionDate: transfer.transactionDate,
-          status: TransactionStatus.planned,
-          description: '贷款月供 #$number',
-        ),
-      );
+  Future<void> _upgradeLegacyPlannedTransactions(Account loan) async {
+    if (_repository.transactions.any((tx) =>
+        tx.legacyLoanId == loan.id &&
+        tx.legacyLoanPartNumber != null &&
+        tx.status == TransactionStatus.planned)) {
+      await ref
+          .read(transactionMutationsProvider.notifier)
+          .consolidateLegacyLoanPlans(loan.id);
     }
-    if (deleteIds.isEmpty) return;
-    await ref
-        .read(transactionMutationsProvider.notifier)
-        .deleteTransactions(deleteIds.toSet().toList());
-    await ref
-        .read(transactionMutationsProvider.notifier)
-        .addTransactions(replacements);
   }
-
-  bool _sameDay(DateTime left, DateTime right) =>
-      left.year == right.year &&
-      left.month == right.month &&
-      left.day == right.day;
 }
 
 class _HistoricalLoanBanner extends StatelessWidget {
@@ -761,12 +572,14 @@ class _InstallmentRow extends StatelessWidget {
   const _InstallmentRow({
     required this.installment,
     required this.currency,
-    required this.isPaid,
+    required this.remaining,
   });
 
   final LoanInstallment installment;
   final String currency;
-  final bool isPaid;
+  final LoanInstallment remaining;
+  bool get isPaid => remaining.payment == 0;
+  bool get isPartial => !isPaid && remaining.payment != installment.payment;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -789,7 +602,7 @@ class _InstallmentRow extends StatelessWidget {
                 children: [
                   Text(
                     '${_date(installment.dueDate)} · '
-                    '${isPaid ? '已记录' : '预计'}',
+                    '${isPaid ? '已记录' : isPartial ? '部分还款' : '预计'}',
                     style: TextStyle(
                       color: isPaid
                           ? financePaletteOf(context).income
@@ -797,6 +610,9 @@ class _InstallmentRow extends StatelessWidget {
                       fontWeight: isPaid ? FontWeight.w600 : FontWeight.w400,
                     ),
                   ),
+                  if (isPartial)
+                    Text(
+                        '待付 ${formatMoney(remaining.payment, currency: currency)}'),
                   const SizedBox(height: 3),
                   Text(
                     '本金 ${formatMoney(installment.principal, currency: currency)} · '

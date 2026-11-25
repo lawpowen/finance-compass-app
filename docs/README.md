@@ -4,6 +4,9 @@
 
 当前已发布的最新版本为 `0.10.1+45` / `v0.10.1`（2026-09-29 公开发布，PR #9 合并到 `main`，合并提交 `4c1166b`，Release 为 Latest），收录 `codex/credit-billing-audit` 分支上 2026-09-29 的信用卡欠款、净资产溢缴、历史账期、原始账单与输入校验修复；其构建、附件校验、直链回读结果与未执行的平台检查见 v0.10.1 公开发布 QA。上一版本为 `0.10.0+44` / `v0.10.0`（2026-09-25 公开发布，PR #7），见 v0.10.0 公开发布 QA。
 
+Homelab 同步 Web 和 GitHub 原生发布有各自的版本记录。源码中的 Web 缓存版本为 Web 23，发布范围见[变更记录](CHANGELOG.md)。
+
+- [项目上下文](PROJECT_CONTEXT.md)
 - [系统需求](SYSTEM_REQUIREMENTS.md)
 - [系统架构](ARCHITECTURE.md)
 - [模块设计](MODULE_DESIGN.md)

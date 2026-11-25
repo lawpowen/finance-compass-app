@@ -1,6 +1,6 @@
 # Finance Compass
 
-当前版本：`0.10.1+45`（[`v0.10.1`](https://github.com/lawpowen/finance-compass-app/releases/tag/v0.10.1) 已于 2026-09-29 在 GitHub 公开发布，发布核验与已知限制见 [v0.10.1 公开发布 QA](docs/public-release-qa-v0.10.1-2026-09-29.md)）。工程文档索引见 [docs/README.md](docs/README.md)。
+应用版本为 `0.10.1+45`。GitHub 的 [`v0.10.1`](https://github.com/lawpowen/finance-compass-app/releases/tag/v0.10.1) 于 2026-09-29 公开发布，详见[发布 QA](docs/public-release-qa-v0.10.1-2026-09-29.md)。当前源码的同步 Web 版本为 Web 23，详见[变更记录](docs/CHANGELOG.md)。
 
 完整中文需求与设计文档请看：[finance-app-design.md](finance-app-design.md)。
 

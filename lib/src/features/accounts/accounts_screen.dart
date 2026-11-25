@@ -22,6 +22,7 @@ import 'account_detail_screen.dart';
 import 'account_form_dialog.dart';
 import 'asset_snapshot_form_dialog.dart';
 
+/// Legacy layout retained for compatibility; the active UI uses AccountsV2Screen.
 class AccountsScreen extends ConsumerStatefulWidget {
   const AccountsScreen({
     super.key,
@@ -275,19 +276,6 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
                     account.id,
                     displayCutoff,
                   );
-                  final displayedCostBasis = repository.costBasisForAccount(
-                    account.id,
-                    upToDate: displayCutoff,
-                  );
-                  final displayedCashBalance = repository.cashBalanceForAccount(
-                    account.id,
-                    upToDate: displayCutoff,
-                  );
-                  final displayedFlow =
-                      repository.investmentFlowSummaryForAccount(
-                    account.id,
-                    upToDate: displayCutoff,
-                  );
                   final reconciledMonth = repository.reconciledMonthForAccount(
                     account.id,
                   );
@@ -427,25 +415,8 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
                             _SnapshotSummary(
                               snapshot: latestSnapshot,
                               currency: account.currency,
-                              displayedMarketValue: displayedMarketValue,
-                              displayedCostBasis: displayedCostBasis,
-                              remainingCostBasis:
-                                  repository.remainingCostBasisForAccount(
-                                account.id,
-                                upToDate: displayCutoff,
-                              ),
-                              displayedCashBalance: displayedCashBalance,
-                              flowSummary: displayedFlow,
-                              trendValues: repository
-                                  .snapshotsForAccountUpTo(
-                                      account.id, displayCutoff)
-                                  .map(
-                                    (item) => repository.accountBalanceAt(
-                                      account.id,
-                                      item.snapshotDate,
-                                    ),
-                                  )
-                                  .toList(),
+                              valuation: repository.investmentValuationAt(
+                                  account.id, displayCutoff),
                             ),
                           ],
                           if (index != accounts.length - 1) ...[
@@ -500,7 +471,8 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
               controller: amountController,
               decoration: InputDecoration(
                 labelText: '目标金额',
-                prefixText: '${widget.repository.baseCurrency} ',
+                prefixText:
+                    '${initialGoal?.currency ?? widget.repository.baseCurrency} ',
                 border: const OutlineInputBorder(),
               ),
             ),
@@ -601,7 +573,7 @@ class _AccountsScreenState extends ConsumerState<AccountsScreen> {
   Future<void> _showEditAccount(BuildContext context, Account account) async {
     final result = await showDialog<Account>(
       context: context,
-      builder: (_) => AccountFormDialog(initialAccount: account),
+      builder: (_) => AccountFormDialog.edit(account, widget.repository),
     );
     if (!context.mounted || result == null) {
       return;
@@ -801,6 +773,10 @@ class _GoalStatusLine extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (!summary.valuationAvailable) {
+      return Text('缺少汇率，目标进度未估值。',
+          style: Theme.of(context).textTheme.bodySmall);
+    }
     if (summary.isReached) {
       final date = summary.reachedAt;
       final dateStr = date == null ? '' : '${date.year}年${date.month}月';
@@ -814,7 +790,7 @@ class _GoalStatusLine extends StatelessWidget {
     }
 
     // 未达成：计算剩余金额和预估月数
-    final remaining = summary.goal.targetAmount - summary.currentAssets;
+    final remaining = summary.targetAmountInBase - summary.currentAssets;
     final history = summary.history;
     String estimate = '';
     if (history.length >= 2) {
@@ -919,7 +895,7 @@ class _GoalCard extends StatelessWidget {
               ),
             ],
           ),
-          if (!summary.isReached)
+          if (summary.valuationAvailable && !summary.isReached)
             AnimatedCrossFade(
               firstChild: const SizedBox.shrink(),
               secondChild: Column(
@@ -933,7 +909,7 @@ class _GoalCard extends StatelessWidget {
                       _MetricChip(
                         label: '目标金额',
                         value: formatMoney(summary.goal.targetAmount,
-                            currency: currency),
+                            currency: summary.goal.currency),
                       ),
                       _MetricChip(
                         label: '当前总资产',
@@ -1083,29 +1059,21 @@ class _SnapshotSummary extends StatelessWidget {
   const _SnapshotSummary({
     required this.snapshot,
     required this.currency,
-    required this.flowSummary,
-    required this.displayedMarketValue,
-    required this.displayedCostBasis,
-    required this.remainingCostBasis,
-    required this.displayedCashBalance,
-    required this.trendValues,
+    required this.valuation,
   });
 
   final AssetSnapshot snapshot;
   final String currency;
-  final InvestmentFlowSummary flowSummary;
-  final double displayedMarketValue;
-  final double displayedCostBasis;
-  final double remainingCostBasis;
-  final double displayedCashBalance;
-  final List<double> trendValues;
+  final InvestmentValuation valuation;
 
   @override
   Widget build(BuildContext context) {
-    final pnl = displayedMarketValue - remainingCostBasis;
-    final ratio = remainingCostBasis == 0 ? 0.0 : pnl / remainingCostBasis;
+    final ratio = valuation.returnRatio;
+    final returnLabel =
+        ratio == null ? '—' : '${(ratio * 100).toStringAsFixed(1)}%';
     final pnlColor =
-        pnl >= 0 ? const Color(0xFF15803D) : const Color(0xFFB91C1C);
+        valuation.gain >= 0 ? const Color(0xFF15803D) : const Color(0xFFB91C1C);
+    String money(double value) => formatMoney(value, currency: currency);
 
     return Container(
       width: double.infinity,
@@ -1126,18 +1094,12 @@ class _SnapshotSummary extends StatelessWidget {
             spacing: 14,
             runSpacing: 8,
             children: [
+              Text('总市值 ${money(valuation.marketValue)}'),
+              Text('累计投入成本 ${money(valuation.cumulativeCost)}'),
+              Text('净投入 ${money(valuation.netInvestment)}'),
+              Text('现金余额 ${money(valuation.cashBalance)}'),
               Text(
-                  '总市值 ${formatMoney(displayedMarketValue, currency: currency)}'),
-              Text(
-                  '累计投入 ${formatMoney(flowSummary.contribution, currency: currency)}'),
-              Text(
-                  '累计取出 ${formatMoney(flowSummary.withdrawal, currency: currency)}'),
-              Text(
-                  '累计成本 ${formatMoney(displayedCostBasis, currency: currency)}'),
-              Text(
-                  '现金余额 ${formatMoney(displayedCashBalance, currency: currency)}'),
-              Text(
-                '未实现盈亏 ${formatMoney(pnl, currency: currency)} (${(ratio * 100).toStringAsFixed(1)}%)',
+                '资金净收益 ${money(valuation.gain)} ($returnLabel)',
                 style: TextStyle(
                   color: pnlColor,
                   fontWeight: FontWeight.w700,

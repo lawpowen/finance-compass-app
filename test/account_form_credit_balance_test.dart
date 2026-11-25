@@ -1,8 +1,15 @@
+import 'package:drift/native.dart';
+import 'package:finance_app/src/core/data/finance_repository.dart';
+import 'package:finance_app/src/core/database/app_database.dart'
+    show AppDatabase;
 import 'package:finance_app/src/core/models/account.dart';
+import 'package:finance_app/src/core/models/transaction.dart';
+import 'package:finance_app/src/core/providers/database_provider.dart';
 import 'package:finance_app/src/core/settings/app_theme_style.dart';
 import 'package:finance_app/src/core/theme/finance_theme.dart';
 import 'package:finance_app/src/features/accounts/account_form_dialog.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'support/amount_entry.dart';
@@ -73,6 +80,84 @@ Future<void> _save(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('new credit card can be switched back to cash', (tester) async {
+    await _openForm(tester, null);
+    final picker = find.byType(DropdownButton<AccountType>);
+    await tester.ensureVisible(picker);
+    await tester.tap(picker);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('信用卡').last);
+    await tester.pumpAndSettle();
+    expect(tester.widget<DropdownButton<AccountType>>(picker).value,
+        AccountType.creditCard);
+    await tester.ensureVisible(picker);
+    await tester.tap(picker);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('现金').last);
+    await tester.pumpAndSettle();
+    expect(tester.widget<DropdownButton<AccountType>>(picker).value,
+        AccountType.cash);
+  });
+  testWidgets('a new account derives its balance from the opening balance',
+      (tester) async {
+    final result = await _openForm(tester, null);
+    await tester.enterText(find.byType(TextFormField).first, 'Savings');
+    final opening = find.byKey(const Key('account-opening-balance'));
+    await tester.scrollUntilVisible(
+      opening,
+      250,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await enterAmount(tester, opening, '123.45');
+    final current = find.byKey(const Key('account-current-balance'));
+    await tester.ensureVisible(current);
+    expect(amountController(tester, current).text, '123.45');
+    await _save(tester);
+    expect(result()!.initialBalance, 123.45);
+    expect(result()!.currentBalance, 123.45);
+  });
+
+  testWidgets(
+      'existing account editor locks balances and currency from ledger history',
+      (tester) async {
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    var repo = await FinanceRepository.load(db);
+    repo = await repo.addAccount(_card(-300));
+    repo = await repo.addTransaction(FinanceTransaction(
+      id: 'purchase',
+      type: TransactionType.expense,
+      accountId: 'card',
+      currency: 'MYR',
+      amount: 20,
+      transactionDate: DateTime(2026, 1, 10),
+    ));
+    final reloaded = await FinanceRepository.load(db);
+    await tester.pumpWidget(ProviderScope(
+      overrides: [appDatabaseProvider.overrideWithValue(db)],
+      child: MaterialApp(
+          home: AccountFormDialog.edit(reloaded.accounts.single, reloaded)),
+    ));
+    await tester.pumpAndSettle();
+    final currency = tester.widget<DropdownButton<String>>(
+      find.byWidgetPredicate((w) => w is DropdownButton<String>),
+    );
+    expect(currency.onChanged, isNull);
+    await tester.scrollUntilVisible(find.byKey(_balanceField), 150,
+        scrollable: find.byType(Scrollable).first);
+    await tester.tap(find.byKey(_balanceField));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('amount-key-C')), findsNothing);
+    expect(amountController(tester, find.byKey(_balanceField)).text, '-320.00');
+  });
+
+  test('debt accounts have one legal reporting group', () {
+    expect(allowedReportGroups(AccountType.loan), [ReportGroup.credit]);
+    expect(allowedReportGroups(AccountType.creditCard), [ReportGroup.credit]);
+    expect(allowedReportGroups(AccountType.bankSaving), [ReportGroup.cash]);
+    expect(allowedReportGroups(AccountType.fund),
+        contains(ReportGroup.retirement));
+  });
   testWidgets(
       'new account starts in the ledger currency, edited account keeps its currency',
       (tester) async {

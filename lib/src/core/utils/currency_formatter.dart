@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 const baseCurrencyCode = 'MYR';
 const supportedCurrencies = ['MYR', 'USD', 'CNY', 'TWD'];
 String activeBaseCurrencyCode = baseCurrencyCode;
@@ -34,45 +36,151 @@ String currencyLabel(String currency) {
     case 'TWD':
       return 'NT\$';
     default:
-      return currency.toUpperCase();
+      return normalizeCurrency(currency);
   }
 }
 
 String currencyOptionLabel(String currency) {
   final normalized = normalizeCurrency(currency);
-  return '$normalized (${currencyLabel(normalized)})';
+  final label = currencyLabel(normalized);
+  return label == normalized ? normalized : '$normalized ($label)';
 }
 
-String normalizeCurrency(String currency) {
-  final normalized = currency.trim().toUpperCase();
-  return supportedCurrencies.contains(normalized)
-      ? normalized
-      : baseCurrencyCode;
+String normalizeCurrency(String currency) => currency.trim().toUpperCase();
+
+List<String> normalizedCurrencyOrder(Iterable<String> requested) {
+  final ordered = requested.map(normalizeCurrency).where((c) => c.isNotEmpty);
+  return List.unmodifiable({...ordered, ...supportedCurrencies});
 }
 
+List<String> storedCurrencyOrder(String? raw) {
+  if (raw != null) {
+    try {
+      final value = jsonDecode(raw);
+      if (value is List) {
+        return normalizedCurrencyOrder(value.whereType<String>());
+      }
+    } on FormatException {
+      // A malformed local preference has no usable ordering.
+    }
+  }
+  return List.unmodifiable(supportedCurrencies);
+}
+
+bool _validRate(double rate) => rate > 0 && rate.isFinite;
+
+/// Quotes are units of the selected base per unit of the key currency.
 Map<String, double> normalizedExchangeRatesToBase(
   Map<String, double>? rates, {
   String baseCurrency = baseCurrencyCode,
 }) {
   final base = normalizeCurrency(baseCurrency);
-  return {
-    for (final currency in supportedCurrencies)
-      currency: currency == base
-          ? 1
-          : _safeRate(rates?[currency] ?? defaultExchangeRatesToBase[currency]),
-  };
+  final quotes = <String, double>{};
+  for (final entry in (rates ?? const <String, double>{}).entries) {
+    final code = normalizeCurrency(entry.key);
+    if (code.isEmpty || quotes.containsKey(code) || !_validRate(entry.value)) {
+      throw FormatException('无效汇率：${entry.key}');
+    }
+    quotes[code] = entry.value;
+  }
+  quotes[base] = 1;
+  // The built-in quotes are MYR-based. Bridge them through an explicit MYR
+  // quote, the selected base's built-in quote, or another known currency.
+  double? myrRate = quotes[baseCurrencyCode];
+  final baseInMyr = defaultExchangeRatesToBase[base];
+  if (myrRate == null && baseInMyr != null) myrRate = 1 / baseInMyr;
+  if (myrRate == null) {
+    for (final entry in defaultExchangeRatesToBase.entries) {
+      final explicit = quotes[entry.key];
+      if (explicit != null) {
+        myrRate = explicit / entry.value;
+        break;
+      }
+    }
+  }
+  if (myrRate != null) {
+    for (final entry in defaultExchangeRatesToBase.entries) {
+      final derived = entry.value * myrRate;
+      if (_validRate(derived)) quotes.putIfAbsent(entry.key, () => derived);
+    }
+  }
+  return Map.unmodifiable(quotes);
 }
 
-double exchangeRateToBase(
+/// Import rejects malformed values. An already damaged local quote is kept
+/// unavailable so the user can repair it without losing access to the ledger.
+Map<String, double> readCurrencyQuotes(String? raw, String baseCurrency,
+    {bool strict = false}) {
+  final base = normalizeCurrency(baseCurrency);
+  if (raw == null || raw.trim().isEmpty) {
+    return normalizedExchangeRatesToBase(null, baseCurrency: base);
+  }
+  Object? data;
+  try {
+    data = jsonDecode(raw);
+  } on FormatException {
+    if (strict) rethrow;
+  }
+  if (data is! Map<String, dynamic>) {
+    if (strict) throw const FormatException('汇率数据必须是对象。');
+    return Map.unmodifiable({base: 1.0});
+  }
+  final quotes = <String, double>{};
+  final invalid = <String>{};
+  for (final entry in data.entries) {
+    final code = normalizeCurrency(entry.key);
+    final rate = double.tryParse('${entry.value}');
+    if (code.isEmpty ||
+        quotes.containsKey(code) ||
+        invalid.contains(code) ||
+        rate == null ||
+        !_validRate(rate)) {
+      if (strict) throw FormatException('无效汇率：${entry.key}');
+      invalid.add(code);
+    } else {
+      quotes[code] = rate;
+    }
+  }
+  quotes.removeWhere((code, _) => invalid.contains(code));
+  final result =
+      Map.of(normalizedExchangeRatesToBase(quotes, baseCurrency: base));
+  for (final code in invalid.where((code) => code != base)) {
+    result.remove(code);
+  }
+  return Map.unmodifiable(result);
+}
+
+double? exchangeRateToBase(
   String currency,
   Map<String, double> ratesToBase, {
   String baseCurrency = baseCurrencyCode,
 }) {
-  final normalized = normalizeCurrency(currency);
-  if (normalized == normalizeCurrency(baseCurrency)) {
-    return 1;
+  final code = normalizeCurrency(currency);
+  if (code == normalizeCurrency(baseCurrency)) return 1;
+  final quote = ratesToBase[code];
+  return quote != null && _validRate(quote) ? quote : null;
+}
+
+double? tryConvertCurrencyAmount({
+  required double amount,
+  required String fromCurrency,
+  required String toCurrency,
+  required Map<String, double> ratesToBase,
+  String baseCurrency = baseCurrencyCode,
+}) {
+  if (!amount.isFinite) return null;
+  if (normalizeCurrency(fromCurrency) == normalizeCurrency(toCurrency)) {
+    return amount;
   }
-  return _safeRate(ratesToBase[normalized]);
+  final from =
+      exchangeRateToBase(fromCurrency, ratesToBase, baseCurrency: baseCurrency);
+  final to =
+      exchangeRateToBase(toCurrency, ratesToBase, baseCurrency: baseCurrency);
+  if (from == null || to == null) return null;
+  final converted = amount * from / to;
+  if (converted.isFinite) return converted;
+  final alternative = (amount / to) * from;
+  return alternative.isFinite ? alternative : null;
 }
 
 double convertCurrencyAmount({
@@ -82,17 +190,14 @@ double convertCurrencyAmount({
   required Map<String, double> ratesToBase,
   String baseCurrency = baseCurrencyCode,
 }) {
-  final fromRate = exchangeRateToBase(
-    fromCurrency,
-    ratesToBase,
-    baseCurrency: baseCurrency,
-  );
-  final toRate = exchangeRateToBase(
-    toCurrency,
-    ratesToBase,
-    baseCurrency: baseCurrency,
-  );
-  return amount * fromRate / toRate;
+  final result = tryConvertCurrencyAmount(
+      amount: amount,
+      fromCurrency: fromCurrency,
+      toCurrency: toCurrency,
+      ratesToBase: ratesToBase,
+      baseCurrency: baseCurrency);
+  if (result == null) throw FormatException('无法折算 $fromCurrency → $toCurrency');
+  return result;
 }
 
 String formatConversionHint({
@@ -102,19 +207,13 @@ String formatConversionHint({
   required Map<String, double> ratesToBase,
   String baseCurrency = baseCurrencyCode,
 }) {
-  final converted = convertCurrencyAmount(
+  final converted = tryConvertCurrencyAmount(
     amount: amount,
     fromCurrency: fromCurrency,
     toCurrency: toCurrency,
     ratesToBase: ratesToBase,
     baseCurrency: baseCurrency,
   );
+  if (converted == null) return '$fromCurrency → $toCurrency 未估值';
   return '≈ ${formatMoney(converted, currency: toCurrency)}';
-}
-
-double _safeRate(double? rate) {
-  if (rate == null || rate <= 0 || rate.isNaN || rate.isInfinite) {
-    return 1;
-  }
-  return rate;
 }

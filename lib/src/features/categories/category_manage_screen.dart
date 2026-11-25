@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../shared/category_icons.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/data/finance_repository.dart';
@@ -210,19 +212,31 @@ class _CategoryManageScreenState extends ConsumerState<CategoryManageScreen> {
       [Category? category]) async {
     final repository =
         ref.read(financeRepositoryProvider).valueOrNull ?? widget.repository;
+    final typeLocked =
+        category != null && !await repository.canDeleteCategory(category.id);
+    if (!context.mounted) return;
     final result = await showDialog<CategoryFormResult>(
       context: context,
       builder: (_) => CategoryFormDialog(
         categories: repository.sortedCategories(),
         initialCategory: category,
+        typeLocked: typeLocked,
       ),
     );
     if (result == null || !mounted) return;
     final mutations = ref.read(categoryMutationsProvider.notifier);
-    if (result.isEdit) {
-      await mutations.updateCategory(result.category);
-    } else {
-      await mutations.addCategory(result.category);
+    try {
+      if (result.isEdit) {
+        await mutations.updateCategory(result.category);
+      } else {
+        await mutations.addCategory(result.category);
+      }
+    } on ArgumentError catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${error.message}')),
+        );
+      }
     }
   }
 }
@@ -412,33 +426,11 @@ class _CategoryPresentation {
         .where((item) => item.categoryId == category.id)
         .length;
     return _CategoryPresentation(
-      name: _translatedName(category.name),
+      name: category.name,
       subtitle: '$count 笔交易',
-      icon: _categoryIcon(category.iconKey, category.name),
+      icon: categoryIcon(category),
       color: Color(category.colorValue ?? FinanceColors.compassTeal.toARGB32()),
       source: category,
     );
   }
-}
-
-String _translatedName(String name) {
-  final lower = name.toLowerCase();
-  if (lower.contains('food')) return '餐饮';
-  if (lower.contains('transport')) return '交通';
-  if (lower.contains('shopping')) return '购物';
-  if (lower.contains('housing')) return '住房';
-  if (lower.contains('salary')) return '工资';
-  return name;
-}
-
-IconData _categoryIcon(String? key, String name) {
-  final value = '${key ?? ''} $name'.toLowerCase();
-  if (value.contains('restaurant') || value.contains('food')) {
-    return Icons.restaurant_outlined;
-  }
-  if (value.contains('transport')) return Icons.directions_bus_outlined;
-  if (value.contains('shopping')) return Icons.shopping_bag_outlined;
-  if (value.contains('salary')) return Icons.badge_outlined;
-  if (value.contains('home')) return Icons.home_outlined;
-  return Icons.sell_outlined;
 }

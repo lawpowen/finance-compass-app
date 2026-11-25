@@ -80,6 +80,11 @@ void main() {
     expect(_balance(repository, 'source'), 500);
     expect(_balance(repository, 'target'), 600);
     expect(repository.transactions.single.transferInAmount, 500);
+    final restored = await repository.restoreSyncedSnapshot(
+      await repository.buildJsonSnapshotPayload(),
+    );
+    expect(_balance(restored, 'source'), 500);
+    expect(_balance(restored, 'target'), 600);
   });
 
   test('cash transfer mutation publishes the receiving balance immediately',

@@ -170,7 +170,7 @@ class _FinanceSyncGateState extends State<FinanceSyncGate> {
   }
 
   void _protectDraft() {
-    protectPendingChanges(_session!.busy);
+    protectPendingChanges(_session!.busy || _session!.hasRejectedDraft);
   }
 
   Future<void> _connect({
@@ -196,7 +196,8 @@ class _FinanceSyncGateState extends State<FinanceSyncGate> {
           remote.username.toLowerCase() != expectedUsername.toLowerCase()) {
         throw const SyncException('其他标签页已切换账号，请重新登录。');
       }
-      await reconcileBrowserPush(remote.accountId);
+      unawaited(
+          reconcileBrowserPush(remote.accountId, verifiedTransition: true));
       final restored = await _outbox.read(remote.accountId, remote.username);
       openingDatabase = await openSyncDatabase();
       final repository = await FinanceRepository.load(openingDatabase);
@@ -262,7 +263,7 @@ class _FinanceSyncGateState extends State<FinanceSyncGate> {
               navigation: _workspaceNavigation,
             ),
           ),
-          builder: (_, child) => _SyncFrame(
+          builder: (_, child) => LedgerSyncFrame(
             session: session,
             navigator: _navigator,
             workspaceNavigation: _workspaceNavigation,
@@ -566,9 +567,17 @@ class _SyncSettingsActions extends ConsumerWidget {
           children: [
             CompassSettingsRow(
               icon: Icons.sync_rounded,
-              title: session.hasPending ? '立即同步账本' : '刷新账本',
-              subtitle: session.hasPending ? session.message : null,
-              onTap: session.busy
+              title: session.repairingSize
+                  ? '草稿待精简'
+                  : session.hasPending
+                      ? '立即同步账本'
+                      : '刷新账本',
+              subtitle: session.repairingSize
+                  ? session.sizeNotice
+                  : session.hasPending
+                      ? session.message
+                      : null,
+              onTap: session.busy || session.repairingSize
                   ? null
                   : () {
                       if (session.hasPending) {
@@ -619,8 +628,9 @@ class _SyncSettingsActions extends ConsumerWidget {
   }
 }
 
-class _SyncFrame extends ConsumerStatefulWidget {
-  const _SyncFrame({
+class LedgerSyncFrame extends ConsumerStatefulWidget {
+  const LedgerSyncFrame({
+    super.key,
     required this.session,
     required this.navigator,
     required this.workspaceNavigation,
@@ -635,10 +645,10 @@ class _SyncFrame extends ConsumerStatefulWidget {
   final Widget child;
 
   @override
-  ConsumerState<_SyncFrame> createState() => _SyncFrameState();
+  ConsumerState<LedgerSyncFrame> createState() => _SyncFrameState();
 }
 
-class _SyncFrameState extends ConsumerState<_SyncFrame> {
+class _SyncFrameState extends ConsumerState<LedgerSyncFrame> {
   bool _confirmDiscard = false;
   bool _polling = false;
   String? _recoveryError;
@@ -668,6 +678,9 @@ class _SyncFrameState extends ConsumerState<_SyncFrame> {
   }
 
   void _resumeSync() {
+    if (!session.authenticationExpired) {
+      unawaited(reconcileBrowserPush(session.accountId));
+    }
     session.kickBackgroundSync(immediate: true);
     unawaited(_poll());
   }
@@ -677,6 +690,7 @@ class _SyncFrameState extends ConsumerState<_SyncFrame> {
       WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed &&
       navigator.currentState?.canPop() == false &&
       !widget.workspaceNavigation.hasOpenPage &&
+      !session.hasRejectedDraft &&
       !session.hasPending &&
       !session.needsRecovery;
 
@@ -686,7 +700,10 @@ class _SyncFrameState extends ConsumerState<_SyncFrame> {
       ref.read(financeRepositoryProvider).hasValue;
 
   Future<void> _poll() async {
-    if (_polling || !_canPoll) return;
+    final checkingDraftOwner = session.sizeNotice != null &&
+        !session.needsRecovery &&
+        WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+    if (_polling || (!_canPoll && !checkingDraftOwner)) return;
     _polling = true;
     try {
       // Fetch without blocking the UI, then verify that the user did not
@@ -701,7 +718,8 @@ class _SyncFrameState extends ConsumerState<_SyncFrame> {
             .pullRemote(available: remote, canApply: () => _canApplyRemote);
       }
     } on SyncException catch (error) {
-      if (_canPoll &&
+      if (mounted &&
+          (_canPoll || checkingDraftOwner) &&
           (error.status == 401 || error.code == 'account_changed')) {
         session.markAuthenticationExpired(error);
       }
@@ -720,19 +738,80 @@ class _SyncFrameState extends ConsumerState<_SyncFrame> {
         listenable: session,
         builder: (context, child) {
           final recovering = session.needsRecovery;
-          return Stack(
-            fit: StackFit.expand,
+          return Column(
             children: [
-              Visibility(
-                visible: !recovering,
-                maintainState: true,
-                child: child!,
-              ),
-              if (recovering) _buildRecovery(context),
+              if (!recovering && session.sizeNotice != null)
+                _buildSizeNotice(context),
+              Expanded(
+                  child: Stack(fit: StackFit.expand, children: [
+                Visibility(
+                  visible: !recovering,
+                  maintainState: true,
+                  child: child!,
+                ),
+                if (recovering) _buildRecovery(context),
+              ])),
             ],
           );
         },
         child: widget.child,
+      );
+
+  Widget _buildSizeNotice(BuildContext context) => Material(
+        color: Theme.of(context).colorScheme.surfaceContainerHigh,
+        child: SafeArea(
+            bottom: false,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Semantics(
+                        liveRegion: true, child: Text(session.sizeNotice!)),
+                    if (_recoveryError case final error?) Text(error),
+                    Wrap(children: [
+                      if (session.hasRejectedDraft) ...[
+                        TextButton(
+                            onPressed: session.busy
+                                ? null
+                                : () => _run(ref
+                                    .read(financeRepositoryProvider.notifier)
+                                    .keepOversizedDraft),
+                            child: const Text('保留并编辑本机草稿')),
+                        TextButton(
+                            onPressed: session.busy ? null : _downloadDraft,
+                            child: const Text('下载这次更改')),
+                        TextButton(
+                            onPressed: session.busy
+                                ? null
+                                : session.cancelRejectedDraft,
+                            child: const Text('取消这次更改')),
+                      ] else ...[
+                        TextButton(
+                            onPressed: session.busy ? null : _downloadDraft,
+                            child: const Text('下载草稿备份')),
+                        if (_confirmDiscard) ...[
+                          TextButton(
+                              onPressed: session.busy
+                                  ? null
+                                  : () => _refresh(discardPending: true),
+                              child: const Text('确认放弃草稿并采用服务器账本')),
+                          TextButton(
+                              onPressed: () =>
+                                  setState(() => _confirmDiscard = false),
+                              child: const Text('取消')),
+                        ] else
+                          TextButton(
+                              onPressed: session.busy
+                                  ? null
+                                  : () =>
+                                      setState(() => _confirmDiscard = true),
+                              child: const Text('采用服务器账本')),
+                      ],
+                    ]),
+                  ]),
+            )),
       );
 
   Widget _buildRecovery(BuildContext context) => Material(
@@ -794,8 +873,24 @@ class _SyncFrameState extends ConsumerState<_SyncFrame> {
                         child: const Text('返回登录页'),
                       ),
                     ],
+                    if (session.hasRejectedDraft &&
+                        !session.hasPending &&
+                        !session.accountMismatch)
+                      OutlinedButton(
+                          onPressed: session.busy ? null : _downloadDraft,
+                          child: const Text('下载这次更改')),
+                    if (session.requiresRefresh &&
+                        !session.authenticationExpired) ...[
+                      const Text('重新读取这个账号在本机保存的最新草稿。如果另一页面已经上传，将显示服务器账本。'),
+                      FilledButton(
+                        onPressed: session.busy ? null : () => _refresh(),
+                        child: const Text('重新载入本机草稿'),
+                      ),
+                    ],
                     if (session.hasPending) ...[
-                      if (!session.conflicted && !session.authenticationExpired)
+                      if (!session.requiresRefresh &&
+                          !session.conflicted &&
+                          !session.authenticationExpired)
                         FilledButton(
                           onPressed:
                               session.busy ? null : () => _refresh(retry: true),
@@ -806,13 +901,14 @@ class _SyncFrameState extends ConsumerState<_SyncFrame> {
                           onPressed: session.busy ? null : _downloadDraft,
                           child: const Text('下载本次账本'),
                         ),
-                      if (!session.authenticationExpired)
+                      if (!session.requiresRefresh &&
+                          !session.authenticationExpired)
                         if (_confirmDiscard) ...[
                           const Text('放弃未确认的更改并显示服务器账本？'),
                           TextButton(
                             onPressed: session.busy
                                 ? null
-                                : () => _refresh(retry: false),
+                                : () => _refresh(discardPending: true),
                             child: const Text('确认放弃'),
                           ),
                           TextButton(
@@ -828,13 +924,7 @@ class _SyncFrameState extends ConsumerState<_SyncFrame> {
                                 : () => setState(() => _confirmDiscard = true),
                             child: const Text('放弃并刷新'),
                           ),
-                    ] else if (session.requiresRefresh &&
-                        !session.authenticationExpired)
-                      FilledButton(
-                        onPressed:
-                            session.busy ? null : () => _refresh(retry: false),
-                        child: const Text('重新加载账本'),
-                      ),
+                    ],
                   ],
                 ),
               ),
@@ -848,20 +938,22 @@ class _SyncFrameState extends ConsumerState<_SyncFrame> {
     unawaited(_run(() async {
       await session.renewAuthentication(
         _password.text,
-        beforeResume: () => reconcileBrowserPush(session.accountId),
+        beforeResume: () =>
+            reconcileBrowserPush(session.accountId, verifiedTransition: true),
       );
       if (mounted) _password.clear();
     }));
   }
 
-  Future<void> _refresh({required bool retry}) async {
+  Future<void> _refresh(
+      {bool retry = false, bool discardPending = false}) async {
     final nav = navigator.currentState;
     if (nav == null) return;
     setState(() => _confirmDiscard = false);
     nav.popUntil((route) => route.isFirst);
     await _run(() => ref.read(financeRepositoryProvider.notifier).pullRemote(
           retryPending: retry,
-          discardPending: !retry && session.hasPending,
+          discardPending: discardPending,
         ));
   }
 

@@ -79,10 +79,10 @@ void main() {
       PRAGMA user_version = 6;
     ''');
     legacy.execute(
-      "INSERT INTO accounts (id,name,account_type,report_group,currency,current_balance) VALUES ('card','Legacy Card','creditCard','credit','MYR',-321.45)",
+      "INSERT INTO accounts (id,name,account_type,report_group,currency,current_balance) VALUES ('card','Legacy Card','creditCard','old-credit','MYR',-321.45)",
     );
     legacy.execute(
-      "INSERT INTO accounts (id,name,account_type,report_group,currency,current_balance) VALUES ('cash','Cash','cash','cash','MYR',1000)",
+      "INSERT INTO accounts (id,name,account_type,report_group,currency,current_balance) VALUES ('cash','Cash','cash','','MYR',1000)",
     );
     final purchaseDate = DateTime(2026, 6, 20);
     final legacySettlementDate = DateTime(2026, 7, 12);
@@ -133,7 +133,24 @@ void main() {
         ]),
       ],
     );
+    legacy.execute('INSERT INTO app_meta (key,value) VALUES (?,?)',
+        [AppDatabase.legacyRulesKey, '[']);
+    legacy.execute(
+        "UPDATE accounts SET account_type = 'unknown' WHERE id = 'cash'");
     legacy.dispose();
+
+    // A failed legacy-data conversion must leave the old DDL retryable.
+    final failedOpen = AppDatabase.forTesting(NativeDatabase(file));
+    await expectLater(failedOpen.fetchAccounts(), throwsArgumentError);
+    await failedOpen.close();
+    final beforeRetry = sqlite.sqlite3.open(file.path);
+    expect(beforeRetry.userVersion, 6);
+    expect(
+        beforeRetry.select('PRAGMA table_info(accounts)').map((r) => r['name']),
+        isNot(contains('credit_limit')));
+    beforeRetry
+        .execute("UPDATE accounts SET account_type = 'cash' WHERE id = 'cash'");
+    beforeRetry.dispose();
 
     final database = AppDatabase.forTesting(NativeDatabase(file));
     final accounts = await database.fetchAccounts();
@@ -142,6 +159,9 @@ void main() {
 
     expect(database.schemaVersion, 9);
     final card = accounts.singleWhere((item) => item.id == 'card');
+    expect(card.reportGroup.name, 'credit');
+    expect(accounts.singleWhere((item) => item.id == 'cash').reportGroup.name,
+        'cash');
     expect(card.currentBalance, -321.45);
     expect(card.creditLimit, isNull);
     expect(card.statementDay, isNull);
@@ -162,8 +182,13 @@ void main() {
     );
     expect(templates.single.id, 'tpl_legacy');
     expect(templates.single.amount, 12.5);
+    expect(await database.getMetaValue('transaction_templates_json'), isNull);
+    expect(await database.getMetaValue(AppDatabase.presetTablesMarker), 'true');
+    expect(await database.fetchRecurringTransactionRules(), isEmpty);
     expect(
-        await database.getMetaValue('transaction_templates_json'), isNotNull);
+        await database.getMetaValue(
+            'legacy_preset_recovery/recurring_transaction_rules_json'),
+        '[');
     expect(
         await database.getMetaValue('local_profile_id'), startsWith('local_'));
 

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -10,9 +11,84 @@ import '../../core/providers/repository_provider.dart';
 import '../../core/theme/finance_colors.dart';
 import '../../core/theme/finance_theme.dart';
 import '../../core/utils/id_generator.dart';
+import '../../core/utils/anchored_month.dart';
 import '../shared/compass_ui.dart';
 import 'transaction_composer_page.dart';
 import 'transaction_form_dialog.dart';
+
+/// Resolve a category for a new preset without modifying its source transaction.
+Future<bool> saveTransactionPreset(
+  BuildContext context,
+  WidgetRef ref, {
+  required String name,
+  required FinanceTransaction transaction,
+  int? intervalMonths,
+  bool fromStoredTransaction = false,
+}) async {
+  try {
+    final ledger = await ref.read(financeRepositoryProvider.future);
+    if (!context.mounted) return false;
+    final source = fromStoredTransaction
+        ? ledger.transactions.where((t) => t.id == transaction.id).firstOrNull
+        : transaction;
+    if (source == null) throw const FormatException('原交易已删除，请重新选择。');
+    final options = ledger.transactionCategoryOptions(source.type);
+    PresetCategoryChoice? choice;
+    if (source.categoryId != null &&
+        !options.any((c) => c.id == source.categoryId)) {
+      choice = await showDialog<PresetCategoryChoice>(
+        context: context,
+        builder: (dialog) => SimpleDialog(
+          title: const Text('原类别已归档或不可用，请选择新类别'),
+          children: [
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop<PresetCategoryChoice>(
+                  dialog, (categoryId: null)),
+              child: const Text('未分类'),
+            ),
+            for (final category in options)
+              SimpleDialogOption(
+                onPressed: () =>
+                    Navigator.pop(dialog, (categoryId: category.id)),
+                child: Text(ledger.categoryHierarchy
+                    .pathOf(category.id)
+                    .map((c) => c.name)
+                    .join(' / ')),
+              ),
+          ],
+        ),
+      );
+      if (choice == null || !context.mounted) return false;
+    }
+    final mutations = ref.read(transactionMutationsProvider.notifier);
+    if (intervalMonths == null) {
+      await mutations.addTransactionTemplate(
+          name: name,
+          transaction: source,
+          fromStoredTransaction: fromStoredTransaction,
+          categoryChoice: choice);
+    } else {
+      await mutations.addRecurringTransactionRule(
+          name: name,
+          transaction: source,
+          intervalMonths: intervalMonths,
+          fromStoredTransaction: fromStoredTransaction,
+          categoryChoice: choice);
+    }
+    return true;
+  } catch (error) {
+    if (context.mounted) {
+      final detail = switch (error) {
+        FormatException() => error.message,
+        ArgumentError() => error.message,
+        _ => error.toString(),
+      };
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('保存失败：$detail')));
+    }
+    return false;
+  }
+}
 
 class QuickTemplateManagerPage extends ConsumerWidget {
   const QuickTemplateManagerPage({super.key, required this.repository});
@@ -99,6 +175,9 @@ class QuickTemplateManagerPage extends ConsumerWidget {
     int oldIndex,
     int newIndex,
   ) async {
+    if (newIndex > oldIndex) {
+      newIndex -= 1;
+    }
     if (oldIndex == newIndex) return;
     final reordered = [...rows];
     final moved = reordered.removeAt(oldIndex);
@@ -131,17 +210,95 @@ class QuickTemplateManagerPage extends ConsumerWidget {
       title: '模板名称',
     );
     if (name == null || !context.mounted) return;
-    await ref
-        .read(transactionMutationsProvider.notifier)
-        .addTransactionTemplate(
-          name: name,
-          transaction: transaction,
-        );
+    if (!await saveTransactionPreset(context, ref,
+        name: name, transaction: transaction)) {
+      return;
+    }
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('模板已保存。')),
       );
     }
+  }
+}
+
+// Financial fields form one edit unit: a changed payer must not be merged
+// with another device's amount or currency. Text and schedule fields may
+// be merged independently; generated months always belong to the ledger.
+Map<String, dynamic>? _mergePresetDraft(Map<String, dynamic> base,
+    Map<String, dynamic> local, Map<String, dynamic> remote) {
+  const financial = {
+    'type',
+    'account_id',
+    'to_account_id',
+    'category_id',
+    'currency',
+    'amount',
+    'to_amount',
+    'to_currency',
+    'loan_payment_amount',
+    'loan_installment_number'
+  };
+  const schedule = {'start_date', 'end_date', 'interval_months'};
+  final groups = [
+    financial,
+    schedule,
+    for (final key in local.keys)
+      if (!financial.contains(key) &&
+          !schedule.contains(key) &&
+          key != 'generated_month_keys' &&
+          key != 'id')
+        {key},
+  ];
+  final merged = Map<String, dynamic>.of(remote);
+  for (final group in groups) {
+    if (!group.any((k) => local[k] != base[k])) continue;
+    if (group.any((k) => remote[k] != base[k]) &&
+        group.any((k) => remote[k] != local[k])) {
+      return null;
+    }
+    for (final key in group) {
+      if (local.containsKey(key)) {
+        merged[key] = local[key];
+      } else {
+        merged.remove(key);
+      }
+    }
+  }
+  return merged;
+}
+
+Widget _unavailablePreset(String title) => _AutomationShell(
+      title: title,
+      trailing: const SizedBox.shrink(),
+      children: const [Text('此记录已删除或账本已切换。')],
+    );
+
+Widget _changedPreset(VoidCallback reload) => Column(children: [
+      const Text('其他设备已修改同一字段。当前草稿仍保留，重新载入会采用最新记录。'),
+      TextButton(onPressed: reload, child: const Text('重新载入记录')),
+    ]);
+
+Future<bool> _commitPreset(
+    BuildContext context,
+    WidgetRef ref,
+    FinanceRepository bound,
+    Future<FinanceRepository> Function(FinanceRepository) write) async {
+  try {
+    await ref.read(financeRepositoryProvider.notifier).mutate((repository) {
+      if (!identical(repository.database, bound.database)) {
+        throw const FormatException('账本已切换。');
+      }
+      return write(repository);
+    });
+    return true;
+  } catch (error) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content:
+              Text(error is FormatException ? error.message : '保存失败：$error')));
+    }
+    return false;
   }
 }
 
@@ -159,6 +316,9 @@ class TemplateEditorPage extends ConsumerStatefulWidget {
 }
 
 class _TemplateEditorPageState extends ConsumerState<TemplateEditorPage> {
+  late TransactionTemplate _base;
+  bool _composing = false;
+  bool _conflict = false;
   late bool pinned;
   late final TextEditingController nameController;
   late FinanceTransaction draft;
@@ -166,7 +326,8 @@ class _TemplateEditorPageState extends ConsumerState<TemplateEditorPage> {
   @override
   void initState() {
     super.initState();
-    pinned = widget.row.template!.sortOrder < 5;
+    _base = widget.row.template!;
+    pinned = _base.sortOrder < 5;
     nameController = TextEditingController(text: widget.row.name);
     draft = widget.row.draft!;
   }
@@ -179,18 +340,33 @@ class _TemplateEditorPageState extends ConsumerState<TemplateEditorPage> {
 
   @override
   Widget build(BuildContext context) {
+    final ledger =
+        ref.watch(financeRepositoryProvider).valueOrNull ?? widget.repository;
+    final live =
+        ledger.transactionTemplates.where((t) => t.id == _base.id).firstOrNull;
+    if (live == null ||
+        !identical(ledger.database, widget.repository.database)) {
+      return _unavailablePreset('编辑模板');
+    }
+    if (!_composing && !identical(live, _base)) {
+      final merged = _mergePresetDraft(
+          _base.toJson(), _draftTemplate().toJson(), live.toJson());
+      _conflict = merged == null;
+      if (merged != null) _adopt(live, TransactionTemplate.fromJson(merged));
+    }
     final row = _templateFromDraft(
       draft,
       name: nameController.text.trim().isEmpty
-          ? widget.row.name
+          ? _base.name
           : nameController.text.trim(),
-      model: widget.row.template,
-      repository: widget.repository,
+      model: _base,
+      repository: ledger,
     );
     return _AutomationShell(
       title: '编辑模板',
       trailing: const SizedBox(width: 24),
       children: [
+        if (_conflict) _changedPreset(() => setState(() => _adopt(live, live))),
         Row(
           children: [
             CompassIconBadge(icon: row.icon, color: row.color, size: 64),
@@ -263,13 +439,15 @@ class _TemplateEditorPageState extends ConsumerState<TemplateEditorPage> {
         ),
         _AutomationRow(
             icon: Icons.sell_outlined, title: '类别', value: row.category),
-        const _AutomationRow(
+        _AutomationRow(
           icon: Icons.storefront_outlined,
           title: '商户',
-          value: '未设置',
+          value: draft.merchant ?? '未设置',
         ),
         _AutomationRow(
-            icon: Icons.chat_bubble_outline, title: '说明', value: row.name),
+            icon: Icons.chat_bubble_outline,
+            title: '说明',
+            value: draft.description ?? '未设置'),
         const SizedBox(height: 12),
         CompassPrimaryButton(
           label: '编辑预填内容',
@@ -292,66 +470,85 @@ class _TemplateEditorPageState extends ConsumerState<TemplateEditorPage> {
           label: '删除模板',
           icon: Icons.delete_outline_rounded,
           outlined: true,
-          onPressed: _delete,
+          onPressed: _conflict ? null : _delete,
         ),
         const SizedBox(height: 10),
         CompassPrimaryButton(
           label: '保存更改',
           icon: Icons.check_circle_outline_rounded,
-          onPressed: _save,
+          onPressed: _conflict ? null : _save,
         ),
       ],
     );
   }
 
   Future<void> _editDraft() async {
+    final ledger =
+        ref.read(financeRepositoryProvider).valueOrNull ?? widget.repository;
+    _composing = true;
     final result = await Navigator.of(context).push<TransactionFormResult>(
       MaterialPageRoute(
         fullscreenDialog: true,
         builder: (_) => TransactionComposerPage(
-          repository: widget.repository,
+          repository: ledger,
           draft: draft,
         ),
       ),
     );
-    if (result != null && result.transactions.isNotEmpty && mounted) {
-      setState(() => draft = result.transactions.first);
-    }
+    if (!mounted) return;
+    setState(() {
+      _composing = false;
+      if (result != null && result.transactions.isNotEmpty) {
+        draft = result.transactions.first;
+      }
+    });
   }
 
   Future<void> _tryTemplate() async {
+    final ledger =
+        ref.read(financeRepositoryProvider).valueOrNull ?? widget.repository;
     await Navigator.of(context).push<TransactionFormResult>(
       MaterialPageRoute(
         fullscreenDialog: true,
         builder: (_) => TransactionComposerPage(
-          repository: widget.repository,
+          repository: ledger,
           draft: draft,
         ),
       ),
     );
   }
 
-  Future<void> _delete() async {
-    final confirmed = await _confirmDelete(context, '删除这个快速模板？');
-    if (!confirmed || !mounted) return;
-    await ref
-        .read(transactionMutationsProvider.notifier)
-        .deleteTransactionTemplate(widget.row.template!.id);
-    if (mounted) Navigator.of(context).pop();
+  void _adopt(TransactionTemplate live, TransactionTemplate edited) {
+    _base = live;
+    _conflict = false;
+    pinned = edited.sortOrder < 5;
+    if (nameController.text != edited.name) nameController.text = edited.name;
+    draft = edited.toTransaction(id: draft.id, date: draft.transactionDate);
   }
 
-  Future<void> _save() async {
-    final name = nameController.text.trim();
-    if (name.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请输入模板名称。')),
-      );
-      return;
+  Future<void> _delete() async {
+    final original = _base;
+    final confirmed = await _confirmDelete(context, '删除这个快速模板？');
+    if (!confirmed || !mounted) return;
+    if (await _commitPreset(
+            context,
+            ref,
+            widget.repository,
+            (r) =>
+                r.deleteTransactionTemplate(original.id, expected: original)) &&
+        mounted) {
+      Navigator.of(context).pop();
     }
-    final existing = widget.row.template!;
-    final updated = TransactionTemplate(
+  }
+
+  TransactionTemplate _draftTemplate() {
+    final existing = _base;
+    final wasPinned = existing.sortOrder < 5;
+    final nextSortOrder =
+        pinned == wasPinned ? existing.sortOrder : (pinned ? 0 : 999);
+    return TransactionTemplate(
       id: existing.id,
-      name: name,
+      name: nameController.text.trim(),
       type: draft.type,
       accountId: draft.accountId,
       toAccountId: draft.toAccountId,
@@ -359,16 +556,29 @@ class _TemplateEditorPageState extends ConsumerState<TemplateEditorPage> {
       amount: draft.amount,
       currency: draft.currency,
       toAmount: draft.toAmount,
+      loanInstallmentNumber: draft.loanInstallmentNumber,
+      loanPaymentAmount: draft.loanPaymentAmount,
       toCurrency: draft.toCurrency,
       status: draft.status,
       description: draft.description,
       merchant: draft.merchant,
-      sortOrder: pinned ? 0 : 999,
+      sortOrder: nextSortOrder,
     );
-    await ref
-        .read(transactionMutationsProvider.notifier)
-        .saveTransactionTemplate(updated);
-    if (mounted) Navigator.of(context).pop();
+  }
+
+  Future<void> _save() async {
+    final edited = _draftTemplate();
+    if (edited.name.isEmpty) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('请输入模板名称。')));
+      return;
+    }
+    final expected = _base;
+    if (await _commitPreset(context, ref, widget.repository,
+            (r) => r.saveTransactionTemplate(edited, expected: expected)) &&
+        mounted) {
+      Navigator.of(context).pop();
+    }
   }
 }
 
@@ -514,15 +724,21 @@ class _RecurringPlanPageState extends ConsumerState<RecurringPlanPage> {
     );
     if (months == null || !mounted) return;
     final mutations = ref.read(transactionMutationsProvider.notifier);
+    final failures = <String>[];
     for (final row in rows.where((item) => item.rule!.isActive)) {
-      await mutations.generateRecurringTransactions(
-        row.rule!.id,
-        monthsAhead: months,
-      );
+      try {
+        await mutations.generateRecurringTransactions(row.rule!.id,
+            monthsAhead: months);
+      } on FormatException catch (error) {
+        failures.add('${row.name}：${error.message}');
+      }
     }
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('未来 $months 个月的周期交易已生成为预计记录。')),
+        SnackBar(
+            content: Text(failures.isEmpty
+                ? '未来 $months 个月的周期交易已生成为预计记录。'
+                : failures.join('\n'))),
       );
     }
   }
@@ -545,13 +761,10 @@ class _RecurringPlanPageState extends ConsumerState<RecurringPlanPage> {
       title: '周期规则名称',
     );
     if (name == null || !mounted) return;
-    await ref
-        .read(transactionMutationsProvider.notifier)
-        .addRecurringTransactionRule(
-          name: name,
-          transaction: transaction,
-          intervalMonths: 1,
-        );
+    if (!await saveTransactionPreset(context, ref,
+        name: name, transaction: transaction, intervalMonths: 1)) {
+      return;
+    }
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('每月周期规则已建立，并生成未来 3 个完整月份的预计交易。')),
@@ -576,6 +789,9 @@ class RecurringRuleEditorPage extends ConsumerStatefulWidget {
 
 class _RecurringRuleEditorPageState
     extends ConsumerState<RecurringRuleEditorPage> {
+  late RecurringTransactionRule _base;
+  bool _composing = false;
+  bool _conflict = false;
   late bool active;
   late int intervalMonths;
   late DateTime? endDate;
@@ -585,7 +801,7 @@ class _RecurringRuleEditorPageState
   @override
   void initState() {
     super.initState();
-    final model = widget.row.rule!;
+    final model = _base = widget.row.rule!;
     active = model.isActive;
     intervalMonths = model.intervalMonths;
     endDate = model.endDate;
@@ -601,32 +817,59 @@ class _RecurringRuleEditorPageState
 
   @override
   Widget build(BuildContext context) {
+    final ledger =
+        ref.watch(financeRepositoryProvider).valueOrNull ?? widget.repository;
+    final live = ledger.recurringTransactionRules
+        .where((t) => t.id == _base.id)
+        .firstOrNull;
+    if (live == null ||
+        !identical(ledger.database, widget.repository.database)) {
+      return _unavailablePreset('编辑周期规则');
+    }
+    if (!_composing && !identical(live, _base)) {
+      final merged = _mergePresetDraft(
+          _base.toJson(), _draftRule().toJson(), live.toJson());
+      _conflict = merged == null;
+      if (merged != null) {
+        _adopt(live, RecurringTransactionRule.fromJson(merged));
+      }
+    }
     final row = _recurringFromDraft(
       draft,
-      model: widget.row.rule!,
+      model: _base,
       name: nameController.text.trim().isEmpty
-          ? widget.row.name
+          ? _base.name
           : nameController.text.trim(),
-      repository: widget.repository,
+      repository: ledger,
     );
     final start = draft.transactionDate;
+    final now = DateTime.now();
+    final previewDates = recurringDates(
+      start: start,
+      intervalMonths: intervalMonths,
+      after: now,
+      through: DateTime(now.year, now.month + 4, 0),
+      end: endDate,
+    ).take(3).toList();
     return _AutomationShell(
       title: '编辑周期规则',
       trailing: PopupMenuButton<String>(
         tooltip: '规则操作',
         onSelected: (value) {
           if (value == 'toggle') setState(() => active = !active);
-          if (value == 'delete') _delete();
+          if (value == 'delete' && !_conflict) _delete();
         },
         itemBuilder: (_) => [
           PopupMenuItem(
             value: 'toggle',
             child: Text(active ? '暂停规则' : '启用规则'),
           ),
-          const PopupMenuItem(value: 'delete', child: Text('删除规则')),
+          PopupMenuItem(
+              enabled: !_conflict, value: 'delete', child: const Text('删除规则')),
         ],
       ),
       children: [
+        if (_conflict) _changedPreset(() => setState(() => _adopt(live, live))),
         Row(
           children: [
             CompassIconBadge(icon: row.icon, color: row.color, size: 64),
@@ -648,8 +891,11 @@ class _RecurringRuleEditorPageState
             ),
             Column(
               children: [
-                Text('运行中',
-                    style: TextStyle(color: financePaletteOf(context).seed)),
+                Text(active ? '运行中' : '已暂停',
+                    style: TextStyle(
+                        color: active
+                            ? financePaletteOf(context).seed
+                            : financePaletteOf(context).textMuted)),
                 Switch(
                     value: active,
                     onChanged: (value) => setState(() => active = value)),
@@ -682,21 +928,25 @@ class _RecurringRuleEditorPageState
           ),
         ),
         const SizedBox(height: 20),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
-          children: [
-            _RuleDate(date: _futureRuleDate(start, intervalMonths, 1)),
-            Expanded(child: Divider(color: financePaletteOf(context).seed)),
-            _RuleDate(date: _futureRuleDate(start, intervalMonths, 2)),
-            Expanded(child: Divider(color: financePaletteOf(context).seed)),
-            _RuleDate(date: _futureRuleDate(start, intervalMonths, 3)),
-          ],
-        ),
+        if (previewDates.isNotEmpty)
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              for (final (index, date) in previewDates.indexed) ...[
+                if (index != 0)
+                  Expanded(
+                      child: Divider(color: financePaletteOf(context).seed)),
+                _RuleDate(date: '${date.month}月${date.day}日'),
+              ],
+            ],
+          )
+        else
+          const Center(child: Text('未来 3 个月内没有匹配日期')),
         const SizedBox(height: 24),
         _AutomationRow(
           icon: Icons.description_outlined,
           title: '交易内容',
-          value: row.name,
+          value: draft.description ?? draft.merchant ?? '未设置',
           onTap: _editDraft,
         ),
         _AutomationRow(
@@ -735,8 +985,12 @@ class _RecurringRuleEditorPageState
         _AutomationRow(
           icon: Icons.event_repeat_outlined,
           title: '补生成预计交易',
-          value: '选择未来 1–12 个月',
-          onTap: _generateForRule,
+          value: !active
+              ? '规则已暂停'
+              : _dirty
+                  ? '保存当前更改并补生成'
+                  : '选择未来 1–12 个月',
+          onTap: active && !_conflict ? _generateForRule : null,
         ),
         const SizedBox(height: 12),
         CompassPrimaryButton(
@@ -754,14 +1008,14 @@ class _RecurringRuleEditorPageState
               child: CompassPrimaryButton(
                 label: '删除规则',
                 outlined: true,
-                onPressed: _delete,
+                onPressed: _conflict ? null : _delete,
               ),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: CompassPrimaryButton(
                 label: '保存更改',
-                onPressed: _save,
+                onPressed: _conflict ? null : _save,
               ),
             ),
           ],
@@ -771,18 +1025,25 @@ class _RecurringRuleEditorPageState
   }
 
   Future<void> _editDraft() async {
+    final ledger =
+        ref.read(financeRepositoryProvider).valueOrNull ?? widget.repository;
+    _composing = true;
     final result = await Navigator.of(context).push<TransactionFormResult>(
       MaterialPageRoute(
         fullscreenDialog: true,
         builder: (_) => TransactionComposerPage(
-          repository: widget.repository,
+          repository: ledger,
           draft: draft,
         ),
       ),
     );
-    if (result != null && result.transactions.isNotEmpty && mounted) {
-      setState(() => draft = result.transactions.first);
-    }
+    if (!mounted) return;
+    setState(() {
+      _composing = false;
+      if (result != null && result.transactions.isNotEmpty) {
+        draft = result.transactions.first;
+      }
+    });
   }
 
   Future<void> _pickInterval() async {
@@ -830,6 +1091,8 @@ class _RecurringRuleEditorPageState
         amount: draft.amount,
         currency: draft.currency,
         toAmount: draft.toAmount,
+        loanInstallmentNumber: draft.loanInstallmentNumber,
+        loanPaymentAmount: draft.loanPaymentAmount,
         toCurrency: draft.toCurrency,
         recordDate: draft.recordDate,
         transactionDate: selected,
@@ -902,38 +1165,59 @@ class _RecurringRuleEditorPageState
       ),
     );
     if (months == null || !mounted) return;
-    await ref
-        .read(transactionMutationsProvider.notifier)
-        .generateRecurringTransactions(widget.row.rule!.id,
-            monthsAhead: months);
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('已补生成未来 $months 个月的预计交易。')),
-      );
-    }
+    if (_conflict) return;
+    final dirty = _dirty;
+    final edited = _draftRule();
+    final expected = _base;
+    final saved = await _commitPreset(
+        context,
+        ref,
+        widget.repository,
+        (r) => dirty
+            ? r.saveRecurringTransactionRule(edited,
+                generateMonthsAhead: months, expected: expected)
+            : r.generateRecurringTransactions(edited.id,
+                monthsAhead: months, expected: expected));
+    if (!mounted || !saved) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text('已补生成未来 $months 个月的预计交易。')));
+    if (dirty) Navigator.of(context).pop();
+  }
+
+  void _adopt(RecurringTransactionRule live, RecurringTransactionRule edited) {
+    _base = live;
+    _conflict = false;
+    active = edited.isActive;
+    intervalMonths = edited.intervalMonths;
+    endDate = edited.endDate;
+    if (nameController.text != edited.name) nameController.text = edited.name;
+    draft = edited.toTransaction(
+        id: draft.id, date: edited.startDate, status: edited.status);
   }
 
   Future<void> _delete() async {
+    final original = _base;
     final confirmed = await _confirmDelete(context, '删除这个周期规则？');
     if (!confirmed || !mounted) return;
-    await ref
-        .read(transactionMutationsProvider.notifier)
-        .deleteRecurringTransactionRule(widget.row.rule!.id);
-    if (mounted) Navigator.of(context).pop();
+    if (await _commitPreset(
+            context,
+            ref,
+            widget.repository,
+            (r) => r.deleteRecurringTransactionRule(original.id,
+                expected: original)) &&
+        mounted) {
+      Navigator.of(context).pop();
+    }
   }
 
-  Future<void> _save() async {
-    final name = nameController.text.trim();
-    if (name.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请输入规则名称。')),
-      );
-      return;
-    }
-    final existing = widget.row.rule!;
-    final updated = RecurringTransactionRule(
+  bool get _dirty =>
+      jsonEncode(_draftRule().toJson()) != jsonEncode(_base.toJson());
+
+  RecurringTransactionRule _draftRule() {
+    final existing = _base;
+    return RecurringTransactionRule(
       id: existing.id,
-      name: name,
+      name: nameController.text.trim(),
       type: draft.type,
       accountId: draft.accountId,
       toAccountId: draft.toAccountId,
@@ -941,6 +1225,8 @@ class _RecurringRuleEditorPageState
       amount: draft.amount,
       currency: draft.currency,
       toAmount: draft.toAmount,
+      loanInstallmentNumber: draft.loanInstallmentNumber,
+      loanPaymentAmount: draft.loanPaymentAmount,
       toCurrency: draft.toCurrency,
       startDate: draft.transactionDate,
       intervalMonths: intervalMonths,
@@ -951,10 +1237,20 @@ class _RecurringRuleEditorPageState
       generatedMonthKeys: existing.generatedMonthKeys,
       isActive: active,
     );
-    await ref
-        .read(transactionMutationsProvider.notifier)
-        .saveRecurringTransactionRule(updated);
-    if (mounted) Navigator.of(context).pop();
+  }
+
+  Future<void> _save() async {
+    final edited = _draftRule();
+    final expected = _base;
+    if (await _commitPreset(
+            context,
+            ref,
+            widget.repository,
+            (r) =>
+                r.saveRecurringTransactionRule(edited, expected: expected)) &&
+        mounted) {
+      Navigator.of(context).pop();
+    }
   }
 }
 
@@ -1219,22 +1515,7 @@ _TemplatePresentation _templateFromModel(
   TransactionTemplate item,
   FinanceRepository repository,
 ) {
-  final draft = FinanceTransaction(
-    id: buildId('draft'),
-    type: item.type,
-    accountId: item.accountId,
-    toAccountId: item.toAccountId,
-    categoryId: item.categoryId,
-    amount: item.amount,
-    currency: item.currency,
-    toAmount: item.toAmount,
-    toCurrency: item.toCurrency,
-    recordDate: DateTime.now(),
-    transactionDate: DateTime.now(),
-    status: item.status,
-    description: item.description,
-    merchant: item.merchant,
-  );
+  final draft = item.toTransaction(id: buildId('draft'), date: DateTime.now());
   return _templateFromDraft(
     draft,
     name: item.name,
@@ -1342,12 +1623,6 @@ String _transactionTypeLabel(TransactionType type) => switch (type) {
       TransactionType.transfer => '转账',
       TransactionType.adjustment => '调整',
     };
-
-String _futureRuleDate(DateTime start, int intervalMonths, int step) {
-  final date =
-      DateTime(start.year, start.month + intervalMonths * step, start.day);
-  return '${date.month}月${date.day}日';
-}
 
 Future<String?> _askForName(
   BuildContext context, {

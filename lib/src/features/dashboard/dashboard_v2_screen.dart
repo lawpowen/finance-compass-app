@@ -21,12 +21,12 @@ import '../transactions/transaction_form_dialog.dart';
 import '../transactions/transactions_v2_screen.dart';
 
 const _forecastHelp = '以今日现金余额为起点，计入期间的实际与预计现金流。'
-    '首笔信用卡还款提醒若在区间内到期，也会从余额扣除。'
+    '各卡到期账单按本位币汇总。已安排的还款计入现金流，其余应还金额在到期时扣除。'
     '图表按六个日期取样，区间最低是这些取样点中的最低余额。';
 const _attentionHelp = '此处按通知设置显示信用卡账单，以及达到提醒阈值的预算。'
     '预算提醒包含已发生和预计支出，优先显示使用比例最高的三项。';
 const _assetHelp = '环形图按基础币汇总现金、投资和退休账户的正余额。'
-    '负债单独列示，包括信用卡与贷款欠款。';
+    '溢付余额计入资产。负债单独列示，包含透支、信用卡和贷款欠款。';
 
 class DashboardV2Screen extends ConsumerStatefulWidget {
   const DashboardV2Screen({
@@ -63,36 +63,52 @@ class _DashboardV2ScreenState extends ConsumerState<DashboardV2Screen> {
     }
 
     final today = DateTime(now.year, now.month, now.day);
-    final forecastEnd = today.add(Duration(days: forecastDays));
+    final forecastEnd =
+        DateTime(today.year, today.month, today.day + forecastDays);
     final monthKey = monthKeyFromDate(now);
-    final reminders = repository.creditCardPaymentReminders();
     final notificationsEnabled =
         repository.metaValues['notifications_enabled'] != 'false';
     final notificationPreferences = _notificationPreferences(repository);
-    final showCreditAttention = notificationsEnabled &&
-        (notificationPreferences[0] || notificationPreferences[1]);
+    final showRepayments = notificationsEnabled && notificationPreferences[0];
+    final showStatements = notificationsEnabled && notificationPreferences[1];
     final showBudgetAttention =
         notificationsEnabled && notificationPreferences[4];
     final budgets = repository.activeBudgetsForMonth(monthKey);
-    double positiveBalance(ReportGroup group) =>
-        repository.displayTotalAssetsByGroup(group, positiveOnly: true);
-    final cash = positiveBalance(ReportGroup.cash);
-    final investment = positiveBalance(ReportGroup.investment);
-    final retirement = positiveBalance(ReportGroup.retirement);
-    final liabilities = repository.accountLiabilities();
-    final debt = liabilities.credit + liabilities.loans;
-    final assets = cash + investment + retirement;
-    final creditCardCredit = repository.totalCreditCardCredit();
-    final netWorth = assets - debt + creditCardCredit;
+    final sheet =
+        repository.balanceSheetAt(repository.currentMonthCutoffDate());
+    final cash = sheet.assetsIn(ReportGroup.cash);
+    final investment = sheet.assetsIn(ReportGroup.investment);
+    final retirement = sheet.assetsIn(ReportGroup.retirement);
+    final debt = sheet.liabilities;
+    final assets = sheet.assets;
+    final netWorth = sheet.netWorth;
     final monthlyIncome = repository.totalIncomeForMonth(monthKey);
     final monthlyExpense = repository.totalExpenseForMonth(monthKey);
     final monthlyNet = monthlyIncome - monthlyExpense;
     final savingsRate =
         monthlyIncome > 0 ? (monthlyNet / monthlyIncome * 100).round() : null;
-    final activeReminders =
-        showCreditAttention ? reminders : const <CreditCardPaymentReminder>[];
-    final primaryReminder = reminders.isEmpty ? null : reminders.first;
-    final due = primaryReminder?.amountDue ?? 0;
+    final activeReminders = showRepayments
+        ? repository
+            .creditCardPaymentReminders(asOf: now)
+            .where((reminder) =>
+                notificationPreferences[6] ||
+                !DateUtils.isSameDay(reminder.dueDate, today))
+            .toList()
+        : const <CreditCardPaymentReminder>[];
+    final lastDay = DateTime(today.year, today.month + 1, 0).day;
+    final closingCards = showStatements
+        ? repository.accounts.where((card) {
+            final day = card.statementDay;
+            return card.isActive &&
+                card.accountType == AccountType.creditCard &&
+                day != null &&
+                day >= 1 &&
+                day <= 31 &&
+                today.day == math.min(day, lastDay);
+          }).toList()
+        : const <Account>[];
+    final cashForecast =
+        repository.cashForecast(asOf: now, endInclusive: forecastEnd);
     final todayCutoff = DateTime(
       today.year,
       today.month,
@@ -102,46 +118,24 @@ class _DashboardV2ScreenState extends ConsumerState<DashboardV2Screen> {
       59,
       999,
     );
-    final liquid = repository.displayTotalAssetsByGroup(
-      ReportGroup.cash,
-      cutoffDate: todayCutoff,
-    );
-    final dueInRange = primaryReminder != null &&
-            !primaryReminder.dueDate.isBefore(today) &&
-            !primaryReminder.dueDate.isAfter(forecastEnd)
-        ? due
-        : 0.0;
-    final projectionStart = today.add(const Duration(days: 1));
-    final projected = liquid -
-        dueInRange +
-        repository.cashFlowNetBetween(
-          startInclusive: projectionStart,
-          endInclusive: forecastEnd,
-        );
+    final liquid = cashForecast.openingCash;
+    final dueInRange = cashForecast.uncoveredCreditDue;
+    final projected = cashForecast.endingCash;
     final chartDates = List<DateTime>.generate(
       6,
-      (index) => today.add(
-        Duration(days: (forecastDays * index / 5).round()),
+      (index) => DateTime(
+        today.year,
+        today.month,
+        today.day + (forecastDays * index / 5).round(),
       ),
     );
     final chartLabels = [
       for (final date in chartDates) '${date.month}月${date.day}日',
     ];
-    final chartValues = List<double>.generate(6, (index) {
-      if (index == 0) return liquid;
-      final sampleEnd = chartDates[index];
-      final reminderEffect = primaryReminder != null &&
-              !primaryReminder.dueDate.isBefore(today) &&
-              !primaryReminder.dueDate.isAfter(sampleEnd)
-          ? due
-          : 0.0;
-      return liquid -
-          reminderEffect +
-          repository.cashFlowNetBetween(
-            startInclusive: projectionStart,
-            endInclusive: sampleEnd,
-          );
-    });
+    final chartValues = [
+      liquid,
+      ...chartDates.skip(1).map(cashForecast.balanceAt)
+    ];
     final balanceUnchanged = chartValues.every((amount) => amount == liquid);
     final minProjected = chartValues.reduce(math.min);
     final forecastDelta = projected - liquid;
@@ -156,13 +150,14 @@ class _DashboardV2ScreenState extends ConsumerState<DashboardV2Screen> {
       for (final budget in budgets) {
         final limit = repository.effectiveBudgetForMonth(budget, monthKey);
         if (limit <= 0) continue;
-        final planned = repository.plannedExpenseTotalForCategory(
-          budget.categoryId,
-          monthKey,
-        );
-        final used =
-            repository.expenseTotalForCategory(budget.categoryId, monthKey) +
-                planned;
+        final usage = repository.budgetUsageFor(budget.categoryId, monthKey);
+        if (!repository.budgetLimitIsValued(budget.categoryId, monthKey) ||
+            !usage.actualValued ||
+            !usage.plannedValued) {
+          continue;
+        }
+        final planned = usage.planned;
+        final used = usage.actual + planned;
         final rate = used / limit;
         if (used <= 0 || rate < budget.alertThreshold) continue;
         budgetAlerts.add((
@@ -193,6 +188,7 @@ class _DashboardV2ScreenState extends ConsumerState<DashboardV2Screen> {
       investment: investment,
       retirement: retirement,
       debt: debt,
+      creditBalances: sheet.cardCredit + sheet.loanCredit,
       assets: assets,
       netWorth: netWorth,
       monthlyIncome: monthlyIncome,
@@ -200,6 +196,7 @@ class _DashboardV2ScreenState extends ConsumerState<DashboardV2Screen> {
       monthlyNet: monthlyNet,
       savingsRate: savingsRate,
       activeReminders: activeReminders,
+      closingCards: closingCards,
       liquid: liquid,
       dueInRange: dueInRange,
       projected: projected,
@@ -233,6 +230,7 @@ class _DashboardV2ScreenState extends ConsumerState<DashboardV2Screen> {
     final savingsRate = data.savingsRate;
     final assetColors = financeDonutSeries(context);
     final activeReminders = data.activeReminders;
+    final closingCards = data.closingCards;
     final liquid = data.liquid;
     final dueInRange = data.dueInRange;
     final projected = data.projected;
@@ -482,7 +480,7 @@ class _DashboardV2ScreenState extends ConsumerState<DashboardV2Screen> {
                     ),
                   if (dueInRange > 0)
                     Text(
-                      '期间信用卡还款 ${compassMoney(dueInRange, currency: baseCurrency)}',
+                      '未安排信用卡还款 ${compassMoney(dueInRange, currency: baseCurrency)}',
                       style: TextStyle(
                         color: palette.expense,
                         fontFeatures: compassTabularFigures,
@@ -571,7 +569,8 @@ class _DashboardV2ScreenState extends ConsumerState<DashboardV2Screen> {
             );
 
     final visibleBudgetAlerts = budgetAlerts.take(3).toList();
-    final totalAttentionCount = activeReminders.length + budgetAlerts.length;
+    final cardAttentionCount = activeReminders.length + closingCards.length;
+    final totalAttentionCount = cardAttentionCount + budgetAlerts.length;
 
     List<Widget> attention() => [
           Row(
@@ -604,12 +603,14 @@ class _DashboardV2ScreenState extends ConsumerState<DashboardV2Screen> {
             if (i > 0) compassHairline,
             Builder(builder: (context) {
               final item = activeReminders[i];
-              final dueDay = DateTime(
+              final dueDay = DateTime.utc(
                 item.dueDate.year,
                 item.dueDate.month,
                 item.dueDate.day,
               );
-              final daysUntil = dueDay.difference(today).inDays;
+              final daysUntil = dueDay
+                  .difference(DateTime.utc(today.year, today.month, today.day))
+                  .inDays;
               final isEstimated = !item.account.hasCompleteCreditCardProfile;
               final badgeLabel = isEstimated
                   ? '估算提醒'
@@ -623,16 +624,21 @@ class _DashboardV2ScreenState extends ConsumerState<DashboardV2Screen> {
                   : (daysUntil <= 3 ? palette.warning : palette.textMuted);
               return _AttentionRow(
                 icon: Icons.credit_card_rounded,
-                title: '${item.account.name} · ${now.month}月账单',
-                subtitle: '还款日 ${item.dueDate.month}月${item.dueDate.day}日',
+                title: isEstimated
+                    ? '${item.account.name} · 估算还款'
+                    : '${item.account.name} · ${item.billingMonthDate.month}月账单',
+                subtitle: [
+                  '还款日 ${item.dueDate.month}月${item.dueDate.day}日',
+                  if (item.account.currency != baseCurrency)
+                    compassMoney(item.amountDue,
+                        currency: item.account.currency),
+                ].join(' · '),
                 badgeLabel: badgeLabel,
                 badgeColor: badgeColor,
                 badgeInverted: daysUntil <= 0 && !isEstimated,
-                amount: compassMoney(
-                  item.amountDue,
-                  currency: item.account.currency,
-                  decimals: 0,
-                ),
+                amount: repository.hasExchangeRate(item.account.currency)
+                    ? compassMoney(item.amountDueInBase, currency: baseCurrency)
+                    : '未估值',
                 color: daysUntil <= 3 ? palette.expense : palette.textPrimary,
                 onTap: () => Navigator.of(context).push(
                   MaterialPageRoute<void>(
@@ -645,8 +651,22 @@ class _DashboardV2ScreenState extends ConsumerState<DashboardV2Screen> {
               );
             }),
           ],
-          for (var i = 0; i < visibleBudgetAlerts.length; i++) ...[
+          for (var i = 0; i < closingCards.length; i++) ...[
             if (activeReminders.isNotEmpty || i > 0) compassHairline,
+            _AttentionRow(
+              icon: Icons.receipt_long_outlined,
+              title: '${closingCards[i].name} · 账单结算',
+              subtitle: '今天是结算日',
+              amount: '${today.month}月${today.day}日',
+              color: palette.textPrimary,
+              onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
+                builder: (_) => CreditCardDetailScreen(
+                    account: closingCards[i], repository: repository),
+              )),
+            ),
+          ],
+          for (var i = 0; i < visibleBudgetAlerts.length; i++) ...[
+            if (cardAttentionCount > 0 || i > 0) compassHairline,
             Builder(builder: (context) {
               final warning = visibleBudgetAlerts[i];
               final hasPlanned = warning.planned > 0;
@@ -743,6 +763,9 @@ class _DashboardV2ScreenState extends ConsumerState<DashboardV2Screen> {
       formatLegendAmount: (amount) =>
           compassMoney(amount, currency: baseCurrency, decimals: 0),
       slices: [
+        if (data.creditBalances > 0)
+          FinanceDonutSlice(
+              label: '溢付余额', value: data.creditBalances, color: palette.income),
         FinanceDonutSlice(label: '现金', value: cash, color: assetColors[0]),
         FinanceDonutSlice(
             label: '投资', value: investment, color: assetColors[2]),
@@ -957,9 +980,8 @@ class _DashboardV2ScreenState extends ConsumerState<DashboardV2Screen> {
                   ? FinanceTransaction(
                       id: 'draft_planned',
                       type: TransactionType.expense,
-                      accountId: repository.accounts.isEmpty
-                          ? ''
-                          : repository.accounts.first.id,
+                      accountId:
+                          repository.entryAccounts().firstOrNull?.id ?? '',
                       amount: 0,
                       currency: repository.baseCurrency,
                       recordDate: now,
@@ -1346,12 +1368,14 @@ class _DashboardViewData {
     required this.retirement,
     required this.debt,
     required this.assets,
+    required this.creditBalances,
     required this.netWorth,
     required this.monthlyIncome,
     required this.monthlyExpense,
     required this.monthlyNet,
     required this.savingsRate,
     required this.activeReminders,
+    required this.closingCards,
     required this.liquid,
     required this.dueInRange,
     required this.projected,
@@ -1374,12 +1398,14 @@ class _DashboardViewData {
   final double retirement;
   final double debt;
   final double assets;
+  final double creditBalances;
   final double netWorth;
   final double monthlyIncome;
   final double monthlyExpense;
   final double monthlyNet;
   final int? savingsRate;
   final List<CreditCardPaymentReminder> activeReminders;
+  final List<Account> closingCards;
   final double liquid;
   final double dueInRange;
   final double projected;

@@ -3,6 +3,8 @@ import 'package:finance_app/src/core/data/finance_repository.dart';
 import 'package:finance_app/src/core/database/app_database.dart' hide Account;
 import 'package:finance_app/src/core/models/account.dart';
 import 'package:finance_app/src/core/models/transaction.dart';
+import 'package:finance_app/src/core/models/loan_amortization.dart';
+import 'package:finance_app/src/core/models/loan_settlement.dart';
 import 'package:finance_app/src/core/providers/mutations/transaction_mutations.dart';
 import 'package:finance_app/src/core/providers/repository_provider.dart';
 import 'package:finance_app/src/core/theme/finance_theme.dart';
@@ -77,7 +79,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('planned and actual loan records use the full monthly payment',
+  testWidgets('paying from another account clears just the matching plan',
       (tester) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
@@ -96,6 +98,14 @@ void main() {
       initialBalance: 20000,
       currentBalance: 20000,
     );
+    const actualPayer = Account(
+        id: 'other_payer',
+        name: '其他银行',
+        accountType: AccountType.bankSaving,
+        reportGroup: ReportGroup.cash,
+        currency: 'MYR',
+        initialBalance: 20000,
+        currentBalance: 20000);
     final loan = Account(
       id: 'loan',
       name: '车贷',
@@ -112,6 +122,7 @@ void main() {
       loanRepaymentMethod: LoanRepaymentMethod.equalPrincipal,
     );
     repository = await repository.addAccount(cash);
+    repository = await repository.addAccount(actualPayer);
     repository = await repository.addAccount(loan);
 
     final container = ProviderContainer(
@@ -175,7 +186,7 @@ void main() {
         .ensureVisible(find.byKey(const Key('record-loan-installment')));
     await tester.tap(find.byKey(const Key('record-loan-installment')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text(cash.name));
+    await tester.tap(find.text(actualPayer.name));
     await tester.pumpAndSettle();
     await tester.tap(find.text('确认记录'));
     await tester.pumpAndSettle();
@@ -186,6 +197,8 @@ void main() {
           item.type == TransactionType.transfer &&
           item.status == TransactionStatus.actual,
     );
+    expect(payment.loanInstallmentNumber, 1);
+    expect(payment.accountId, actualPayer.id);
     expect(payment.amount, 1120);
     expect(payment.toAmount, 1000);
     expect(payment.toAccountId, loan.id);
@@ -201,6 +214,12 @@ void main() {
     );
     expect(
       updated.accounts.singleWhere((item) => item.id == cash.id).currentBalance,
+      20000,
+    );
+    expect(
+      updated.accounts
+          .singleWhere((item) => item.id == actualPayer.id)
+          .currentBalance,
       18880,
     );
     expect(find.textContaining('已记录'), findsWidgets);
@@ -210,6 +229,11 @@ void main() {
         .deleteTransaction(payment.id);
     await tester.pumpAndSettle();
     final afterDelete = await container.read(financeRepositoryProvider.future);
+    expect(
+        afterDelete.accounts
+            .singleWhere((item) => item.id == actualPayer.id)
+            .currentBalance,
+        20000);
     expect(
         afterDelete.transactions
             .where((item) => item.status == TransactionStatus.actual),
@@ -272,6 +296,7 @@ void main() {
         description: '贷款利息 #1',
       ),
     );
+    repository = await _restorePreviousLoanFormat(repository);
     final container = ProviderContainer(
       overrides: [
         financeRepositoryProvider.overrideWith(
@@ -357,6 +382,7 @@ void main() {
         description: '贷款利息 #1',
       ),
     );
+    repository = await _restorePreviousLoanFormat(repository);
     final container = ProviderContainer(
       overrides: [
         financeRepositoryProvider.overrideWith(
@@ -384,6 +410,150 @@ void main() {
     expect(payment.toAmount, 1000);
     expect(payment.status, TransactionStatus.planned);
     expect(find.text('补齐 11 期预计交易'), findsOneWidget);
+  });
+
+  testWidgets(
+      'partial payments and reversals reduce only remaining installment components',
+      (tester) async {
+    tester.view.physicalSize = const Size(800, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final database = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(database.close);
+    var ledger = await FinanceRepository.load(database);
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    const cash = Account(
+        id: 'payer',
+        name: '银行账户',
+        accountType: AccountType.bankSaving,
+        reportGroup: ReportGroup.cash,
+        currency: 'MYR',
+        initialBalance: 10000,
+        currentBalance: 10000);
+    final loan = Account(
+        id: 'l',
+        name: '两期贷款',
+        accountType: AccountType.loan,
+        reportGroup: ReportGroup.credit,
+        currency: 'MYR',
+        initialBalance: -1000,
+        currentBalance: -1000,
+        loanPrincipal: 1000,
+        loanAnnualInterestRate: 12,
+        loanTermMonths: 2,
+        loanStartDate: DateTime(now.year, now.month - 2),
+        loanPaymentDay: 1,
+        loanRepaymentMethod: LoanRepaymentMethod.equalPrincipal);
+    ledger = await ledger.addAccount(cash);
+    ledger = await ledger.addAccount(loan);
+    FinanceTransaction transfer(String id, int? number, double payment,
+            double principal, DateTime date,
+            {TransactionStatus status = TransactionStatus.actual}) =>
+        FinanceTransaction(
+            id: id,
+            accountId: cash.id,
+            toAccountId: loan.id,
+            type: TransactionType.transfer,
+            amount: payment,
+            toAmount: principal,
+            currency: 'MYR',
+            toCurrency: 'MYR',
+            transactionDate: date,
+            loanInstallmentNumber: number,
+            status: status,
+            description: number == null ? '贷款月供 #1' : '自定义备注');
+    ledger = await ledger.addTransactions([
+      transfer('partial', 1, 200, 195, today),
+      transfer('reverse', 1, -50, -48, today,
+          status: TransactionStatus.settled),
+      transfer('future-2', 2, 505, 500, DateTime(now.year, now.month + 1, 15)),
+      transfer('ordinary', null, 5, 5, today),
+    ]);
+    final container = ProviderContainer(overrides: [
+      financeRepositoryProvider
+          .overrideWith(() => _TestRepositoryNotifier(ledger))
+    ]);
+    addTearDown(container.dispose);
+    await tester.pumpWidget(UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp(
+            theme: buildFinanceTheme(AppThemeStyle.abyss),
+            home: LoanDetailScreen(account: loan, repository: ledger))));
+    await tester.pumpAndSettle();
+    // P1: 500 - (195 - 48) = 353. I1: 10 - (5 - 2) = 7.
+    // Period 2 is fully booked in the future but still owed today.
+    expect(find.text('RM 865.00'), findsOneWidget);
+    expect(find.text('RM 12.00'), findsOneWidget);
+    expect(find.text('待付 RM 360.00'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('record-loan-installment')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(cash.name));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('本金 RM 353.00 · 利息 RM 7.00'), findsOneWidget);
+    await tester.tap(find.text('确认记录'));
+    await tester.pumpAndSettle();
+    final updated = await container.read(financeRepositoryProvider.future);
+    expect(
+        updated.transactions.where((tx) =>
+            tx.loanInstallmentNumber == 1 &&
+            tx.amount == 360 &&
+            tx.toAmount == 353),
+        hasLength(1));
+    expect(find.text('RM 5.00'), findsOneWidget);
+    expect(find.text('第 2 期已有未来实还记录'), findsOneWidget);
+
+    // A second command issued with the stale confirmation never posts again.
+    final schedule = tryCalculateLoanScheduleForAccount(loan)!;
+    final remainingBefore = LoanSettlement.forLoan(
+            loanId: loan.id,
+            currency: 'MYR',
+            transactions: ledger.transactions,
+            cutoff: today)
+        .remaining(schedule.installments.first);
+    final duplicate = await container
+        .read(transactionMutationsProvider.notifier)
+        .recordLoanInstallment(
+            loanId: loan.id, payerId: cash.id, confirmed: remainingBefore);
+    expect(duplicate, isFalse);
+    expect(
+        (await container.read(financeRepositoryProvider.future))
+            .transactions
+            .length,
+        updated.transactions.length);
+  });
+
+  test('tagged foreign-currency repayments settle on loan-currency components',
+      () {
+    final due = LoanInstallment(
+        number: 3,
+        dueDate: DateTime(2026, 11, 1),
+        payment: 100,
+        principal: 90,
+        interest: 10,
+        remainingPrincipal: 0);
+    final tx = FinanceTransaction(
+        id: 'fx',
+        accountId: 'usd',
+        toAccountId: 'l',
+        type: TransactionType.transfer,
+        amount: 25,
+        currency: 'USD',
+        toAmount: 90,
+        loanInstallmentNumber: 3,
+        loanPaymentAmount: 100,
+        toCurrency: ' myr ',
+        transactionDate: due.dueDate);
+    final result = LoanSettlement.forLoan(
+            loanId: 'l',
+            currency: 'MYR',
+            transactions: [tx],
+            cutoff: due.dueDate)
+        .remaining(due);
+    expect(result.principal, 0);
+    expect(result.interest, 0);
+    expect(result.payment, 0);
   });
 
   testWidgets('historical loan detail is read only until returning current',
@@ -453,6 +623,221 @@ void main() {
     expect(find.byKey(const Key('loan-historical-banner')), findsNothing);
     expect(find.byKey(const Key('record-loan-installment')), findsOneWidget);
   });
+
+  testWidgets(
+      'non-finite loan term in form and invalid persisted loan do not crash',
+      (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFinanceTheme(AppThemeStyle.abyss),
+        home: const AccountFormDialog(
+          initialAccount: Account(
+            id: 'form_loan',
+            name: 'Form Loan',
+            accountType: AccountType.loan,
+            reportGroup: ReportGroup.credit,
+            currency: 'MYR',
+            initialBalance: -12000,
+            currentBalance: -12000,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextFormField, '5'),
+      'Infinity',
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    final database = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(database.close);
+    var repository = await FinanceRepository.load(database);
+    final invalidLoan = Account(
+      id: 'invalid_loan',
+      name: 'Invalid Loan',
+      accountType: AccountType.loan,
+      reportGroup: ReportGroup.credit,
+      currency: 'MYR',
+      initialBalance: 0,
+      currentBalance: 0,
+      loanPrincipal: 12000,
+      loanAnnualInterestRate: 5,
+      loanTermMonths: 2400,
+      loanStartDate: DateTime(2026, 1, 1),
+      loanPaymentDay: 15,
+      loanRepaymentMethod: LoanRepaymentMethod.equalInstallment,
+    );
+    repository = await repository.addAccount(invalidLoan);
+    final container = ProviderContainer(
+      overrides: [
+        financeRepositoryProvider.overrideWith(
+          () => _TestRepositoryNotifier(repository),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp(
+          theme: buildFinanceTheme(AppThemeStyle.abyss),
+          home: LoanDetailScreen(account: invalidLoan, repository: repository),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('贷款条件待设置'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'two loans sharing payer and date keep separate plans on upgrade and delete',
+      (tester) async {
+    final database = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(database.close);
+    var repository = await FinanceRepository.load(database);
+    const cash = Account(
+      id: 'shared_cash',
+      name: 'Shared Cash',
+      accountType: AccountType.bankSaving,
+      reportGroup: ReportGroup.cash,
+      currency: 'MYR',
+      initialBalance: 50000,
+      currentBalance: 50000,
+    );
+    final loanA = Account(
+      id: 'loan_a',
+      name: 'Loan A',
+      accountType: AccountType.loan,
+      reportGroup: ReportGroup.credit,
+      currency: 'MYR',
+      initialBalance: -12000,
+      currentBalance: -12000,
+      loanPrincipal: 12000,
+      loanAnnualInterestRate: 12,
+      loanTermMonths: 12,
+      loanStartDate: DateTime(2026, 7, 1),
+      loanPaymentDay: 15,
+      loanRepaymentMethod: LoanRepaymentMethod.equalPrincipal,
+    );
+    final loanB = Account(
+      id: 'loan_b',
+      name: 'Loan B',
+      accountType: AccountType.loan,
+      reportGroup: ReportGroup.credit,
+      currency: 'MYR',
+      initialBalance: -24000,
+      currentBalance: -24000,
+      loanPrincipal: 24000,
+      loanAnnualInterestRate: 12,
+      loanTermMonths: 12,
+      loanStartDate: DateTime(2026, 7, 1),
+      loanPaymentDay: 15,
+      loanRepaymentMethod: LoanRepaymentMethod.equalPrincipal,
+    );
+    repository = await repository.addAccount(cash);
+    repository = await repository.addAccount(loanA);
+    repository = await repository.addAccount(loanB);
+    final due = DateTime(2026, 8, 15);
+    repository = await repository.addTransactions([
+      FinanceTransaction(
+        id: 'a_principal',
+        type: TransactionType.transfer,
+        accountId: cash.id,
+        toAccountId: loanA.id,
+        amount: 1000,
+        currency: 'MYR',
+        transactionDate: due,
+        status: TransactionStatus.planned,
+        description: '贷款本金 #1',
+      ),
+      FinanceTransaction(
+        id: 'a_interest',
+        type: TransactionType.expense,
+        accountId: cash.id,
+        amount: 120,
+        currency: 'MYR',
+        transactionDate: due,
+        status: TransactionStatus.planned,
+        description: '贷款利息 #1',
+      ),
+      FinanceTransaction(
+        id: 'b_principal',
+        type: TransactionType.transfer,
+        accountId: cash.id,
+        toAccountId: loanB.id,
+        amount: 2000,
+        currency: 'MYR',
+        transactionDate: due,
+        status: TransactionStatus.planned,
+        description: '贷款本金 #1',
+      ),
+      FinanceTransaction(
+        id: 'b_interest',
+        type: TransactionType.expense,
+        accountId: cash.id,
+        amount: 240,
+        currency: 'MYR',
+        transactionDate: due,
+        status: TransactionStatus.planned,
+        description: '贷款利息 #1',
+      ),
+    ]);
+    repository = await _restorePreviousLoanFormat(repository);
+    final container = ProviderContainer(
+      overrides: [
+        financeRepositoryProvider.overrideWith(
+          () => _TestRepositoryNotifier(repository),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp(
+          theme: buildFinanceTheme(AppThemeStyle.abyss),
+          home: LoanDetailScreen(account: loanA, repository: repository),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final afterOpen = await container.read(financeRepositoryProvider.future);
+    expect(afterOpen.transactions.map((item) => item.id).toSet(), {
+      'a_principal',
+      'a_interest',
+      'b_principal',
+      'b_interest',
+    });
+
+    await container
+        .read(transactionMutationsProvider.notifier)
+        .deleteTransaction('a_principal');
+    final afterDelete = await container.read(financeRepositoryProvider.future);
+    expect(afterDelete.transactions.map((item) => item.id).toSet(), {
+      'a_interest',
+      'b_principal',
+      'b_interest',
+    });
+  });
+}
+
+Future<FinanceRepository> _restorePreviousLoanFormat(
+    FinanceRepository repository) async {
+  final payload = await repository.buildJsonSnapshotPayload();
+  final meta = payload['meta'] as Map;
+  meta.remove('loan_installment_semantics');
+  return repository.restoreSyncedSnapshot(payload);
 }
 
 class _TestRepositoryNotifier extends FinanceRepositoryNotifier {

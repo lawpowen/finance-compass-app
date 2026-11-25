@@ -46,5 +46,6 @@ class CategoryMutations extends Notifier<void> {
 }
 
 /// Provider for category CRUD mutations.
-final categoryMutationsProvider =
-    NotifierProvider<CategoryMutations, void>(CategoryMutations.new);
+final categoryMutationsProvider = NotifierProvider<CategoryMutations, void>(
+    CategoryMutations.new,
+    dependencies: [financeRepositoryProvider]);

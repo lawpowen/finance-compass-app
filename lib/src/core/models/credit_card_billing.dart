@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'account.dart';
 import 'transaction.dart';
 
@@ -9,6 +11,7 @@ class CreditCardBillingSummary {
     required this.dueDate,
     required this.isEstimated,
     this.statementDate,
+    this.openStatements = const [],
   });
 
   final double outstandingBalance;
@@ -17,6 +20,17 @@ class CreditCardBillingSummary {
   final DateTime? statementDate;
   final DateTime dueDate;
   final bool isEstimated;
+
+  /// Closed, unpaid statement amounts in the card's currency, oldest first.
+  /// The primary amount and due date describe the first of these statements.
+  final List<CreditCardStatementDue> openStatements;
+}
+
+class CreditCardStatementDue {
+  const CreditCardStatementDue(this.period, this.amount);
+
+  final CreditCardBillingPeriod period;
+  final double amount;
 }
 
 enum CreditCardDisplayState {
@@ -77,8 +91,6 @@ bool hasCreditCardBilledActivity({
     return transaction.affectsBalance &&
         !transactionDate.isAfter(today) &&
         transaction.accountId == account.id &&
-        (transaction.type == TransactionType.expense ||
-            transaction.type == TransactionType.transfer) &&
         period.containsBilled(transactionDate);
   });
 }
@@ -256,14 +268,7 @@ double calculateCreditCardStatementAmount({
         !period.containsBilled(transaction.transactionDate)) {
       continue;
     }
-    switch (transaction.type) {
-      case TransactionType.expense:
-      case TransactionType.transfer:
-        amount += transaction.amount;
-      case TransactionType.income:
-      case TransactionType.adjustment:
-        amount -= transaction.amount;
-    }
+    amount += creditCardSourceCharge(transaction, accountId);
   }
   return amount.clamp(0, double.infinity).toDouble();
 }
@@ -310,10 +315,22 @@ double calculateCreditCardOriginalStatementAmount({
         transactionDate.isAfter(period.dueDate)) {
       continue;
     }
-    repayments += transaction.transferInAmount;
+    repayments += _incomingPayment(transaction, accountId);
   }
   // A negative transfer reverses a repayment; the statement is never negative.
   return repayments.clamp(0, double.infinity).toDouble();
+}
+
+/// Signed contribution to the card's printed charges (a credit is negative).
+/// A same-account transfer affects the card only by the difference of its legs.
+double creditCardSourceCharge(FinanceTransaction transaction, String cardId) {
+  if (transaction.accountId != cardId) return 0;
+  return switch (transaction.type) {
+    TransactionType.transfer => transaction.amount -
+        (transaction.toAccountId == cardId ? transaction.transferInAmount : 0),
+    TransactionType.expense => transaction.amount,
+    TransactionType.income || TransactionType.adjustment => -transaction.amount,
+  };
 }
 
 CreditCardBillingSummary calculateCreditCardBilling({
@@ -321,14 +338,37 @@ CreditCardBillingSummary calculateCreditCardBilling({
   required Iterable<FinanceTransaction> transactions,
   DateTime? now,
   double? balanceAtCutoff,
+  DateTime? openingAsOf,
 }) {
   assert(account.accountType == AccountType.creditCard);
   final today = _dateOnly(now ?? DateTime.now());
-  final outstanding = (-(balanceAtCutoff ?? account.currentBalance))
-      .clamp(0, double.infinity)
-      .toDouble();
-
-  if (!account.hasCompleteCreditCardProfile) {
+  final ledger = transactions.where((t) =>
+      t.affectsBalance &&
+      (t.accountId == account.id ||
+          (t.type == TransactionType.transfer && t.toAccountId == account.id)));
+  final occurred = <FinanceTransaction>[];
+  var signedBalance = balanceAtCutoff ?? account.currentBalance;
+  var nextConfirmed = 0.0;
+  final configured = account.hasCompleteCreditCardProfile;
+  final reference = calculateCreditCardBillingPeriod(
+    statementDay: account.statementDay ?? 1,
+    paymentDueDay: account.paymentDueDay ?? 25,
+    now: today,
+  );
+  for (final entry in ledger) {
+    final day = _dateOnly(entry.transactionDate);
+    if (!day.isAfter(today)) {
+      occurred.add(entry);
+      continue;
+    }
+    final charge = creditCardSourceCharge(entry, account.id);
+    if (balanceAtCutoff == null) {
+      signedBalance += charge - _incomingPayment(entry, account.id);
+    }
+    if (reference.containsUnbilled(day)) nextConfirmed += charge;
+  }
+  final outstanding = math.max(0.0, -signedBalance);
+  if (!configured) {
     return CreditCardBillingSummary(
       outstandingBalance: outstanding,
       billedBalance: outstanding,
@@ -338,74 +378,117 @@ CreditCardBillingSummary calculateCreditCardBilling({
     );
   }
 
-  final period = calculateCreditCardBillingPeriod(
-    statementDay: account.statementDay!,
-    paymentDueDay: account.paymentDueDay!,
-    now: today,
-  );
-  final statementDate = period.statementDate;
-
-  var occurredUnbilled = 0.0;
-  var repaymentsAfterStatement = 0.0;
-  for (final transaction in transactions) {
-    if (!transaction.affectsBalance ||
-        _dateOnly(transaction.transactionDate).isAfter(today) ||
-        !_dateOnly(transaction.transactionDate).isAfter(statementDate)) {
-      continue;
+  final charges = <DateTime, double>{};
+  var firstDay = today;
+  if (openingAsOf != null && openingAsOf.isBefore(firstDay)) {
+    firstDay = _dateOnly(openingAsOf);
+  }
+  var openingDebt = -signedBalance;
+  var cyclePayments = 0.0;
+  final payments = <FinanceTransaction>[];
+  for (final entry in occurred) {
+    final day = _dateOnly(entry.transactionDate);
+    final charge = creditCardSourceCharge(entry, account.id);
+    final payment = _incomingPayment(entry, account.id);
+    if (charge == 0 && payment == 0) continue;
+    if (day.isBefore(firstDay)) firstDay = day;
+    openingDebt += payment - charge;
+    if (charge != 0) {
+      final cut = _chargeStatement(day, account.statementDay!);
+      charges[cut] = (charges[cut] ?? 0) + charge;
     }
-    if (transaction.type == TransactionType.transfer &&
-        transaction.toAccountId == account.id) {
-      // A transfer into the card is a repayment and reduces the billed balance.
-      repaymentsAfterStatement += transaction.transferInAmount;
-      continue;
-    }
-    if (transaction.accountId != account.id) continue;
-    switch (transaction.type) {
-      case TransactionType.expense:
-      case TransactionType.transfer:
-        occurredUnbilled += transaction.amount;
-      case TransactionType.income:
-      case TransactionType.adjustment:
-        occurredUnbilled -= transaction.amount;
+    if (payment != 0) {
+      payments.add(entry);
+      if (day.isAfter(reference.statementDate)) cyclePayments += payment;
     }
   }
 
-  final normalizedOccurredUnbilled =
-      occurredUnbilled.clamp(0, outstanding).toDouble();
-  final billed = (outstanding - normalizedOccurredUnbilled)
-      .clamp(0, double.infinity)
-      .toDouble();
-  // Once the billed statement has been cleared, any remaining repayment or
-  // credit belongs to the next statement cycle.  Keep the next-statement
-  // figure on the committed-cycle basis, but deduct that surplus so the UI
-  // does not show gross new spending after it has already been offset.
-  final impliedCreditAppliedToUnbilled =
-      (occurredUnbilled - outstanding).clamp(0, double.infinity).toDouble();
-  final creditAppliedToUnbilled = impliedCreditAppliedToUnbilled
-      .clamp(0, repaymentsAfterStatement)
-      .toDouble();
-  final nextPeriod = calculateCreditCardBillingPeriodForStatement(
-    statementDay: account.statementDay!,
-    paymentDueDay: account.paymentDueDay!,
-    statementDate: period.nextStatementDate,
-  );
-  final committedNextStatement = calculateCreditCardStatementAmount(
-    accountId: account.id,
-    transactions: transactions,
-    period: nextPeriod,
-  );
-  final remainingCommittedNextStatement =
-      (committedNextStatement - creditAppliedToUnbilled)
-          .clamp(0, double.infinity)
-          .toDouble();
+  DateTime closedAt(DateTime day) => calculateCreditCardBillingPeriod(
+        statementDay: account.statementDay!,
+        paymentDueDay: account.paymentDueDay!,
+        now: day,
+      ).statementDate;
+  var credit = math.max(0.0, -openingDebt);
+  if (openingDebt > 0) {
+    final cut = closedAt(firstDay);
+    charges[cut] = (charges[cut] ?? 0) + openingDebt;
+  }
+
+  // Netting a reversed payment before allocating restores the most recently
+  // covered statement. A reversal with no recorded original payment becomes
+  // billed debt at the date of the reversal.
+  payments.sort((a, b) {
+    final byDate = a.transactionDate.compareTo(b.transactionDate);
+    return byDate != 0 ? byDate : a.id.compareTo(b.id);
+  });
+  for (final entry in payments) {
+    credit += entry.transferInAmount;
+    if (credit < 0) {
+      final cut = closedAt(entry.transactionDate);
+      charges[cut] = (charges[cut] ?? 0) - credit;
+      credit = 0;
+    }
+  }
+  final grossUnbilled = charges[reference.nextStatementDate] ?? 0.0;
+  final statementDates = charges.keys.toList()..sort();
+  for (final amount in charges.values) {
+    if (amount < 0) credit -= amount;
+  }
+  final due = <CreditCardStatementDue>[];
+  var unbilled = 0.0;
+  for (final date in statementDates) {
+    final amount = charges[date]!;
+    if (amount <= 0) continue;
+    final applied = math.min(amount, credit);
+    final remaining = amount - applied;
+    credit -= applied;
+    if (date.isAfter(reference.statementDate)) {
+      unbilled += remaining;
+    } else if (remaining >= .005) {
+      final period = calculateCreditCardBillingPeriodForStatement(
+        statementDay: account.statementDay!,
+        paymentDueDay: account.paymentDueDay!,
+        statementDate: date,
+      );
+      due.add(CreditCardStatementDue(period, remaining));
+    }
+  }
+
+  var committed = unbilled + nextConfirmed - credit;
+  // Old partial imports can have a zero materialized balance that cannot be
+  // reconciled to the documented opening and available charges. Preserve the
+  // confirmed cycle amount unless an actual payment or positive card balance
+  // evidences its coverage. This fallback never changes the actual debt.
+  if (openingDebt < 0 &&
+      (openingDebt + account.initialBalance).abs() >= .005 &&
+      signedBalance <= 0) {
+    committed = math.max(committed,
+        grossUnbilled + nextConfirmed - math.max(0.0, cyclePayments));
+  }
+  final oldest = due.firstOrNull;
   return CreditCardBillingSummary(
     outstandingBalance: outstanding,
-    billedBalance: billed,
-    unbilledBalance: remainingCommittedNextStatement,
-    statementDate: statementDate,
-    dueDate: period.dueDate,
+    billedBalance: oldest?.amount ?? 0,
+    unbilledBalance: math.max(0.0, committed),
+    statementDate: oldest?.period.statementDate ?? reference.statementDate,
+    dueDate: oldest?.period.dueDate ?? reference.dueDate,
+    openStatements: List.unmodifiable(due),
     isEstimated: false,
   );
+}
+
+double _incomingPayment(FinanceTransaction transaction, String cardId) =>
+    transaction.type == TransactionType.transfer &&
+            transaction.accountId != cardId &&
+            transaction.toAccountId == cardId
+        ? transaction.transferInAmount
+        : 0;
+
+DateTime _chargeStatement(DateTime date, int statementDay) {
+  final cut = _clampedDate(date.year, date.month, statementDay);
+  return date.isAfter(cut)
+      ? _clampedDate(date.year, date.month + 1, statementDay)
+      : cut;
 }
 
 DateTime _clampedDate(int year, int month, int day) {

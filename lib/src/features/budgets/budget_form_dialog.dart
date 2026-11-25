@@ -8,16 +8,21 @@ import '../../core/utils/id_generator.dart';
 import '../../core/utils/month_key.dart';
 import '../shared/compass_ui.dart';
 import '../shared/finance_form_fields.dart';
+import 'budget_rule_ui.dart';
 
 class BudgetFormDialog extends StatefulWidget {
   const BudgetFormDialog({
     super.key,
     required this.repository,
     this.initialBudget,
+    this.monthKey,
+    this.persist,
   });
 
   final FinanceRepository repository;
   final Budget? initialBudget;
+  final String? monthKey;
+  final Future<void> Function(Budget)? persist;
 
   @override
   State<BudgetFormDialog> createState() => _BudgetFormDialogState();
@@ -31,27 +36,53 @@ class _BudgetFormDialogState extends State<BudgetFormDialog> {
     text: monthKeyFromDate(DateTime.now()),
   );
 
-  late List<Category> categories;
+  List<Category> get categories {
+    final initial = widget.initialBudget;
+    return widget.repository.categoryOptions(
+      CategoryType.expense,
+      originalCategoryId: monthController.text.trim() == initial?.monthKey
+          ? initial?.categoryId
+          : null,
+    );
+  }
+
   String? categoryId;
-  String currency = activeBaseCurrencyCode;
+  late String currency;
   bool rolloverEnabled = false;
+  bool saving = false;
 
   @override
   void initState() {
     super.initState();
-    categories = widget.repository.categoriesByType(CategoryType.expense);
     final initialBudget = widget.initialBudget;
+    currency = initialBudget?.currency ?? widget.repository.baseCurrency;
+    monthController.text = widget.monthKey ??
+        initialBudget?.monthKey ??
+        monthKeyFromDate(DateTime.now());
     if (initialBudget != null) {
-      categoryId = initialBudget.categoryId;
+      categoryId = categories
+          .where((c) => c.id == initialBudget.categoryId)
+          .firstOrNull
+          ?.id;
       amountController.text = initialBudget.amount.toString();
-      currency = normalizeCurrency(initialBudget.currency);
       thresholdController.text = initialBudget.alertThreshold.toString();
-      monthController.text = initialBudget.monthKey;
       rolloverEnabled = initialBudget.rolloverEnabled;
     } else if (categories.isNotEmpty) {
       categoryId = categories.first.id;
-      currency = widget.repository.baseCurrency;
     }
+    monthController.addListener(_monthChanged);
+  }
+
+  void _monthChanged() {
+    setState(() {
+      if (!categories.any((c) => c.id == categoryId)) categoryId = null;
+    });
+  }
+
+  @override
+  void didUpdateWidget(BudgetFormDialog oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!categories.any((c) => c.id == categoryId)) categoryId = null;
   }
 
   @override
@@ -75,7 +106,10 @@ class _BudgetFormDialogState extends State<BudgetFormDialog> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 DropdownButtonFormField<String>(
-                  value: categoryId,
+                  key: ValueKey(categoryId),
+                  initialValue: categoryId,
+                  validator: (id) =>
+                      categories.any((c) => c.id == id) ? null : '请选择有效支出类别',
                   isExpanded: true,
                   decoration: const InputDecoration(
                     labelText: '支出类别',
@@ -85,7 +119,9 @@ class _BudgetFormDialogState extends State<BudgetFormDialog> {
                       .map(
                         (category) => DropdownMenuItem(
                           value: category.id,
-                          child: Text(category.name,
+                          child: Text(
+                              budgetCategoryLabel(
+                                  widget.repository, category.id),
                               overflow: TextOverflow.ellipsis),
                         ),
                       )
@@ -96,10 +132,10 @@ class _BudgetFormDialogState extends State<BudgetFormDialog> {
                 FinanceTextField(
                   controller: monthController,
                   label: '生效月份',
-                  validator: (value) =>
-                      RegExp(r'^\d{4}-\d{2}$').hasMatch(value ?? '')
-                          ? null
-                          : '格式 YYYY-MM',
+                  validator: (value) => RegExp(r'^\d{4}-(0[1-9]|1[0-2])$')
+                          .hasMatch(value?.trim() ?? '')
+                      ? null
+                      : '格式 YYYY-MM',
                 ),
                 const SizedBox(height: 12),
                 FinanceTextField(
@@ -112,13 +148,13 @@ class _BudgetFormDialogState extends State<BudgetFormDialog> {
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
-                  value: currency,
+                  initialValue: currency,
                   isExpanded: true,
                   decoration: const InputDecoration(
                     labelText: '预算币种',
                     border: OutlineInputBorder(),
                   ),
-                  items: supportedCurrencies
+                  items: {...supportedCurrencies, currency}
                       .map(
                         (item) => DropdownMenuItem(
                           value: item,
@@ -168,29 +204,40 @@ class _BudgetFormDialogState extends State<BudgetFormDialog> {
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('取消'),
         ),
-        FilledButton(onPressed: _submit, child: const Text('保存')),
+        FilledButton(
+            onPressed: saving ? null : _submit, child: const Text('保存')),
       ],
     );
   }
 
-  void _submit() {
+  Future<void> _submit() async {
+    if (saving) return;
     if (!formKey.currentState!.validate() || categoryId == null) {
       return;
     }
 
-    Navigator.of(context).pop(
-      Budget(
-        id: widget.initialBudget?.id ?? buildId('budget'),
-        categoryId: categoryId!,
-        monthKey: monthController.text.trim(),
-        amount: double.parse(amountController.text.trim()),
-        currency: currency,
-        alertThreshold: double.parse(thresholdController.text.trim()),
-        rolloverEnabled: rolloverEnabled,
-      ),
+    final initial = widget.initialBudget;
+    final sameRule = initial != null &&
+        initial.categoryId == categoryId &&
+        initial.monthKey == monthController.text.trim();
+    final budget = Budget(
+      id: sameRule ? initial.id : buildId('budget'),
+      categoryId: categoryId!,
+      monthKey: monthController.text.trim(),
+      amount: double.parse(amountController.text.trim()),
+      currency: currency,
+      alertThreshold: double.parse(thresholdController.text.trim()),
+      rolloverEnabled: rolloverEnabled,
     );
+    setState(() => saving = true);
+    await saveBudgetDraft(context, budget, widget.persist);
+    if (mounted) setState(() => saving = false);
   }
 
-  String? _numberRequired(String? value) =>
-      double.tryParse(value ?? '') == null ? '请输入数字' : null;
+  String? _numberRequired(String? value) {
+    final number = double.tryParse(value?.trim() ?? '');
+    return number == null || !number.isFinite || number <= 0
+        ? '请输入大于 0 的有效数字'
+        : null;
+  }
 }

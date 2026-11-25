@@ -67,7 +67,8 @@ class DevicePushNotifications {
     final endpoint = subscription['endpoint'] as String;
     try {
       await _request('PUT', 'subscription', body: payload);
-      browser.confirmPushBrowser(session.accountId, endpoint);
+      browser.confirmPushBrowser(
+          session.accountId, endpoint, payload['timezone'] as String);
     } catch (_) {
       // A timed-out write may have committed. Disable delivery locally before
       // attempting to remove that account's entry.
@@ -85,14 +86,7 @@ class DevicePushNotifications {
   }
 
   Future<void> disable() async {
-    final endpoint = await browser.unsubscribePushBrowser(session.accountId);
-    if (endpoint == null) return;
-    try {
-      await _request('DELETE', 'subscription', body: {'endpoint': endpoint});
-    } on SyncException {
-      // The push provider has already unsubscribed this browser. The server
-      // drops the expired endpoint if this follow-up cannot be completed.
-    }
+    await browser.unsubscribePushBrowser(session.accountId);
   }
 
   Future<void> sendTest(String endpoint) =>
@@ -154,5 +148,11 @@ class DevicePushNotifications {
 Future<void> disableBrowserPush(LedgerSyncSession session) =>
     DevicePushNotifications(session).disable();
 
-Future<void> reconcileBrowserPush(String accountId) =>
-    browser.reconcilePushBrowser(accountId);
+Future<void> reconcileBrowserPush(String accountId,
+    {bool verifiedTransition = false}) async {
+  try {
+    await browser.reconcilePushBrowser(accountId, verifiedTransition);
+  } catch (_) {
+    // A browser permission failure must not close an authenticated ledger.
+  }
+}

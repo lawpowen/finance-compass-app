@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show listEquals, mapEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
@@ -17,7 +18,7 @@ import '../shared/screen_header.dart';
 import '../shared/section_card.dart';
 import 'import_ledger_dialog.dart';
 
-class SettingsScreen extends ConsumerStatefulWidget {
+class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({
     super.key,
     required this.repository,
@@ -26,10 +27,32 @@ class SettingsScreen extends ConsumerStatefulWidget {
   final FinanceRepository repository;
   final AppSettingsController settingsController;
   @override
-  ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
+  Widget build(BuildContext context, WidgetRef ref) {
+    final current =
+        ref.watch(financeRepositoryProvider).valueOrNull ?? repository;
+    return _SettingsEditor(
+      key: ObjectKey(current.database),
+      repository: current,
+      settingsController: settingsController,
+    );
+  }
 }
 
-class _SettingsScreenState extends ConsumerState<SettingsScreen> {
+class _SettingsEditor extends ConsumerStatefulWidget {
+  const _SettingsEditor({
+    super.key,
+    required this.repository,
+    required this.settingsController,
+  });
+
+  final FinanceRepository repository;
+  final AppSettingsController settingsController;
+
+  @override
+  ConsumerState<_SettingsEditor> createState() => _SettingsEditorState();
+}
+
+class _SettingsEditorState extends ConsumerState<_SettingsEditor> {
   bool _isBusy = false;
   final _rateControllers = <String, TextEditingController>{};
   var _currencyOrder = <String>[];
@@ -45,10 +68,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   @override
-  void didUpdateWidget(covariant SettingsScreen oldWidget) {
+  void didUpdateWidget(covariant _SettingsEditor oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.repository.metaValues != widget.repository.metaValues) {
-      _syncRateControllers();
+    if (!listEquals(oldWidget.repository.currencyPriority,
+            widget.repository.currencyPriority) ||
+        !mapEquals(oldWidget.repository.exchangeRatesToBase,
+            widget.repository.exchangeRatesToBase)) {
+      _mergeUpdatedRates(oldWidget.repository);
+    }
+    if (oldWidget.repository.aiGatewayUrl != widget.repository.aiGatewayUrl &&
+        _gatewayUrlController.text == oldWidget.repository.aiGatewayUrl) {
       _gatewayUrlController.text = widget.repository.aiGatewayUrl;
     }
   }
@@ -63,14 +92,70 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   void _syncRateControllers() {
-    _currencyOrder = widget.repository.currencyPriority;
+    _currencyOrder = List<String>.of(widget.repository.currencyPriority);
     final rates = widget.repository.exchangeRatesToBase;
-    for (final currency in supportedCurrencies) {
+    for (final currency in _currencyOrder) {
       final controller = _rateControllers.putIfAbsent(
         currency,
         TextEditingController.new,
       );
-      controller.text = (rates[currency] ?? 1).toStringAsFixed(4);
+      controller.text = rates[currency]?.toString() ?? '';
+    }
+  }
+
+  // Merge published quotes into untouched fields without resetting a draft
+  // when an unrelated page commits. Each comparison uses the draft's base.
+  void _mergeUpdatedRates(FinanceRepository previous) {
+    final current = widget.repository;
+    final draftBase = _currencyOrder.first;
+    final keepOrder = !listEquals(_currencyOrder, previous.currencyPriority);
+    final nextOrder = keepOrder
+        ? {..._currencyOrder, ...current.currencyPriority}.toList()
+        : [...current.currencyPriority];
+
+    double? quote(FinanceRepository ledger, String code) => ledger
+        .tryConvertAmount(amount: 1, fromCurrency: code, toCurrency: draftBase);
+    final values = <String, String>{};
+    for (final code in nextOrder) {
+      final text = _rateControllers[code]?.text;
+      final old = quote(previous, code);
+      final unchanged = text == null ||
+          (text.isEmpty
+              ? old == null
+              : old != null && double.tryParse(text) == old);
+      values[code] =
+          unchanged ? (quote(current, code)?.toString() ?? '') : text;
+    }
+    final nextBase = nextOrder.first;
+    if (nextBase != draftBase) {
+      final divisor = double.tryParse(values[nextBase] ?? '');
+      if (divisor != null && divisor.isFinite && divisor > 0) {
+        for (final code in nextOrder) {
+          final rate = double.tryParse(values[code]!);
+          if (rate != null && rate.isFinite) {
+            values[code] = (rate / divisor).toString();
+          }
+        }
+        values[nextBase] = '1.0';
+      } else {
+        // No bridge between the two bases. Adopt the published quote set if
+        // there is no local draft; otherwise retain the editing denomination.
+        final dirty = _currencyOrder.any((code) =>
+            _rateControllers[code]!.text !=
+            (quote(previous, code)?.toString() ?? ''));
+        if (!dirty) {
+          _syncRateControllers();
+          return;
+        }
+        nextOrder.remove(draftBase);
+        nextOrder.insert(0, draftBase);
+      }
+    }
+    _currencyOrder = nextOrder;
+    for (final code in nextOrder) {
+      final controller =
+          _rateControllers.putIfAbsent(code, TextEditingController.new);
+      if (controller.text != values[code]) controller.text = values[code]!;
     }
   }
 
@@ -97,13 +182,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
-  Future<void> _saveExchangeRates() async {
+  Map<String, double>? _readRateFields() {
     final baseCurrency = _currencyOrder.first;
     final nextRates = <String, double>{baseCurrency: 1};
     for (final currency
         in _currencyOrder.where((item) => item != baseCurrency)) {
-      final rate = double.tryParse(_rateControllers[currency]!.text.trim());
-      if (rate == null || rate <= 0) {
+      final text = _rateControllers[currency]!.text.trim();
+      if (text.isEmpty && !widget.repository.hasExchangeRate(currency)) {
+        continue;
+      }
+      final rate = double.tryParse(text);
+      if (rate == null || !rate.isFinite || rate <= 0) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -111,10 +200,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
           ),
         );
-        return;
+        return null;
       }
       nextRates[currency] = rate;
     }
+    return nextRates;
+  }
+
+  Future<void> _saveExchangeRates() async {
+    final nextRates = _readRateFields();
+    if (nextRates == null) return;
     await _runBusyTask(() async {
       await ref
           .read(accountMutationsProvider.notifier)
@@ -129,34 +224,39 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   void _moveCurrency(int oldIndex, int newIndex) {
-    setState(() {
-      if (newIndex > oldIndex) {
-        newIndex -= 1;
+    if (newIndex > oldIndex) newIndex -= 1;
+    if (newIndex == oldIndex) return;
+    final nextOrder = [..._currencyOrder];
+    final moved = nextOrder.removeAt(oldIndex);
+    nextOrder.insert(newIndex, moved);
+    Map<String, double>? rebased;
+    if (nextOrder.first != _currencyOrder.first) {
+      final draft = _readRateFields();
+      if (draft == null) return;
+      final divisor = draft[nextOrder.first];
+      if (divisor == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('请先填写 ${nextOrder.first} 汇率，再设为主币种。')),
+        );
+        return;
       }
-      final oldBase = _currencyOrder.first;
-      final moved = _currencyOrder.removeAt(oldIndex);
-      _currencyOrder.insert(newIndex, moved);
-      final newBase = _currencyOrder.first;
-      if (oldBase != newBase) {
-        _recalculateRateFieldsForBase(newBase);
+      rebased = draft.map((code, rate) => MapEntry(code, rate / divisor));
+      if (rebased.values.any((rate) => !rate.isFinite || rate <= 0)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('换算后的汇率超出有效范围。')),
+        );
+        return;
+      }
+    }
+    setState(() {
+      _currencyOrder = nextOrder;
+      if (rebased != null) {
+        for (final entry in rebased.entries) {
+          // Keep the shortest round-trippable value when the base changes.
+          _rateControllers[entry.key]!.text = entry.value.toString();
+        }
       }
     });
-  }
-
-  void _recalculateRateFieldsForBase(String nextBaseCurrency) {
-    for (final currency in supportedCurrencies) {
-      final controller = _rateControllers[currency]!;
-      if (currency == nextBaseCurrency) {
-        controller.text = '1.0000';
-        continue;
-      }
-      final converted = widget.repository.convertAmount(
-        amount: 1,
-        fromCurrency: currency,
-        toCurrency: nextBaseCurrency,
-      );
-      controller.text = converted.toStringAsFixed(4);
-    }
   }
 
   Future<void> _exportJson({
@@ -343,6 +443,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 10),
                       child: TextField(
+                        key: ValueKey('exchange-rate-$currency'),
                         controller: _rateControllers[currency],
                         keyboardType: const TextInputType.numberWithOptions(
                           decimal: true,
@@ -426,10 +527,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         : () async {
                             final messenger = ScaffoldMessenger.of(context);
                             await _runBusyTask(() async {
-                              await widget.repository.saveAiGatewayUrl(
-                                _gatewayUrlController.text.trim(),
-                              );
-                              ref.invalidate(financeRepositoryProvider);
+                              final url = _gatewayUrlController.text.trim();
+                              await ref
+                                  .read(financeRepositoryProvider.notifier)
+                                  .mutate((ledger) async {
+                                await ledger.saveAiGatewayUrl(url);
+                                return ledger.refresh();
+                              });
                               if (mounted) {
                                 messenger.showSnackBar(
                                   const SnackBar(content: Text('AI 网关地址已保存')),

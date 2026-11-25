@@ -109,6 +109,16 @@ test('push API binds the session, origin and delivery to a single account and de
     method: 'PUT', data: subscription('https://localhost/push'),
   })).status, 400);
   assert.equal((await request('subscription', { method: 'PUT', data: valid })).status, 204);
+  const verify = { method: 'POST', data: { endpoint: browser } };
+  assert.equal((await request('verify-delivery', verify)).status, 204);
+  assert.equal((await request('verify-delivery', { ...verify, token: tokenB })).status, 409);
+  assert.equal((await request('verify-delivery', { ...verify, token: tokenB, accountId: '2' })).status, 404);
+  assert.equal((await request('subscription', {
+    method: 'PATCH', data: { endpoint: browser, timezone: 'Europe/London' },
+  })).status, 204);
+  assert.equal((await request('subscription', {
+    method: 'PATCH', accountId: '2', token: tokenB, data: { endpoint: browser, timezone: 'Europe/London' },
+  })).status, 404);
   assert.equal((await request('subscription', {
     method: 'PUT', token: tokenB, accountId: '2', data: valid,
   })).status, 409);
@@ -122,10 +132,17 @@ test('push API binds the session, origin and delivery to a single account and de
   assert.equal((await request('test', { method: 'POST', data: { endpoint: browser } })).status, 204);
   assert.equal((await request('test', { method: 'POST', data: { endpoint: browser } })).status, 429);
   assert.deepEqual(calls[0][0], valid.subscription);
+  assert.equal(calls[0][1].accountId, '1');
+  assert.equal(calls[0][1].title, undefined);
   assert.equal((await request('subscription', {
     method: 'DELETE', data: { endpoint: browser },
   })).status, 204);
   assert.equal((await request('test', { method: 'POST', data: { endpoint: browser } })).status, 404);
+  assert.equal((await request('verify-delivery', verify)).status, 404);
+  // A delayed timezone retry cannot recreate a disabled subscription.
+  assert.equal((await request('subscription', {
+    method: 'PATCH', data: { endpoint: browser, timezone: 'UTC' },
+  })).status, 404);
   assert.equal(calls.length, 1);
 });
 
@@ -169,7 +186,8 @@ test('real ledger schedule uses local 09:00, retries a transient error, and pers
   now = Date.parse('2026-11-23T01:00:00Z');
   await Promise.all([push.runDue(), push.runDue()]);
   assert.deepEqual(calls.map(({ endpoint }) => endpoint).sort(), [browser, browserB]);
-  assert.match(calls[0].payload.body, /车贷/);
+  assert.equal(calls[0].payload.accountId, '1');
+  assert.match(calls[0].payload.notification.body, /车贷/);
   assert.deepEqual(await push.test('1', browserB), { status: 404, error: 'push_subscription_not_found' });
   now = Date.parse('2026-11-23T01:04:00Z');
   await push.runDue();

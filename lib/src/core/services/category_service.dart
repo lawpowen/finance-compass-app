@@ -1,71 +1,19 @@
-import '../database/app_database.dart' hide Category;
+import '../data/finance_repository.dart';
+import '../database/app_database.dart' show AppDatabase;
 import '../models/category.dart';
 
-/// 分类 CRUD 与查询服务。
-///
-/// 提供按类型筛选、排序查询以及分类的增删改操作。
+/// Category queries share the ledger's hierarchy and historical-name fallback.
 class CategoryService {
-  CategoryService({
-    required List<Category> categories,
-    required this.database,
-  }) : _categories = categories;
+  CategoryService(
+      {required List<Category> categories, required AppDatabase database})
+      : this.fromRepository(FinanceRepository.fromSnapshot(
+            database: database, categories: categories));
+  const CategoryService.fromRepository(this.repository);
 
-  final List<Category> _categories;
-  final AppDatabase database;
-
-  // ---------------------------------------------------------------------------
-  // 查询
-  // ---------------------------------------------------------------------------
-
-  /// 按 [CategoryType] 筛选分类。
-  List<Category> categoriesByType(CategoryType type) {
-    return _categories.where((item) => item.type == type).toList();
-  }
-
-  /// 所有分类（按类型名、分类名排序）。
-  List<Category> sortedCategories() {
-    final items = [..._categories]..sort((a, b) {
-        final byType = a.type.name.compareTo(b.type.name);
-        if (byType != 0) {
-          return byType;
-        }
-        return a.name.compareTo(b.name);
-      });
-    return items;
-  }
-
-  /// 根据 [categoryId] 获取分类名称。
-  ///
-  /// 若找不到对应分类，返回 `'未命名类别'`。
-  String categoryName(String categoryId) {
-    for (final category in _categories) {
-      if (category.id == categoryId) {
-        return category.name;
-      }
-    }
-    return '未命名类别';
-  }
-
-  // ---------------------------------------------------------------------------
-  // CRUD
-  // ---------------------------------------------------------------------------
-
-  Future<void> addCategory(Category category) async {
-    await database.insertCategory(category);
-  }
-
-  Future<void> updateCategory(Category category) async {
-    await database.updateCategory(category);
-  }
-
-  Future<bool> canDeleteCategory(String categoryId) {
-    return database
-        .categoryHasLinkedData(categoryId)
-        .then((hasLinks) => !hasLinks);
-  }
-
-  /// 若分类无关联数据则删除，返回 `true` 表示已删除。
-  Future<bool> deleteCategoryIfSafe(String categoryId) async {
-    return database.deleteCategoryIfSafe(categoryId);
-  }
+  final FinanceRepository repository;
+  List<Category> categoriesByType(CategoryType type) =>
+      repository.categoriesByType(type);
+  List<Category> sortedCategories() => repository.sortedCategories();
+  String categoryName(String id) => repository.categoryName(id);
+  Future<bool> canDeleteCategory(String id) => repository.canDeleteCategory(id);
 }

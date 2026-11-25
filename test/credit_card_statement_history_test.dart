@@ -14,6 +14,65 @@ import 'package:flutter_test/flutter_test.dart';
 import 'support/amount_entry.dart';
 
 void main() {
+  testWidgets('overdue detail includes signed credits and handles a zero limit',
+      (tester) async {
+    tester.view.physicalSize = const Size(390, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    var repo = await FinanceRepository.load(db);
+    const card = Account(
+        id: 'zero-limit',
+        name: 'Zero limit',
+        accountType: AccountType.creditCard,
+        reportGroup: ReportGroup.credit,
+        currency: 'MYR',
+        currentBalance: 0,
+        creditLimit: 0,
+        statementDay: 25,
+        paymentDueDay: 10);
+    repo = await repo.addAccount(card);
+    FinanceTransaction row(
+            String id, TransactionType type, double amount, DateTime date) =>
+        FinanceTransaction(
+            id: id,
+            type: type,
+            accountId: card.id,
+            currency: 'MYR',
+            amount: amount,
+            transactionDate: date,
+            description: id);
+    repo = await repo.addTransactions([
+      row('May purchase', TransactionType.expense, 100, DateTime(2026, 5, 3)),
+      row('Merchant refund', TransactionType.income, 30, DateTime(2026, 5, 4)),
+      row('Card adjustment', TransactionType.adjustment, 10,
+          DateTime(2026, 5, 6)),
+      row('June purchase', TransactionType.expense, 40, DateTime(2026, 6, 2)),
+    ]);
+    await tester.pumpWidget(ProviderScope(
+      overrides: [
+        financeRepositoryProvider
+            .overrideWith(() => _TestRepositoryNotifier(repo))
+      ],
+      child: MaterialApp(
+          home: CreditCardDetailScreen(
+              account: card,
+              repository: repo,
+              cutoffDate: DateTime(2026, 6, 26))),
+    ));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.text('逾期未还'), findsOneWidget);
+    expect(find.text('MYR 60.00'), findsOneWidget);
+    expect(find.text('额度使用 —'), findsOneWidget);
+    expect(find.text('Merchant refund'), findsOneWidget);
+    expect(find.text('Card adjustment'), findsOneWidget);
+    expect(find.text('- MYR 30.00'), findsOneWidget);
+    expect(find.text('- MYR 10.00'), findsOneWidget);
+  });
+
   testWidgets(
       'card limit and purchases keep native currency in a different base ledger',
       (tester) async {
@@ -614,6 +673,10 @@ void main() {
 
   testWidgets('historical credit-card detail is read only and can return live',
       (tester) async {
+    tester.view.physicalSize = const Size(390, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     final now = DateTime.now();
     final cutoff = DateTime(now.year, now.month, 0, 23, 59, 59);
     final database = AppDatabase.forTesting(NativeDatabase.memory());
@@ -643,6 +706,15 @@ void main() {
         merchant: 'Historical purchase',
       ),
     );
+    final futureMonth = DateTime(now.year, now.month + 2, 12);
+    repository = await repository.addTransaction(FinanceTransaction(
+      id: 'future-cycle',
+      type: TransactionType.expense,
+      accountId: card.id,
+      amount: 200,
+      currency: 'MYR',
+      transactionDate: futureMonth,
+    ));
     final container = ProviderContainer(
       overrides: [
         financeRepositoryProvider.overrideWith(
@@ -671,6 +743,19 @@ void main() {
       findsOneWidget,
     );
     expect(find.byIcon(Icons.more_vert_rounded), findsNothing);
+    final picker = find.byKey(const Key('credit-card-statement-picker'));
+    await tester.ensureVisible(picker);
+    await tester.tap(picker);
+    await tester.pumpAndSettle();
+    expect(find.text('选择账单月份'), findsOneWidget);
+    expect(
+        find.byKey(Key(
+            'credit-card-statement-${futureMonth.year}-${futureMonth.month}')),
+        findsNothing);
+    await tester.tap(find.byIcon(Icons.close_rounded).last);
+    await tester.pumpAndSettle();
+    await tester
+        .ensureVisible(find.byKey(const Key('credit-card-return-current')));
     await tester.tap(find.byKey(const Key('credit-card-return-current')));
     await tester.pumpAndSettle();
     expect(

@@ -10,9 +10,10 @@ import '../../core/theme/finance_theme.dart';
 import '../shared/compass_ui.dart';
 
 class AssetGoalsPage extends ConsumerWidget {
-  const AssetGoalsPage({super.key, required this.repository});
+  const AssetGoalsPage({super.key, required this.repository, this.cutoffDate});
 
   final FinanceRepository repository;
+  final DateTime? cutoffDate;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -21,16 +22,14 @@ class AssetGoalsPage extends ConsumerWidget {
     final currency = activeRepository.baseCurrency;
     // Goals are measured at the end of today: future-dated actual
     // transactions are not assets already held.
-    final cutoff = activeRepository.assetGoalCutoffDate();
+    final cutoff = activeRepository.assetGoalCutoffDate(cutoffDate);
+    final historical = cutoffDate != null;
     final summaries = activeRepository.assetGoalSummaries(cutoffDate: cutoff);
-    final history = activeRepository.totalAssetHistory(
-      cutoffDate: cutoff,
-      includeCredit: false,
-    );
-    final currentAssets = activeRepository.totalAssetsAt(
-      cutoff,
-      includeCredit: false,
-    );
+    final history = summaries.firstOrNull?.history ??
+        activeRepository.totalAssetHistory(
+            cutoffDate: cutoff, includeCredit: false);
+    final currentAssets = summaries.firstOrNull?.currentAssets ??
+        activeRepository.totalAssetsAt(cutoff, includeCredit: false);
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -41,16 +40,19 @@ class AssetGoalsPage extends ConsumerWidget {
             children: [
               CompassPageHeader(
                 title: '资产目标',
-                subtitle: '目标会按总资产变化自动更新进度',
+                subtitle: historical
+                    ? '历史统计 · 截至 ${cutoff.year}年${cutoff.month}月${cutoff.day}日'
+                    : '目标会按总资产变化自动更新进度',
                 leading: const CompassBackButton(),
                 actions: [
-                  IconButton(
-                    key: const Key('asset-goal-add'),
-                    tooltip: '新增资产目标',
-                    onPressed: () =>
-                        _editGoal(context, ref, currency: currency),
-                    icon: const Icon(Icons.add_rounded),
-                  ),
+                  if (!historical)
+                    IconButton(
+                      key: const Key('asset-goal-add'),
+                      tooltip: '新增资产目标',
+                      onPressed: () =>
+                          _editGoal(context, ref, currency: currency),
+                      icon: const Icon(Icons.add_rounded),
+                    ),
                 ],
               ),
               const SizedBox(height: 18),
@@ -58,7 +60,8 @@ class AssetGoalsPage extends ConsumerWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('当前总资产', style: Theme.of(context).textTheme.bodySmall),
+                    Text(historical ? '截至当日总资产' : '当前总资产',
+                        style: Theme.of(context).textTheme.bodySmall),
                     const SizedBox(height: 5),
                     Text(
                       compassMoney(currentAssets, currency: currency),
@@ -102,14 +105,16 @@ class AssetGoalsPage extends ConsumerWidget {
                         style: Theme.of(context).textTheme.bodySmall,
                         textAlign: TextAlign.center,
                       ),
-                      const SizedBox(height: 16),
-                      FilledButton.icon(
-                        key: const Key('asset-goal-empty-add'),
-                        onPressed: () =>
-                            _editGoal(context, ref, currency: currency),
-                        icon: const Icon(Icons.add_rounded),
-                        label: const Text('新增资产目标'),
-                      ),
+                      if (!historical) ...[
+                        const SizedBox(height: 16),
+                        FilledButton.icon(
+                          key: const Key('asset-goal-empty-add'),
+                          onPressed: () =>
+                              _editGoal(context, ref, currency: currency),
+                          icon: const Icon(Icons.add_rounded),
+                          label: const Text('新增资产目标'),
+                        ),
+                      ],
                     ],
                   ),
                 )
@@ -121,17 +126,21 @@ class AssetGoalsPage extends ConsumerWidget {
                       key: Key('asset-goal-${summary.goal.id}'),
                       summary: summary,
                       currency: currency,
-                      onEdit: () => _editGoal(
-                        context,
-                        ref,
-                        currency: currency,
-                        initialGoal: summary.goal,
-                      ),
-                      onDelete: () => _deleteGoal(
-                        context,
-                        ref,
-                        summary.goal,
-                      ),
+                      onEdit: historical
+                          ? null
+                          : () => _editGoal(
+                                context,
+                                ref,
+                                currency: summary.goal.currency,
+                                initialGoal: summary.goal,
+                              ),
+                      onDelete: historical
+                          ? null
+                          : () => _deleteGoal(
+                                context,
+                                ref,
+                                summary.goal,
+                              ),
                     ),
                   ),
                 ),
@@ -187,6 +196,7 @@ class AssetGoalsPage extends ConsumerWidget {
               final amount = double.tryParse(amountController.text.trim());
               if (nameController.text.trim().isEmpty ||
                   amount == null ||
+                  !amount.isFinite ||
                   amount <= 0) {
                 ScaffoldMessenger.of(dialogContext).showSnackBar(
                   const SnackBar(content: Text('请输入目标名称和大于 0 的金额。')),
@@ -211,6 +221,7 @@ class AssetGoalsPage extends ConsumerWidget {
       await ref.read(accountMutationsProvider.notifier).addAssetGoal(
             name: result.name,
             amount: result.amount,
+            currency: currency,
           );
     } else {
       await ref.read(accountMutationsProvider.notifier).updateAssetGoal(
@@ -262,13 +273,13 @@ class _AssetGoalCard extends StatelessWidget {
 
   final AssetGoalProgressSummary summary;
   final String currency;
-  final VoidCallback onEdit;
-  final VoidCallback onDelete;
+  final VoidCallback? onEdit;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
     final ratio = summary.progressRatio.clamp(0.0, 1.0);
-    final remaining = summary.goal.targetAmount - summary.currentAssets;
+    final remaining = summary.targetAmountInBase - summary.currentAssets;
     return CompassCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -292,45 +303,51 @@ class _AssetGoalCard extends StatelessWidget {
                     Text(summary.goal.name,
                         style: Theme.of(context).textTheme.titleMedium),
                     Text(
-                      '目标 ${compassMoney(summary.goal.targetAmount, currency: currency)}',
+                      '目标 ${compassMoney(summary.goal.targetAmount, currency: summary.goal.currency)}',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ],
                 ),
               ),
-              PopupMenuButton<String>(
-                tooltip: '管理目标',
-                onSelected: (value) => value == 'edit' ? onEdit() : onDelete(),
-                itemBuilder: (_) => const [
-                  PopupMenuItem(value: 'edit', child: Text('编辑')),
-                  PopupMenuItem(value: 'delete', child: Text('删除')),
-                ],
-              ),
+              if (onEdit != null)
+                PopupMenuButton<String>(
+                  tooltip: '管理目标',
+                  onSelected: (value) =>
+                      value == 'edit' ? onEdit?.call() : onDelete?.call(),
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(value: 'edit', child: Text('编辑')),
+                    PopupMenuItem(value: 'delete', child: Text('删除')),
+                  ],
+                ),
             ],
           ),
           const SizedBox(height: 16),
-          LinearProgressIndicator(
-            value: ratio,
-            minHeight: 9,
-            borderRadius: BorderRadius.circular(8),
-            color: summary.isReached
-                ? financePaletteOf(context).seed
-                : financePaletteOf(context).expense,
-            backgroundColor: financePaletteOf(context).border,
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              Text('${(summary.progressRatio * 100).toStringAsFixed(1)}%'),
-              const Spacer(),
-              Text(
-                summary.isReached
-                    ? '已达成${_reachedLabel(summary.reachedAt)}'
-                    : '还差 ${compassMoney(remaining, currency: currency)}',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ],
-          ),
+          if (!summary.valuationAvailable)
+            const Text('缺少汇率，目标进度未估值。')
+          else ...[
+            LinearProgressIndicator(
+              value: ratio,
+              minHeight: 9,
+              borderRadius: BorderRadius.circular(8),
+              color: summary.isReached
+                  ? financePaletteOf(context).seed
+                  : financePaletteOf(context).expense,
+              backgroundColor: financePaletteOf(context).border,
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Text('${(summary.progressRatio * 100).toStringAsFixed(1)}%'),
+                const Spacer(),
+                Text(
+                  summary.isReached
+                      ? '已达成${_reachedLabel(summary.reachedAt)}'
+                      : '还差 ${compassMoney(remaining, currency: currency)}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );

@@ -80,6 +80,68 @@ AssetGoalProgressSummary _summaryFor(
 }
 
 void main() {
+  test('legacy goal keeps its pre-switch unit and crossing day across backup',
+      () async {
+    final (database, ledger) = await _openRepository();
+    var repository = await ledger.updateExchangeRates(
+      {'MYR': .25, 'USD': 1},
+      ['USD', 'MYR'],
+    );
+    repository = await repository.addTransaction(_income('before', -5, 600));
+    repository = await repository.addTransaction(_income('crossing', -3, 500));
+    await database.setMetaValue(
+        'asset_goals_json',
+        jsonEncode([
+          {'id': 'legacy', 'name': 'Savings', 'target_amount': 250},
+        ]));
+    repository = await repository.refresh();
+    expect(repository.assetGoals.single.currency, 'USD');
+    expect(repository.assetGoalSummaries().single.reachedAt, _day(-3));
+
+    repository = await repository.updateExchangeRates(
+      {'MYR': 1, 'USD': 4},
+      ['MYR', 'USD'],
+    );
+    void verify(FinanceRepository restored) {
+      final summary = restored.assetGoalSummaries().single;
+      expect(summary.goal.targetAmount, 250);
+      expect(summary.goal.currency, 'USD');
+      expect(summary.currentAssets, 1100);
+      expect(summary.targetAmountInBase, 1000);
+      expect(summary.progressRatio, closeTo(1.1, 1e-12));
+      expect(summary.reachedAt, _day(-3));
+      expect(restored.assetGoals.single.reachedAt, _day(-3));
+    }
+
+    verify(await repository.refresh());
+    final backup = await repository.buildJsonSnapshotPayload();
+    final meta = backup['meta'] as Map;
+    expect(
+        (jsonDecode(meta['asset_goals_json'] as String) as List)
+            .single['currency'],
+        'USD');
+    final restoredDb = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(restoredDb.close);
+    final empty = await FinanceRepository.load(restoredDb);
+    verify(await empty.restoreSyncedSnapshot(backup));
+  });
+
+  test('single legacy goal is denominated before base currency changes',
+      () async {
+    final (database, ledger) = await _openRepository(cashBalance: 1200);
+    await database.setMetaValue('asset_goal_amount', '1000');
+    final repository = await (await ledger.refresh()).updateExchangeRates(
+      {'USD': 1, 'MYR': .25},
+      ['USD', 'MYR'],
+    );
+    final summary = repository.assetGoalSummaries().single;
+    expect(summary.goal.currency, 'MYR');
+    expect(summary.goal.targetAmount, 1000);
+    expect(summary.targetAmountInBase, 250);
+    expect(summary.progressRatio, closeTo(1.2, 1e-12));
+    expect(summary.isReached, isTrue);
+  });
+
   test('reached date is the real day the total crossed, not a month end',
       () async {
     final (_, initialRepository) = await _openRepository();

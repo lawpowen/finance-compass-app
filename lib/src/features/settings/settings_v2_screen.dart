@@ -2,9 +2,9 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/app_version.dart';
 import '../../core/data/finance_repository.dart';
 import '../../core/settings/app_settings_controller.dart';
-import '../../core/theme/finance_colors.dart';
 import '../../core/theme/finance_theme.dart';
 import '../shared/compass_ui.dart';
 import 'settings_screen.dart';
@@ -18,7 +18,8 @@ const _financeCompassIssuesUrl =
     'https://github.com/lawpowen/finance-compass-app/issues';
 const _financeCompassSupportQrAsset =
     'assets/support/touch-n-go-support-qr.jpg';
-const _financeVersionDisplay = kIsWeb ? '0.10.1+45 · Web 22' : '0.10.1+45';
+const _financeVersionDisplay =
+    kIsWeb ? '$appVersion · $webReleaseLabel' : appVersion;
 
 class SettingsV2Screen extends StatelessWidget {
   const SettingsV2Screen({

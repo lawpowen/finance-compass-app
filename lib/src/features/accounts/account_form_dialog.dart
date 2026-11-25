@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/data/finance_repository.dart';
 import '../../core/models/account.dart';
 import '../../core/models/loan_amortization.dart';
+import '../../core/providers/repository_provider.dart';
+import '../../core/providers/mutations/account_mutations.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../core/utils/id_generator.dart';
 import '../../core/theme/finance_theme.dart';
@@ -13,10 +17,41 @@ class AccountFormDialog extends StatefulWidget {
     super.key,
     this.initialAccount,
     this.defaultCurrency = baseCurrencyCode,
+    this.hasEconomicHistory = false,
+    this.onSetActive,
   });
 
   final Account? initialAccount;
   final String defaultCurrency;
+  final bool hasEconomicHistory;
+  final Future<void> Function(bool active)? onSetActive;
+
+  static Widget edit(Account initial, FinanceRepository repository) =>
+      Consumer(builder: (context, ref, _) {
+        final live =
+            ref.watch(financeRepositoryProvider).valueOrNull ?? repository;
+        final account =
+            live.accounts.where((a) => a.id == initial.id).firstOrNull;
+        if (account == null) {
+          return AlertDialog(
+            content: const Text('账户已移除，请返回账户列表。'),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('返回')),
+            ],
+          );
+        }
+        return AccountFormDialog(
+          initialAccount: account,
+          onSetActive: (active) => ref
+              .read(accountMutationsProvider.notifier)
+              .setActive(account.id, active),
+          hasEconomicHistory: live.transactions.any((t) =>
+                  t.accountId == account.id || t.toAccountId == account.id) ||
+              live.snapshots.any((s) => s.accountId == account.id),
+        );
+      });
 
   @override
   State<AccountFormDialog> createState() => _AccountFormDialogState();
@@ -46,7 +81,17 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
   late DateTime loanTrackingStartDate;
   late LoanRepaymentMethod loanRepaymentMethod;
 
+  bool _savingStatus = false;
+
   bool get isEdit => widget.initialAccount != null;
+
+  bool get _useOpeningBalance =>
+      !widget.hasEconomicHistory &&
+      (!isEdit ||
+          reportGroup == ReportGroup.investment ||
+          reportGroup == ReportGroup.retirement ||
+          widget.initialAccount!.initialBalance ==
+              widget.initialAccount!.currentBalance);
 
   @override
   void initState() {
@@ -81,7 +126,7 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
           .toStringAsFixed(2),
     );
     loanInterestRateController = TextEditingController(
-      text: (account?.loanAnnualInterestRate ?? 0).toStringAsFixed(2),
+      text: (account?.loanAnnualInterestRate ?? 0).toString(),
     );
     loanTermYearsController = TextEditingController(
       text: _termYearsText(account?.loanTermMonths ?? 60),
@@ -102,7 +147,19 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
     loanRepaymentMethod =
         account?.loanRepaymentMethod ?? LoanRepaymentMethod.equalInstallment;
     accountType = account?.accountType ?? AccountType.cash;
-    reportGroup = account?.reportGroup ?? ReportGroup.cash;
+    reportGroup = account?.effectiveReportGroup ?? ReportGroup.cash;
+  }
+
+  @override
+  void didUpdateWidget(AccountFormDialog oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final account = widget.initialAccount;
+    if (!widget.hasEconomicHistory || account == null) return;
+    currency = normalizeCurrency(account.currency);
+    accountType = account.accountType;
+    reportGroup = account.effectiveReportGroup;
+    currentBalanceController.text = account.currentBalance.toStringAsFixed(2);
+    initialBalanceController.text = account.initialBalance.toStringAsFixed(2);
   }
 
   @override
@@ -176,7 +233,7 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            isCreditCard ? '···· 1234 · $currency' : currency,
+                            currency,
                             style: Theme.of(context).textTheme.bodySmall,
                           ),
                           const SizedBox(height: 6),
@@ -222,7 +279,7 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                     child: DropdownButton<String>(
                       value: currency,
                       alignment: Alignment.centerRight,
-                      items: supportedCurrencies
+                      items: {...supportedCurrencies, currency}
                           .map(
                             (item) => DropdownMenuItem(
                               value: item,
@@ -230,13 +287,21 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                             ),
                           )
                           .toList(),
-                      onChanged: (value) {
-                        if (value != null) setState(() => currency = value);
-                      },
+                      onChanged: widget.hasEconomicHistory
+                          ? null
+                          : (value) {
+                              if (value != null) {
+                                setState(() => currency = value);
+                              }
+                            },
                     ),
                   ),
                 ),
-                if (!isCreditCard) ...[
+                if (widget.hasEconomicHistory)
+                  const Text('账户已有流水或快照，币种、类型和报表分组已锁定。余额由账本计算。'),
+                if (!isCreditCard ||
+                    widget.initialAccount?.accountType !=
+                        AccountType.creditCard) ...[
                   _AccountEditorRow(
                     icon: Icons.category_outlined,
                     label: '账户类型',
@@ -252,11 +317,14 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                               ),
                             )
                             .toList(),
-                        onChanged: (value) => setState(() {
-                          if (value == null) return;
-                          accountType = value;
-                          reportGroup = _defaultReportGroupForType(value);
-                        }),
+                        onChanged: widget.hasEconomicHistory
+                            ? null
+                            : (value) => setState(() {
+                                  if (value == null) return;
+                                  accountType = value;
+                                  reportGroup =
+                                      allowedReportGroups(value).first;
+                                }),
                       ),
                     ),
                   ),
@@ -267,7 +335,7 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                       child: DropdownButton<ReportGroup>(
                         value: reportGroup,
                         alignment: Alignment.centerRight,
-                        items: ReportGroup.values
+                        items: allowedReportGroups(accountType)
                             .map(
                               (group) => DropdownMenuItem(
                                 value: group,
@@ -275,11 +343,14 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                               ),
                             )
                             .toList(),
-                        onChanged: (value) {
-                          if (value != null) {
-                            setState(() => reportGroup = value);
-                          }
-                        },
+                        onChanged: widget.hasEconomicHistory ||
+                                allowedReportGroups(accountType).length == 1
+                            ? null
+                            : (value) {
+                                if (value != null) {
+                                  setState(() => reportGroup = value);
+                                }
+                              },
                       ),
                     ),
                   ),
@@ -312,6 +383,7 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                       fieldKey: const Key('credit-card-balance-field'),
                       controller: currentBalanceController,
                       isAmount: true,
+                      readOnly: widget.hasEconomicHistory,
                       prefixText: '$currency ',
                       keyboardType: const TextInputType.numberWithOptions(
                         decimal: true,
@@ -392,6 +464,7 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                     icon: Icons.calendar_today_outlined,
                     label: '合同开始日',
                     child: TextButton(
+                      key: const Key('loan-contract-date'),
                       onPressed: _pickLoanStartDate,
                       child: Align(
                         alignment: Alignment.centerRight,
@@ -403,6 +476,7 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                     icon: Icons.play_circle_outline_rounded,
                     label: '开始记账日期',
                     child: TextButton(
+                      key: const Key('loan-tracking-date'),
                       onPressed: _pickLoanTrackingStartDate,
                       child: Align(
                         alignment: Alignment.centerRight,
@@ -490,8 +564,10 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                     icon: Icons.savings_outlined,
                     label: '初始余额',
                     child: _InlineTextEditor(
+                      fieldKey: const Key('account-opening-balance'),
                       controller: initialBalanceController,
                       isAmount: true,
+                      readOnly: widget.hasEconomicHistory,
                       prefixText: '$currency ',
                       keyboardType:
                           const TextInputType.numberWithOptions(decimal: true),
@@ -502,8 +578,12 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                     icon: Icons.account_balance_wallet_outlined,
                     label: '当前余额',
                     child: _InlineTextEditor(
-                      controller: currentBalanceController,
+                      fieldKey: const Key('account-current-balance'),
+                      controller: _useOpeningBalance
+                          ? initialBalanceController
+                          : currentBalanceController,
                       isAmount: true,
+                      readOnly: _useOpeningBalance || widget.hasEconomicHistory,
                       prefixText: '$currency ',
                       keyboardType:
                           const TextInputType.numberWithOptions(decimal: true),
@@ -512,13 +592,15 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
                   ),
                 ],
                 const SizedBox(height: 24),
-                CompassPrimaryButton(label: '保存更改', onPressed: _submit),
-                if (isEdit) ...[
+                CompassPrimaryButton(
+                    label: '保存更改', onPressed: _savingStatus ? null : _submit),
+                if (isEdit && widget.onSetActive != null) ...[
                   const SizedBox(height: 8),
                   TextButton(
-                    onPressed: () => Navigator.of(context).pop(),
+                    key: const Key('toggle-account-active'),
+                    onPressed: _savingStatus ? null : _setActive,
                     child: Text(
-                      '停用账户',
+                      widget.initialAccount!.isActive ? '停用账户' : '重新启用账户',
                       style:
                           TextStyle(color: financePaletteOf(context).expense),
                     ),
@@ -532,8 +614,40 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
     );
   }
 
+  Future<void> _setActive() async {
+    final update = widget.onSetActive;
+    if (update == null || _savingStatus) return;
+    final active = !widget.initialAccount!.isActive;
+    setState(() => _savingStatus = true);
+    try {
+      await update(active);
+      // The status was saved through the ledger session. The caller only
+      // receives an Account when the separate form-save action is chosen.
+      if (mounted && ModalRoute.of(context)?.isCurrent == true) {
+        final messenger = ScaffoldMessenger.of(context);
+        Navigator.of(context).pop();
+        messenger
+            .showSnackBar(SnackBar(content: Text(active ? '账户已启用' : '账户已停用')));
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('保存账户状态失败：$error')));
+      }
+    } finally {
+      if (mounted) setState(() => _savingStatus = false);
+    }
+  }
+
   void _submit() {
     if (!formKey.currentState!.validate()) {
+      return;
+    }
+    if (accountType == AccountType.loan &&
+        !validLoanTrackingDate(loanStartDate, loanTrackingStartDate)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('开始记账日期必须等于或晚于合同开始日。')),
+      );
       return;
     }
     if (accountType == AccountType.loan && _previewLoanSchedule() == null) {
@@ -560,12 +674,25 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
             ? widget.initialAccount!.currentBalance -
                 widget.initialAccount!.initialBalance
             : 0.0;
-    final balance = isLoan
-        ? -openingLoanBalance!
-        : double.parse(initialBalanceController.text.trim());
-    final currentBalance = isLoan
-        ? -openingLoanBalance! + previousLoanPrincipalReduction
-        : double.parse(currentBalanceController.text.trim());
+    final double balance;
+    final double currentBalance;
+    if (isLoan) {
+      balance = -openingLoanBalance!;
+      currentBalance = balance + previousLoanPrincipalReduction;
+    } else if (widget.hasEconomicHistory) {
+      balance = widget.initialAccount!.initialBalance;
+      currentBalance = widget.initialAccount!.currentBalance;
+    } else if (accountType == AccountType.creditCard) {
+      currentBalance = double.parse(currentBalanceController.text.trim());
+      balance = _useOpeningBalance
+          ? currentBalance
+          : widget.initialAccount!.initialBalance;
+    } else {
+      balance = double.parse(initialBalanceController.text.trim());
+      currentBalance = _useOpeningBalance
+          ? balance
+          : double.parse(currentBalanceController.text.trim());
+    }
     final quotedPayment = _optionalDouble(loanQuotedPaymentController.text);
     Navigator.of(context).pop(
       Account(
@@ -573,7 +700,9 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
         name: nameController.text.trim(),
         accountType: accountType,
         reportGroup: reportGroup,
-        currency: currency,
+        currency: widget.hasEconomicHistory
+            ? widget.initialAccount!.currency
+            : currency,
         initialBalance: balance,
         currentBalance: currentBalance,
         institution: _nullIfEmpty(institutionController.text),
@@ -609,8 +738,10 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
 
   String? _required(String? value) =>
       (value == null || value.trim().isEmpty) ? '必填' : null;
-  String? _numberRequired(String? value) =>
-      double.tryParse(value ?? '') == null ? '请输入数字' : null;
+  String? _numberRequired(String? value) {
+    final parsed = double.tryParse(value ?? '');
+    return parsed == null || !parsed.isFinite ? '请输入数字' : null;
+  }
 
   /// double.tryParse accepts "NaN" and "Infinity"; a card balance must not.
   String? _finiteNumberRequired(String? value) {
@@ -620,7 +751,9 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
 
   String? _positiveNumberRequired(String? value) {
     final parsed = double.tryParse(value ?? '');
-    return parsed == null || parsed <= 0 ? '请输入大于 0 的金额' : null;
+    return parsed == null || !parsed.isFinite || parsed <= 0
+        ? '请输入大于 0 的金额'
+        : null;
   }
 
   String? _dayRequired(String? value) {
@@ -630,13 +763,17 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
 
   String? _nonNegativeNumberRequired(String? value) {
     final parsed = double.tryParse(value ?? '');
-    return parsed == null || parsed < 0 ? '请输入不小于 0 的数字' : null;
+    return parsed == null || !parsed.isFinite || parsed < 0
+        ? '请输入不小于 0 的数字'
+        : null;
   }
 
   String? _optionalPositiveNumber(String? value) {
     if (value == null || value.trim().isEmpty) return null;
     final parsed = double.tryParse(value);
-    return parsed == null || parsed <= 0 ? '请输入大于 0 的金额' : null;
+    return parsed == null || !parsed.isFinite || parsed <= 0
+        ? '请输入大于 0 的金额'
+        : null;
   }
 
   String? _loanTermRequired(String? value) {
@@ -648,28 +785,56 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
 
   int? _loanTermMonths(String? value) {
     final years = double.tryParse(value?.trim() ?? '');
-    if (years == null || years <= 0) return null;
+    if (years == null || !years.isFinite || years <= 0) return null;
     final rawMonths = years * 12;
+    if (!rawMonths.isFinite || rawMonths > 1200.001) return null;
     final months = rawMonths.round();
     return (rawMonths - months).abs() <= .001 ? months : null;
   }
 
-  double? _optionalDouble(String value) =>
-      value.trim().isEmpty ? null : double.tryParse(value.trim());
+  double? _optionalDouble(String value) {
+    if (value.trim().isEmpty) return null;
+    final parsed = double.tryParse(value.trim());
+    return parsed != null && parsed.isFinite ? parsed : null;
+  }
 
   LoanAmortizationSchedule? _previewLoanSchedule() {
+    if (!validLoanTrackingDate(loanStartDate, loanTrackingStartDate)) {
+      return null;
+    }
     final principal = double.tryParse(loanPrincipalController.text.trim());
     final rate = double.tryParse(loanInterestRateController.text.trim());
     final months = _loanTermMonths(loanTermYearsController.text);
     final paymentDay = int.tryParse(loanPaymentDayController.text.trim());
     if (principal == null ||
+        !principal.isFinite ||
         principal <= 0 ||
         rate == null ||
+        !rate.isFinite ||
         rate < 0 ||
         months == null ||
+        months < 1 ||
+        months > 1200 ||
         paymentDay == null ||
         paymentDay < 1 ||
         paymentDay > 31) {
+      return null;
+    }
+    final openingText = loanOpeningBalanceController.text.trim();
+    final openingPrincipal =
+        openingText.isEmpty ? principal : _optionalDouble(openingText);
+    if (openingPrincipal == null) {
+      return null;
+    }
+    final quotedText = loanQuotedPaymentController.text.trim();
+    final quotedPayment =
+        loanRepaymentMethod == LoanRepaymentMethod.equalPrincipal ||
+                quotedText.isEmpty
+            ? null
+            : _optionalDouble(quotedText);
+    if (loanRepaymentMethod != LoanRepaymentMethod.equalPrincipal &&
+        quotedText.isNotEmpty &&
+        quotedPayment == null) {
       return null;
     }
     try {
@@ -680,12 +845,8 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
         startDate: loanTrackingStartDate,
         paymentDay: paymentDay,
         method: loanRepaymentMethod,
-        quotedMonthlyPayment:
-            loanRepaymentMethod != LoanRepaymentMethod.equalPrincipal
-                ? _optionalDouble(loanQuotedPaymentController.text)
-                : null,
-        openingPrincipal:
-            _optionalDouble(loanOpeningBalanceController.text) ?? principal,
+        quotedMonthlyPayment: quotedPayment,
+        openingPrincipal: openingPrincipal,
       );
     } on ArgumentError {
       return null;
@@ -693,23 +854,37 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
   }
 
   Future<void> _pickLoanStartDate() async {
+    final lastDate = DateTime(2200, 12, 31);
     final selected = await showDatePicker(
       context: context,
       initialDate: loanStartDate,
-      firstDate: DateTime(1950),
-      lastDate: DateTime(2200),
+      firstDate: loanStartDate.year < 1950 ? loanStartDate : DateTime(1950),
+      lastDate: loanStartDate.isAfter(lastDate) ? loanStartDate : lastDate,
     );
-    if (selected != null) setState(() => loanStartDate = selected);
+    if (selected != null && mounted) {
+      setState(() {
+        loanStartDate = selected;
+        if (!validLoanTrackingDate(selected, loanTrackingStartDate)) {
+          loanTrackingStartDate = selected;
+        }
+      });
+    }
   }
 
   Future<void> _pickLoanTrackingStartDate() async {
+    final initial = validLoanTrackingDate(loanStartDate, loanTrackingStartDate)
+        ? loanTrackingStartDate
+        : loanStartDate;
+    final lastDate = DateTime(2200, 12, 31);
     final selected = await showDatePicker(
       context: context,
-      initialDate: loanTrackingStartDate,
+      initialDate: initial,
       firstDate: loanStartDate,
-      lastDate: DateTime(2200),
+      lastDate: initial.isAfter(lastDate) ? initial : lastDate,
     );
-    if (selected != null) setState(() => loanTrackingStartDate = selected);
+    if (selected != null && mounted) {
+      setState(() => loanTrackingStartDate = selected);
+    }
   }
 
   String _dateLabel(DateTime date) =>
@@ -770,27 +945,6 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
         return '其他';
     }
   }
-
-  ReportGroup _defaultReportGroupForType(AccountType type) {
-    switch (type) {
-      case AccountType.cash:
-      case AccountType.bankSaving:
-      case AccountType.eWallet:
-        return ReportGroup.cash;
-      case AccountType.creditCard:
-      case AccountType.loan:
-        return ReportGroup.credit;
-      case AccountType.pension:
-        return ReportGroup.retirement;
-      case AccountType.moneyMarketFund:
-      case AccountType.stock:
-      case AccountType.crypto:
-      case AccountType.trading:
-      case AccountType.fund:
-      case AccountType.other:
-        return ReportGroup.investment;
-    }
-  }
 }
 
 class _AccountEditorRow extends StatelessWidget {
@@ -831,6 +985,7 @@ class _InlineTextEditor extends StatelessWidget {
     required this.controller,
     this.fieldKey,
     this.isAmount = false,
+    this.readOnly = false,
     this.validator,
     this.hintText,
     this.prefixText,
@@ -842,6 +997,7 @@ class _InlineTextEditor extends StatelessWidget {
   final TextEditingController controller;
   final Key? fieldKey;
   final bool isAmount;
+  final bool readOnly;
   final FormFieldValidator<String>? validator;
   final String? hintText;
   final String? prefixText;
@@ -867,6 +1023,7 @@ class _InlineTextEditor extends StatelessWidget {
       return FinanceAmountField(
         fieldKey: fieldKey,
         controller: controller,
+        readOnly: readOnly,
         validator: validator,
         onChanged: onChanged,
         textAlign: TextAlign.right,

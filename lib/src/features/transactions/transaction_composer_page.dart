@@ -41,9 +41,13 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
   late DateTime date;
   late String? accountId;
   late String? toAccountId;
+  int? loanInstallmentNumber;
+  LoanInstallmentFields? _unallocatedSplit;
+  bool _editingUnallocatedAmounts = false;
   late String? categoryId;
   late final TextEditingController amountController;
   late final TextEditingController toAmountController;
+  late final TextEditingController loanPaymentController;
   late final TextEditingController merchantController;
   late final TextEditingController noteController;
   bool _isAutoSettingToAmount = false;
@@ -55,7 +59,15 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
   bool moreExpanded = true;
   int recurrenceMonths = 1;
 
-  FinanceRepository get repository => widget.repository;
+  FinanceRepository get repository =>
+      currentEntryLedger(context, widget.repository);
+  List<Account> _entryAccounts({bool target = false}) {
+    final original = widget.editExisting ? widget.draft : null;
+    return repository.entryAccounts(
+        originalAccountId:
+            target ? original?.toAccountId : original?.accountId);
+  }
+
   String get _sourceCurrency =>
       _account(accountId)?.currency ?? repository.baseCurrency;
 
@@ -66,10 +78,23 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
     type = draft?.type ?? TransactionType.expense;
     status = draft?.status ?? TransactionStatus.actual;
     date = draft?.transactionDate ?? DateTime.now();
-    accountId = draft?.accountId ??
-        (repository.accounts.isEmpty ? null : repository.accounts.first.id);
-    toAccountId = draft?.toAccountId;
-    categoryId = draft?.categoryId ?? _categoriesForType(type).firstOrNull?.id;
+    accountId = draft == null
+        ? _entryAccounts().firstOrNull?.id
+        : _entryAccounts()
+            .where((a) => a.id == draft.accountId)
+            .firstOrNull
+            ?.id;
+    toAccountId = type == TransactionType.transfer
+        ? _entryAccounts(target: true)
+            .where((a) => a.id == draft?.toAccountId)
+            .firstOrNull
+            ?.id
+        : null;
+    loanInstallmentNumber = draft?.loanInstallmentNumber;
+    _unallocatedSplit =
+        hasUnallocatedLoanSplit(draft, repository) ? draft : null;
+    categoryId = _draftCategory(type, draft?.categoryId,
+        keepOriginal: widget.editExisting, newEntry: draft == null);
     final amount = draft?.amount ?? 0;
     amountController = TextEditingController(
       text: draft == null ? '' : amount.toStringAsFixed(2),
@@ -78,6 +103,9 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
       text: draft?.toAmount?.toStringAsFixed(2) ?? '',
     );
     _toAmountEditedByUser = draft?.toAmount != null;
+    loanPaymentController = TextEditingController(
+      text: draft?.loanPaymentAmount?.toStringAsFixed(2) ?? '',
+    );
     merchantController = TextEditingController(
       text: draft?.merchant ?? '',
     );
@@ -97,13 +125,17 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
     _scrollController.dispose();
     amountController.dispose();
     toAmountController.dispose();
+    loanPaymentController.dispose();
     merchantController.dispose();
     noteController.dispose();
     super.dispose();
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      watchEntryLedger(context, widget.repository, _buildForm);
+
+  Widget _buildForm(BuildContext context) {
     final account = _account(accountId);
     final category = _category(categoryId);
     final issue = _showValidation ? _validationIssue() : null;
@@ -139,15 +171,23 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
               const SizedBox(height: 10),
               _TypeTabs(
                 selected: type,
-                onChanged: (value) {
-                  setState(() {
-                    type = value;
-                    categoryId = _categoriesForType(value).firstOrNull?.id;
-                    if (value != TransactionType.transfer) toAccountId = null;
-                    _toAmountEditedByUser = false;
-                  });
-                  _updateTransferEstimate(force: true);
-                },
+                onChanged: _isStructuredLoanPayment || _unallocatedSplit != null
+                    ? null
+                    : (value) {
+                        if (value == type) return;
+                        setState(() {
+                          type = value;
+                          categoryId =
+                              _draftCategory(value, null, newEntry: true);
+                          if (value != TransactionType.transfer) {
+                            toAccountId = null;
+                            toAmountController.clear();
+                            loanPaymentController.clear();
+                          }
+                          _toAmountEditedByUser = false;
+                        });
+                        _updateTransferEstimate(force: true);
+                      },
               ),
               const SizedBox(height: 10),
               Align(
@@ -168,6 +208,8 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                   Expanded(
                     child: FinanceAmountField(
                       controller: amountController,
+                      readOnly: _unallocatedSplit != null &&
+                          !_editingUnallocatedAmounts,
                       onChanged: _refreshValidation,
                       title: type == TransactionType.transfer ? '转出金额' : '金额',
                       showTitle: true,
@@ -194,7 +236,7 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                     ),
                   ),
                   OutlinedButton.icon(
-                    onPressed: _pickAccount,
+                    onPressed: _unallocatedSplit == null ? _pickAccount : null,
                     iconAlignment: IconAlignment.end,
                     icon: const Icon(Icons.expand_more_rounded, size: 18),
                     style: OutlinedButton.styleFrom(
@@ -218,10 +260,13 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                       child: FinanceAmountField(
                         controller: toAmountController,
                         onChanged: _refreshValidation,
-                        title: '转入金额',
+                        title: _isStructuredLoanPayment ? '偿还本金' : '转入金额',
                         showTitle: true,
                         enabled: toAccountId != null,
-                        readOnly: _isSameCurrencyTransfer,
+                        readOnly: _unallocatedSplit != null
+                            ? !_editingUnallocatedAmounts
+                            : _isSameCurrencyTransfer &&
+                                !_isStructuredLoanPayment,
                         style: TextStyle(
                           color: financePaletteOf(context).seed,
                           fontSize: 40,
@@ -246,7 +291,10 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                       ),
                     ),
                     OutlinedButton.icon(
-                      onPressed: _pickToAccount,
+                      onPressed:
+                          _isStructuredLoanPayment || _unallocatedSplit != null
+                              ? null
+                              : _pickToAccount,
                       iconAlignment: IconAlignment.end,
                       icon: const Icon(Icons.expand_more_rounded, size: 18),
                       style: OutlinedButton.styleFrom(
@@ -259,6 +307,27 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                     ),
                   ],
                 ),
+                if (_unallocatedSplit != null)
+                  Row(children: [
+                    const Expanded(child: Text('未关联贷款期号，保留原始付款与到账金额。')),
+                    if (!_editingUnallocatedAmounts)
+                      TextButton(
+                          onPressed: () =>
+                              setState(() => _editingUnallocatedAmounts = true),
+                          child: const Text('核对并修改金额')),
+                  ]),
+                if (_isStructuredLoanPayment && !_isSameCurrencyTransfer)
+                  FinanceAmountField(
+                    key:
+                        const Key('composer-loan-payment-in-contract-currency'),
+                    controller: loanPaymentController,
+                    title: '贷款原币还款总额',
+                    showTitle: true,
+                    onChanged: _refreshValidation,
+                    decoration: InputDecoration(
+                      prefixText: '${_account(toAccountId)?.currency ?? ''} ',
+                    ),
+                  ),
                 if (issue != null && issue.transferIn)
                   _ComposerError(
                       key: _transferErrorKey, message: issue.message),
@@ -279,7 +348,9 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                     ),
                     if (toAccountId != null &&
                         !_isSameCurrencyTransfer &&
-                        !_isStructuredLoanPayment)
+                        !_missingTransferRate &&
+                        !_isStructuredLoanPayment &&
+                        _unallocatedSplit == null)
                       TextButton(
                         onPressed: () {
                           _toAmountEditedByUser = false;
@@ -289,6 +360,10 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                       ),
                   ],
                 ),
+                if (_missingTransferRate && _unallocatedSplit == null)
+                  Text(_isStructuredLoanPayment
+                      ? '缺少汇率，请输入付款账户的实际扣款'
+                      : '缺少汇率，请输入实际到账金额'),
               ],
               const SizedBox(height: 10),
               CompassSegmentedControl(
@@ -315,20 +390,24 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                   TransactionType.expense => '付款账户',
                 },
                 value: account?.name ?? '请选择账户',
-                onTap: _pickAccount,
+                onTap: _unallocatedSplit == null ? _pickAccount : null,
               ),
               if (type == TransactionType.transfer)
                 _ComposerRow(
                   icon: Icons.call_received_rounded,
                   title: '转入账户',
-                  value: _account(toAccountId)?.name ?? '请选择账户',
-                  onTap: _pickToAccount,
+                  value: _isStructuredLoanPayment
+                      ? '${_account(toAccountId)?.name ?? ''} · 第 $loanInstallmentNumber 期'
+                      : _account(toAccountId)?.name ?? '请选择账户',
+                  onTap: _isStructuredLoanPayment || _unallocatedSplit != null
+                      ? null
+                      : _pickToAccount,
                 ),
-              if (type != TransactionType.transfer) ...[
+              if (type != TransactionType.transfer || categoryId != null) ...[
                 _ComposerRow(
                   icon: Icons.sell_outlined,
                   title: '类别',
-                  value: category?.name ?? '未分类',
+                  value: category == null ? '未分类' : _categoryLabel(category),
                   onTap: _pickCategory,
                 ),
                 if (_categoriesForType(type).isNotEmpty)
@@ -343,7 +422,7 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                               padding: const EdgeInsets.only(right: 6),
                               child: ChoiceChip(
                                 key: Key('composer-quick-category-${item.id}'),
-                                label: Text(item.name),
+                                label: Text(_categoryLabel(item)),
                                 selected: categoryId == item.id,
                                 visualDensity: VisualDensity.compact,
                                 materialTapTargetSize:
@@ -440,6 +519,12 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                     title: '周期规则',
                     value: '请在规则中心修改',
                   ),
+                if (_isStructuredLoanPayment &&
+                    !widget.editExisting &&
+                    widget.allowRecurringGeneration &&
+                    recurrenceMonths > 1)
+                  Text(
+                      '这 $recurrenceMonths 笔还款均计入第 $loanInstallmentNumber 期。跨期月供可在贷款详情按合同生成。'),
               ],
               const SizedBox(height: 14),
               if (widget.editExisting) ...[
@@ -468,16 +553,22 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
     );
   }
 
-  List<Category> _categoriesForType(TransactionType value) => switch (value) {
-        TransactionType.income =>
-          repository.categoriesByType(CategoryType.income),
-        TransactionType.expense =>
-          repository.categoriesByType(CategoryType.expense),
-        TransactionType.transfer || TransactionType.adjustment => [
-            ...repository.categoriesByType(CategoryType.transfer),
-            ...repository.categoriesByType(CategoryType.investment),
-          ],
-      };
+  List<Category> _categoriesForType(TransactionType value) =>
+      entryCategoryOptions(context, repository, value,
+          originalCategoryId: widget.editExisting && widget.draft?.type == value
+              ? widget.draft?.categoryId
+              : null);
+
+  String? _draftCategory(TransactionType value, String? id,
+      {bool keepOriginal = false, bool newEntry = false}) {
+    final options = entryCategoryOptions(context, repository, value,
+        originalCategoryId: keepOriginal ? id : null);
+    if (id != null && options.any((item) => item.id == id)) return id;
+    if (value == TransactionType.transfer || (!newEntry && id == null)) {
+      return null;
+    }
+    return options.firstOrNull?.id;
+  }
 
   Account? _account(String? id) {
     for (final item in repository.accounts) {
@@ -487,7 +578,7 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
   }
 
   Category? _category(String? id) {
-    for (final item in repository.categories) {
+    for (final item in _categoriesForType(type)) {
       if (item.id == id) return item;
     }
     return null;
@@ -501,17 +592,26 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
         targetCurrency.trim().toUpperCase();
   }
 
-  bool get _isStructuredLoanPayment {
-    final draft = widget.draft;
-    return draft != null &&
-        type == TransactionType.transfer &&
-        draft.type == TransactionType.transfer &&
-        // Keep the principal from the installment when its payer changes.
-        draft.toAccountId == toAccountId &&
-        _account(toAccountId)?.accountType == AccountType.loan &&
-        draft.toAmount != null &&
-        RegExp(r'^贷款月供 #\d+$').hasMatch(draft.description ?? '');
+  bool get _isStructuredLoanPayment => loanInstallmentNumber != null;
+
+  String _categoryLabel(Category value) =>
+      value.isArchived ? '${value.name}（已归档）' : value.name;
+
+  bool get _missingTransferRate {
+    final target = _account(toAccountId);
+    return target != null &&
+        !_isSameCurrencyTransfer &&
+        repository.tryConvertAmount(
+                amount: 1,
+                fromCurrency: _sourceCurrency,
+                toCurrency: target.currency) ==
+            null;
   }
+
+  double? get _loanPayment => double.tryParse(
+      (_isSameCurrencyTransfer ? amountController : loanPaymentController)
+          .text
+          .trim());
 
   void _markToAmountEdited() {
     if (!_isAutoSettingToAmount) {
@@ -525,7 +625,7 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
 
   void _updateTransferEstimate({bool force = false}) {
     if (type != TransactionType.transfer || toAccountId == null) return;
-    if (_isStructuredLoanPayment) return;
+    if (_isStructuredLoanPayment || _unallocatedSplit != null) return;
     if (!force && _toAmountEditedByUser && !_isSameCurrencyTransfer) return;
     final amount = double.tryParse(amountController.text.trim());
     if (amount == null || !amount.isFinite) return;
@@ -533,18 +633,19 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
     final targetCurrency = _account(toAccountId)?.currency ?? sourceCurrency;
     final converted = _isSameCurrencyTransfer
         ? amount
-        : repository.convertAmount(
+        : repository.tryConvertAmount(
             amount: amount,
             fromCurrency: sourceCurrency,
             toCurrency: targetCurrency,
           );
     _isAutoSettingToAmount = true;
-    toAmountController.text = converted.toStringAsFixed(2);
+    toAmountController.text = converted?.toStringAsFixed(2) ?? '';
     _isAutoSettingToAmount = false;
     if (mounted) setState(() {});
   }
 
   String _transferConversionHint() {
+    if (_unallocatedSplit != null) return '这笔转账保留两端原币金额，尚未分配到合同期次。';
     if (_isStructuredLoanPayment) {
       return '贷款月供 · 转出为本息合计，转入仅偿还本金';
     }
@@ -556,11 +657,12 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
     if (_isSameCurrencyTransfer) {
       return '同币种转账 · 转入金额自动与转出金额相同';
     }
-    final rate = repository.convertAmount(
+    final rate = repository.tryConvertAmount(
       amount: 1,
       fromCurrency: sourceCurrency,
       toCurrency: targetCurrency,
     );
+    if (rate == null) return '缺少汇率，请输入实际到账金额';
     return '参考汇率 1 $sourceCurrency = ${rate.toStringAsFixed(4)} '
         '$targetCurrency · 可按实际到账金额修改';
   }
@@ -589,19 +691,58 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
     ];
   }
 
+  String _accountBalanceLabel(Account account) {
+    final cutoff = repository.currentMonthCutoffDate();
+    final balance = repository.accountBalanceAt(account.id, cutoff);
+    final isDebtAccount = account.accountType == AccountType.creditCard ||
+        account.accountType == AccountType.loan;
+    final debt = isDebtAccount && balance < 0;
+    final monthEnd = '${debt ? '本月末欠款' : '本月末余额'} '
+        '${compassMoney(debt ? -balance : balance, currency: account.currency)}';
+    if (account.accountType != AccountType.creditCard ||
+        (account.currentBalance - balance).abs() < .005) {
+      return monthEnd;
+    }
+    final committed = account.currentBalance;
+    return '$monthEnd\n${committed < 0 ? '含未来承诺欠款' : '含未来承诺余额'} '
+        '${compassMoney(committed.abs(), currency: account.currency)}';
+  }
+
+  List<Account> _sourceChoices() => _entryAccounts()
+      .where((a) => !_isStructuredLoanPayment || a.id != toAccountId)
+      .toList();
+
+  List<Account> _targetChoices() =>
+      _entryAccounts(target: true).where((a) => a.id != accountId).toList();
+
   Future<void> _pickAccount() async {
     final value = await _pickFromSheet<Account>(
       title: '选择账户',
-      items: repository.accounts,
+      items: _sourceChoices,
       selected: _account(accountId),
       label: (item) => '${item.name} · ${item.currency}',
-      subtitle: (item) =>
-          '当前余额 ${compassMoney(item.currentBalance, currency: item.currency)}',
+      subtitle: _accountBalanceLabel,
     );
-    if (value != null) {
+    if (mounted && value != null) {
+      final oldCurrency = _sourceCurrency;
+      final loanPayment = _isStructuredLoanPayment ? _loanPayment : null;
       setState(() {
         accountId = value.id;
         if (toAccountId == value.id) toAccountId = null;
+        final loanCurrency = _account(toAccountId)?.currency;
+        if (loanPayment != null &&
+            loanCurrency != null &&
+            oldCurrency != value.currency) {
+          loanPaymentController.text = loanPayment.toStringAsFixed(2);
+          amountController.text = repository
+                  .tryConvertAmount(
+                    amount: loanPayment,
+                    fromCurrency: loanCurrency,
+                    toCurrency: value.currency,
+                  )
+                  ?.toStringAsFixed(2) ??
+              '';
+        }
         _toAmountEditedByUser = false;
       });
       _updateTransferEstimate(force: true);
@@ -611,13 +752,12 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
   Future<void> _pickToAccount() async {
     final value = await _pickFromSheet<Account>(
       title: '选择转入账户',
-      items: repository.accounts.where((item) => item.id != accountId).toList(),
+      items: _targetChoices,
       selected: _account(toAccountId),
       label: (item) => '${item.name} · ${item.currency}',
-      subtitle: (item) =>
-          '当前余额 ${compassMoney(item.currentBalance, currency: item.currency)}',
+      subtitle: _accountBalanceLabel,
     );
-    if (value != null) {
+    if (mounted && value != null) {
       setState(() {
         toAccountId = value.id;
         _toAmountEditedByUser = false;
@@ -629,24 +769,36 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
   Future<void> _pickCategory() async {
     final value = await _pickFromSheet<Category>(
       title: '选择类别',
-      items: _categoriesForType(type),
+      items: () => _categoriesForType(type),
       selected: _category(categoryId),
-      label: (item) => item.name,
+      label: _categoryLabel,
     );
     if (value != null) setState(() => categoryId = value.id);
   }
 
   Future<void> _applyTemplate() async {
-    final templates = repository.transactionTemplates;
-    if (templates.isEmpty) {
+    final lockedInstallment = widget.editExisting && _isStructuredLoanPayment;
+    final matchLoan = widget.editExisting && _unallocatedSplit != null;
+    List<TransactionTemplate> availableTemplates() =>
+        repository.transactionTemplates.where((template) {
+          if (!lockedInstallment && !matchLoan) return true;
+          return template.toAccountId == toAccountId &&
+              template.loanInstallmentNumber != null &&
+              (!lockedInstallment ||
+                  template.loanInstallmentNumber == loanInstallmentNumber);
+        }).toList();
+    if (availableTemplates().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('还没有快速模板，请先在规则中心建立。')),
+        SnackBar(
+            content: Text(lockedInstallment || matchLoan
+                ? '没有与这笔还款匹配的贷款分期模板。'
+                : '还没有快速模板，请先在规则中心建立。')),
       );
       return;
     }
     final selected = await _pickFromSheet<TransactionTemplate>(
       title: '套用模板',
-      items: templates,
+      items: availableTemplates,
       label: (item) =>
           '${item.name} · ${item.currency} ${item.amount.toStringAsFixed(2)}',
     );
@@ -654,11 +806,25 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
     setState(() {
       type = selected.type;
       status = selected.status;
-      accountId = selected.accountId;
-      toAccountId = selected.toAccountId;
-      categoryId = selected.categoryId;
+      accountId = _entryAccounts()
+          .where((a) => a.id == selected.accountId)
+          .firstOrNull
+          ?.id;
+      toAccountId = selected.type == TransactionType.transfer
+          ? _entryAccounts(target: true)
+              .where((a) => a.id == selected.toAccountId)
+              .firstOrNull
+              ?.id
+          : null;
+      loanInstallmentNumber = selected.loanInstallmentNumber;
+      _unallocatedSplit =
+          hasUnallocatedLoanSplit(selected, repository) ? selected : null;
+      _editingUnallocatedAmounts = false;
+      loanPaymentController.text =
+          selected.loanPaymentAmount?.toStringAsFixed(2) ?? '';
+      categoryId = _draftCategory(type, selected.categoryId);
       amountController.text = selected.amount.toStringAsFixed(2);
-      merchantController.text = selected.merchant ?? selected.name;
+      merchantController.text = selected.merchant ?? '';
       noteController.text = selected.description ?? '';
       _toAmountEditedByUser = selected.toAmount != null;
       toAmountController.text = selected.toAmount?.toStringAsFixed(2) ?? '';
@@ -670,7 +836,7 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
 
   Future<T?> _pickFromSheet<T>({
     required String title,
-    required List<T> items,
+    required List<T> Function() items,
     required String Function(T item) label,
     String Function(T item)? subtitle,
     T? selected,
@@ -678,7 +844,8 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
       showModalBottomSheet<T>(
         context: context,
         showDragHandle: true,
-        builder: (context) {
+        builder: (context) =>
+            watchEntryLedger(context, widget.repository, (context) {
           final palette = financePaletteOf(context);
           return SafeArea(
             child: ListView(
@@ -687,7 +854,7 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
               children: [
                 Text(title, style: Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height: 10),
-                ...items.map((item) {
+                ...items().map((item) {
                   final isSelected = selected != null && selected == item;
                   return ListTile(
                     title: Text(label(item)),
@@ -712,7 +879,7 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
               ],
             ),
           );
-        },
+        }),
       );
 
   Future<void> _pickDate() async {
@@ -813,20 +980,53 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
         message: transfer ? '请输入有效的转出金额' : '请输入有效的金额',
       );
     }
-    if (_account(accountId) == null) {
+    if (!_entryAccounts().any((a) => a.id == accountId)) {
       return (
         transferIn: false,
-        message: transfer ? '请选择转出账户' : '请选择账户',
+        message: accountId != null
+            ? '所选账户已停用或移除，请重新选择启用的账户'
+            : (transfer ? '请选择转出账户' : '请选择账户'),
       );
     }
     if (!transfer) return null;
-    if (_account(toAccountId) == null) {
-      return (transferIn: true, message: '请选择转入账户');
+    if (!_entryAccounts(target: true).any((a) => a.id == toAccountId)) {
+      return (
+        transferIn: true,
+        message: _isStructuredLoanPayment
+            ? '贷款账户已停用或移除，请启用后再记账'
+            : (toAccountId != null ? '转入账户已停用或移除，请重新选择启用的账户' : '请选择转入账户')
+      );
     }
-    if (!_isSameCurrencyTransfer || _isStructuredLoanPayment) {
+    if (_isStructuredLoanPayment) {
+      if (accountId == toAccountId ||
+          _account(toAccountId)!.accountType != AccountType.loan) {
+        return (transferIn: true, message: '贷款月供需要转入对应的贷款账户');
+      }
+      final principal = double.tryParse(toAmountController.text.trim());
+      if (!validLoanInstallmentAmounts(amount, principal,
+          loanPaymentAmount: _loanPayment,
+          sameCurrency: _isSameCurrencyTransfer)) {
+        return (
+          transferIn: true,
+          message: '还款金额须非零，本金可为零。还款与冲正各项须同号，本金不能超过贷款原币还款总额'
+        );
+      }
+    }
+    if (!_isSameCurrencyTransfer ||
+        _isStructuredLoanPayment ||
+        _unallocatedSplit != null) {
       final transferAmount = double.tryParse(toAmountController.text.trim());
       if (transferAmount == null || !transferAmount.isFinite) {
         return (transferIn: true, message: '请输入有效的转入金额');
+      }
+      if (_unallocatedSplit != null &&
+          _editingUnallocatedAmounts &&
+          (amount == 0 ||
+              transferAmount == 0 ||
+              amount.isNegative != transferAmount.isNegative ||
+              (_isSameCurrencyTransfer &&
+                  transferAmount.abs() > amount.abs()))) {
+        return (transferIn: true, message: '请核对未分期转账的两端金额及符号');
       }
     }
     return null;
@@ -856,22 +1056,41 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
 
   void _submit() {
     if (ModalRoute.of(context)?.isCurrent != true) return;
+    if (categoryId != null && _category(categoryId) == null) {
+      setState(() => categoryId = null);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('所选类别已变更，请重新选择类别或确认为未分类。')),
+      );
+      return;
+    }
     if (_validationIssue() != null) {
       setState(() => _showValidation = true);
       _revealValidationError();
       return;
     }
-    final amount = double.parse(amountController.text.trim());
+    final unchangedSplit =
+        _editingUnallocatedAmounts ? null : _unallocatedSplit;
+    final amount =
+        unchangedSplit?.amount ?? double.parse(amountController.text.trim());
     final draft = widget.draft;
     final sourceCurrency = _sourceCurrency;
-    final targetCurrency = _account(toAccountId)?.currency ?? draft?.toCurrency;
+    final targetCurrency = type == TransactionType.transfer
+        ? _account(toAccountId)?.currency
+        : null;
+    final keepLegacyLink = widget.editExisting &&
+        draft?.type == type &&
+        draft?.toAccountId == toAccountId &&
+        !_isStructuredLoanPayment;
     final isSameCurrencyTransfer = type == TransactionType.transfer &&
         sourceCurrency.trim().toUpperCase() ==
             (targetCurrency ?? sourceCurrency).trim().toUpperCase();
-    final transferInAmount = type == TransactionType.transfer &&
-            (!isSameCurrencyTransfer || _isStructuredLoanPayment)
-        ? double.parse(toAmountController.text.trim())
-        : null;
+    final transferInAmount = unchangedSplit?.toAmount ??
+        (type == TransactionType.transfer &&
+                (!isSameCurrencyTransfer ||
+                    _isStructuredLoanPayment ||
+                    _unallocatedSplit != null)
+            ? double.parse(toAmountController.text.trim())
+            : null);
     final transaction = FinanceTransaction(
       id: widget.editExisting && draft != null ? draft.id : buildId('txn'),
       type: type,
@@ -879,12 +1098,20 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
       toAccountId: toAccountId,
       categoryId: categoryId,
       amount: amount,
-      currency: sourceCurrency,
+      currency: _unallocatedSplit?.currency ?? sourceCurrency,
       // Normal same-currency transfers have one canonical amount. Loan
       // payments are the deliberate exception: amount is the full cash
       // payment while toAmount is only the principal reduction.
       toAmount: transferInAmount,
-      toCurrency: targetCurrency,
+      loanInstallmentNumber: loanInstallmentNumber,
+      legacyLoanPartNumber: keepLegacyLink ? draft?.legacyLoanPartNumber : null,
+      legacyLoanId: keepLegacyLink ? draft?.legacyLoanId : null,
+      loanPaymentAmount: _isStructuredLoanPayment && !isSameCurrencyTransfer
+          ? _loanPayment
+          : null,
+      toCurrency: _unallocatedSplit == null
+          ? targetCurrency
+          : _unallocatedSplit!.toCurrency,
       recordDate:
           widget.editExisting && draft != null ? draft.recordDate : date,
       transactionDate: date,
@@ -956,7 +1183,7 @@ class _TypeTabs extends StatelessWidget {
   const _TypeTabs({required this.selected, required this.onChanged});
 
   final TransactionType selected;
-  final ValueChanged<TransactionType> onChanged;
+  final ValueChanged<TransactionType>? onChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -987,7 +1214,7 @@ class _TypeTabs extends StatelessWidget {
           final fillColor = activeColorFor(values[index]);
           return Expanded(
             child: InkWell(
-              onTap: () => onChanged(values[index]),
+              onTap: onChanged == null ? null : () => onChanged!(values[index]),
               borderRadius: BorderRadius.circular(21),
               child: Container(
                 alignment: Alignment.center,

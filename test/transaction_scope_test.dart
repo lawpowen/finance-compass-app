@@ -4,6 +4,12 @@ import 'package:finance_app/src/core/database/app_database.dart' hide Account;
 import 'package:finance_app/src/core/models/account.dart';
 import 'package:finance_app/src/core/models/credit_card_billing.dart';
 import 'package:finance_app/src/core/models/transaction.dart';
+import 'package:finance_app/src/core/providers/database_provider.dart';
+import 'package:finance_app/src/core/settings/app_theme_style.dart';
+import 'package:finance_app/src/core/theme/finance_theme.dart';
+import 'package:finance_app/src/features/transactions/transactions_v2_screen.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -188,7 +194,7 @@ void main() {
       repository.creditCardCommittedOutstandingBalance('committed_card'),
       350,
     );
-    expect(repository.totalAssetsByGroup(ReportGroup.credit), -350);
+    expect(repository.totalAssetsByGroup(ReportGroup.credit), -50);
     expect(
       repository.displayTotalAssetsByGroup(
         ReportGroup.credit,
@@ -198,6 +204,94 @@ void main() {
     );
 
     await database.close();
+  });
+
+  testWidgets('monthly committed debt applies plans to each selected card',
+      (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final database = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(database.close);
+    var repository = await FinanceRepository.load(database);
+    for (final opening in {'card-a': -1000.0, 'card-b': 200.0}.entries) {
+      repository = await repository.addAccount(Account(
+        id: opening.key,
+        name: opening.key,
+        accountType: AccountType.creditCard,
+        reportGroup: ReportGroup.credit,
+        currency: 'MYR',
+        initialBalance: opening.value,
+        currentBalance: opening.value,
+      ));
+    }
+    final now = DateTime.now();
+    FinanceTransaction row(
+        String id, String card, TransactionType type, double amount, int offset,
+        {bool planned = false, String? target}) {
+      return FinanceTransaction(
+        id: id,
+        accountId: card,
+        toAccountId: target,
+        type: type,
+        amount: amount,
+        currency: 'MYR',
+        status: planned ? TransactionStatus.planned : TransactionStatus.actual,
+        transactionDate: DateTime(now.year, now.month + offset + 1, 0, 18),
+      );
+    }
+
+    repository = await repository.addTransactions([
+      row('prior', 'card-a', TransactionType.expense, 100, -1),
+      row('current', 'card-a', TransactionType.income, 100, 0),
+      row('overpaid-purchase', 'card-b', TransactionType.expense, 100, 0,
+          planned: true),
+      row('shift', 'card-a', TransactionType.transfer, 50, 0,
+          planned: true, target: 'card-b'),
+      row('next-a', 'card-a', TransactionType.expense, 40, 1),
+      row('next-b', 'card-b', TransactionType.expense, 250, 1),
+      row('next-credit', 'card-b', TransactionType.income, 100, 1,
+          planned: true),
+      row('later', 'card-a', TransactionType.expense, 500, 2),
+    ]);
+    await tester.pumpWidget(ProviderScope(
+      overrides: [appDatabaseProvider.overrideWithValue(database)],
+      child: MaterialApp(
+        theme: buildFinanceTheme(AppThemeStyle.monochrome),
+        home: Scaffold(body: TransactionsV2Screen(repository: repository)),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    String selectedValue() => tester
+        .widget<Text>(find.byKey(const Key('transaction-basis-selected-value')))
+        .data!;
+    Future<void> tap(Finder finder) async {
+      await tester.ensureVisible(finder);
+      await tester.tap(finder);
+      await tester.pumpAndSettle();
+    }
+
+    await tap(find.byKey(const Key('basis-card-committed')));
+    expect(selectedValue(), 'MYR 1,000');
+    await tap(find.byTooltip('上个月'));
+    expect(selectedValue(), 'MYR 1,100');
+    await tap(find.byTooltip('下个月'));
+    await tap(find.text('包含预计'));
+    expect(selectedValue(), 'MYR 1,050');
+    await tap(find.byKey(const Key('transaction-filter-account')));
+    await tap(
+        find.byKey(const Key('transaction-filter-option-account-card-b')));
+    await tap(find.byKey(const Key('transaction-filter-apply')));
+    expect(selectedValue(), 'MYR 0');
+    expect(find.text('偿还抵扣 MYR 50'), findsOneWidget);
+    await tap(find.byKey(const Key('transaction-filter-account')));
+    await tap(find.byKey(const Key('transaction-filter-clear')));
+    await tap(find.byKey(const Key('transaction-filter-apply')));
+    await tap(find.byTooltip('下个月'));
+    expect(selectedValue(), 'MYR 1,040');
+    await tap(find.text('已发生').first);
+    expect(selectedValue(), 'MYR 1,090');
   });
 
   test('statement balance includes carried debt, refunds and repayments',

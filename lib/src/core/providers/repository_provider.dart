@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/finance_repository.dart';
@@ -10,6 +12,7 @@ final ledgerSyncSessionProvider = Provider<LedgerSyncSession?>((ref) => null);
 /// Loads the repository and routes ledger writes through a single boundary.
 class FinanceRepositoryNotifier extends AsyncNotifier<FinanceRepository> {
   Object? _scope;
+  Future<void> _localMutationTail = Future<void>.value();
 
   @override
   Future<FinanceRepository> build() {
@@ -31,9 +34,25 @@ class FinanceRepositoryNotifier extends AsyncNotifier<FinanceRepository> {
         onLocalCommit: (updated) => _publish(scope, updated),
       );
     }
-    final updated = await action(repository);
-    if (updated != null) _publish(scope, updated);
-    return updated;
+    return _serializeLocal(() async {
+      final current = state.valueOrNull ?? await future;
+      final updated = await action(current);
+      if (updated != null) _publish(scope, updated);
+      return updated;
+    });
+  }
+
+  Future<T> _serializeLocal<T>(Future<T> Function() action) {
+    final completer = Completer<T>();
+    final run = _localMutationTail.catchError((_) {}).then((_) async {
+      try {
+        completer.complete(await action());
+      } catch (error, stackTrace) {
+        completer.completeError(error, stackTrace);
+      }
+    });
+    _localMutationTail = run;
+    return completer.future;
   }
 
   Future<void> pullRemote({
@@ -59,6 +78,14 @@ class FinanceRepositoryNotifier extends AsyncNotifier<FinanceRepository> {
     );
   }
 
+  Future<void> keepOversizedDraft() async {
+    final scope = _captureScope();
+    final sync = ref.read(ledgerSyncSessionProvider);
+    if (sync == null) return;
+    await sync.keepRejectedDraft(await future,
+        onLocalCommit: (updated) => _publish(scope, updated));
+  }
+
   Object _captureScope() {
     final current = _scope;
     if (current != null) return current;
@@ -80,4 +107,5 @@ class FinanceRepositoryNotifier extends AsyncNotifier<FinanceRepository> {
 final financeRepositoryProvider =
     AsyncNotifierProvider<FinanceRepositoryNotifier, FinanceRepository>(
   FinanceRepositoryNotifier.new,
+  dependencies: [appDatabaseProvider, ledgerSyncSessionProvider],
 );

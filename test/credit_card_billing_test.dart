@@ -144,6 +144,107 @@ void main() {
     expect(summary.unbilledBalance, closeTo(1663.68, 0.001));
   });
 
+  group('outstanding statements', () {
+    const fifoCard = Account(
+      id: 'fifo',
+      name: 'FIFO card',
+      accountType: AccountType.creditCard,
+      reportGroup: ReportGroup.credit,
+      currency: 'MYR',
+      currentBalance: 0,
+      creditLimit: 500,
+      statementDay: 25,
+      paymentDueDay: 10,
+    );
+    FinanceTransaction charge(String id, DateTime day, double amount) =>
+        FinanceTransaction(
+            id: id,
+            accountId: fifoCard.id,
+            type: TransactionType.expense,
+            transactionDate: day,
+            currency: 'MYR',
+            amount: amount);
+    FinanceTransaction pay(String id, DateTime day, double amount) =>
+        FinanceTransaction(
+            id: id,
+            accountId: 'bank',
+            toAccountId: fifoCard.id,
+            type: TransactionType.transfer,
+            transactionDate: day,
+            currency: 'MYR',
+            toCurrency: 'MYR',
+            amount: amount);
+
+    test(
+        'later closes preserve the original overdue statement and FIFO repayments',
+        () {
+      final entries = [
+        charge('may', DateTime(2026, 5, 3), 100),
+        charge('june', DateTime(2026, 6, 1), 80),
+        pay('partial', DateTime(2026, 6, 9), 40),
+      ];
+      CreditCardBillingSummary at(DateTime day, double balance) =>
+          calculateCreditCardBilling(
+              account: fifoCard,
+              transactions: entries,
+              now: day,
+              balanceAtCutoff: balance);
+      final june = at(DateTime(2026, 6, 25), -140);
+      expect(june.openStatements.map((s) => s.amount), [60, 80]);
+      expect(june.billedBalance, 60);
+      expect(june.dueDate, DateTime(2026, 6, 10));
+      expect(
+          resolveCreditCardDisplayState(
+              summary: june,
+              hasBilledActivity: true,
+              now: DateTime(2026, 6, 25)),
+          CreditCardDisplayState.overdue);
+      entries.add(pay('clear-old-and-part-new', DateTime(2026, 6, 26), 70));
+      expect(at(DateTime(2026, 6, 26), -70).dueDate, DateTime(2026, 7, 10));
+      entries.add(pay('reversal', DateTime(2026, 6, 27), -35));
+      final reversed = at(DateTime(2026, 6, 27), -105);
+      expect(reversed.openStatements.map((s) => s.amount), [25, 80]);
+      expect(reversed.dueDate, DateTime(2026, 6, 10));
+    });
+
+    test('overpayment before a future confirmed charge covers that charge once',
+        () {
+      final entries = [
+        charge('may', DateTime(2026, 5, 3), 100),
+        pay('overpay', DateTime(2026, 5, 30), 110),
+        charge('future', DateTime(2026, 6, 8), 30),
+      ];
+      final at = calculateCreditCardBilling(
+          account: fifoCard,
+          transactions: entries,
+          now: DateTime(2026, 6, 2),
+          balanceAtCutoff: 10);
+      expect(at.openStatements, isEmpty);
+      expect(at.outstandingBalance, 0);
+      expect(at.unbilledBalance, 20);
+      final closed = calculateCreditCardBilling(
+          account: fifoCard,
+          transactions: entries,
+          now: DateTime(2026, 6, 25),
+          balanceAtCutoff: -20);
+      expect(closed.openStatements.single.amount, 20);
+    });
+
+    test(
+        'an undated opening balance stays on the origin cycle during projection',
+        () {
+      final at = calculateCreditCardBilling(
+          account: fifoCard,
+          transactions: const [],
+          now: DateTime(2026, 7, 27),
+          balanceAtCutoff: -50,
+          openingAsOf: DateTime(2026, 6, 2));
+      expect(
+          at.openStatements.single.period.statementDate, DateTime(2026, 5, 25));
+      expect(at.openStatements.single.amount, 50);
+    });
+  });
+
   test('uses the legacy estimate until the card profile is complete', () {
     const legacy = Account(
       id: 'legacy',
@@ -646,8 +747,11 @@ void main() {
       expect(original(const []), 0);
     });
 
-    test('fallback reads legacy same-currency zero toAmount as the amount', () {
-      expect(original([repayment(120, toAmount: 0)]), 120);
+    test(
+        'fallback preserves explicit zero and uses the canonical ordinary amount',
+        () {
+      expect(original([repayment(120, toAmount: 0)]), 0);
+      expect(original([repayment(120)]), 120);
     });
 
     test('fallback clamps a reversed repayment at zero', () {
@@ -671,6 +775,41 @@ void main() {
       );
       expect(original([repayment(150)], override: 90), 90);
       expect(original(const [], override: -5), 0);
+    });
+
+    test('negative repayment reversal after statement does not throw in clamp',
+        () {
+      const configuredCard = Account(
+        id: 'card',
+        name: 'Configured Card',
+        accountType: AccountType.creditCard,
+        reportGroup: ReportGroup.credit,
+        currency: 'MYR',
+        currentBalance: -150,
+        creditLimit: 5000,
+        statementDay: 25,
+        paymentDueDay: 14,
+      );
+      final summary = calculateCreditCardBilling(
+        account: configuredCard,
+        transactions: [
+          record('spend', TransactionType.expense, 100, DateTime(2026, 6, 10)),
+          FinanceTransaction(
+            id: 'reversal',
+            type: TransactionType.transfer,
+            accountId: 'cash',
+            toAccountId: 'card',
+            amount: -50,
+            currency: 'MYR',
+            transactionDate: DateTime(2026, 6, 28),
+          ),
+        ],
+        now: DateTime(2026, 7, 1),
+      );
+
+      expect(summary.outstandingBalance, 150);
+      expect(summary.billedBalance, 150);
+      expect(summary.unbilledBalance, 0);
     });
   });
 }

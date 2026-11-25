@@ -7,13 +7,181 @@ import 'package:finance_app/src/core/database/app_database.dart'
     show AppDatabase;
 import 'package:finance_app/src/core/models/account.dart';
 import 'package:finance_app/src/core/models/transaction.dart';
+import 'package:finance_app/src/core/providers/database_provider.dart';
+import 'package:finance_app/src/core/providers/repository_provider.dart';
 import 'package:finance_app/src/core/sync/ledger_outbox.dart';
 import 'package:finance_app/src/core/sync/ledger_sync.dart';
+import 'package:finance_app/src/features/home/home_screen.dart';
+import 'package:finance_app/src/features/sync/finance_sync_gate.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
+  test('the UTF-8 limit includes envelope, escaped text and revision digits',
+      () async {
+    var requests = 0;
+    final client = MockClient((request) async {
+      expect(request.bodyBytes.length, 512);
+      requests++;
+      return http.Response('{"revision":10}', 200);
+    });
+    addTearDown(client.close);
+    final uri = Uri.https('finance.local');
+    expect(LedgerSyncApi(client, uri).maxRequestBytes, 16 * 1024 * 1024);
+    final api = LedgerSyncApi.withByteLimit(client, uri, 512);
+    const id = 'a-unique-operation-id';
+    final snapshot = {'note': '账本🌏"\n'};
+    final length = api.encodeWrite(
+        (baseRevision: 9, operationId: id, snapshot: snapshot)).length;
+    snapshot['note'] = snapshot['note']! + 'x' * (512 - length);
+    Future<int> send(int revision) => api.write(
+        accountId: '1',
+        baseRevision: revision,
+        operationId: id,
+        snapshot: snapshot);
+    expect(await send(9), 10);
+    await expectLater(send(10),
+        throwsA(isA<SyncException>().having((e) => e.status, 'status', 413)));
+    expect(requests, 1);
+  });
+
+  test(
+      'oversize preflight rolls back, explicit draft survives partial cleanup and reload',
+      () async {
+    final server = _LedgerServer();
+    final store = MemoryLedgerOutboxStore();
+    final first = server.newSession(outboxStore: store, limit: 4000);
+    final local = await _emptyRepository();
+    final large = _account('large', note: '界' * 4000);
+    await expectLater(first.mutate(local, (repo) => repo.addAccount(large)),
+        throwsA(isA<SyncException>().having((e) => e.status, 'status', 413)));
+    expect((await local.refresh()).accounts, isEmpty);
+    expect(await store.read('1', 'first'), isNull);
+    expect(first.hasRejectedDraft, isTrue);
+    expect(first.needsRecovery, isFalse);
+    var kept = (await first.keepRejectedDraft(local))!;
+    expect(kept.accounts.single.note, large.note);
+    expect(first.repairingSize, isTrue);
+    kept = (await first.mutate(
+        kept,
+        (repo) =>
+            repo.updateExistingAccount(_account('large', note: '界' * 2500))))!;
+    final persisted = (await store.read('1', 'first'))!;
+    expect((persisted.snapshot['accounts'] as List).single['note'],
+        kept.accounts.single.note);
+    await first.logout();
+    final reopened =
+        server.newSession(outboxStore: store, restored: persisted, limit: 4000);
+    final memory = await (await _emptyRepository())
+        .restoreSyncedSnapshot(persisted.snapshot);
+    reopened.kickBackgroundSync();
+    expect(reopened.needsRecovery, isFalse);
+    expect(reopened.repairingSize, isTrue);
+    expect(server.operationIds, isEmpty);
+    await reopened.mutate(memory,
+        (repo) => repo.updateExistingAccount(_account('large', note: '精简版')));
+    await _until(() => !reopened.hasPending);
+    expect(reopened.repairingSize, isFalse);
+    expect(server.operationIds, hasLength(1));
+    expect((server.snapshot!['accounts'] as List).single['note'], '精简版');
+  });
+
+  test(
+      'server 413 remains editable after reopening and a stale revision is never overwritten',
+      () async {
+    final server = _LedgerServer()..serverByteLimit = 3500;
+    final store = MemoryLedgerOutboxStore();
+    final first = server.newSession(outboxStore: store);
+    final local = await _emptyRepository();
+    await first.mutate(
+        local, (repo) => repo.addAccount(_account('draft', note: 'x' * 5000)));
+    await _until(() => first.repairingSize);
+    expect(first.needsRecovery, isFalse);
+    final pending = (await store.read('1', 'first'))!;
+    expect(pending.rejectedBytes, greaterThan(3500));
+    await first.logout();
+    // The remote ledger advanced independently while this local draft was parked.
+    final other = server.newSession();
+    await other.mutate(await _emptyRepository(),
+        (repo) => repo.addAccount(_account('remote')));
+    await _until(() => !other.hasPending);
+    final reopened = server.newSession(
+        outboxStore: store,
+        restored: pending,
+        initialRevision: server.revision);
+    final memory = await (await _emptyRepository())
+        .restoreSyncedSnapshot(pending.snapshot);
+    expect(reopened.repairingSize, isTrue);
+    final before = server.operationIds.length;
+    await reopened.retry(memory);
+    await Future<void>.delayed(Duration.zero);
+    expect(server.operationIds.length, before);
+    await reopened.mutate(memory,
+        (repo) => repo.updateExistingAccount(_account('draft', note: 'small')));
+    await _until(() => reopened.conflicted);
+    expect(server.snapshot!['accounts'][0]['id'], 'remote');
+    expect(utf8.decode(reopened.pendingBackup()!), contains('small'));
+  });
+
+  test(
+      'an unacknowledged oversized head yields to its smaller tail after a definitive 413',
+      () async {
+    final release = Completer<void>();
+    final server = _LedgerServer()
+      ..holdNextWrite = release
+      ..serverByteLimit = 3500;
+    final session = server.newSession();
+    final local = await _emptyRepository();
+    final head = (await session.mutate(local,
+        (repo) => repo.addAccount(_account('draft', note: 'x' * 5000))))!;
+    await _until(() => server.operationIds.isNotEmpty);
+    await session.mutate(head,
+        (repo) => repo.updateExistingAccount(_account('draft', note: 'small')));
+    release.complete();
+    await _until(() => !session.hasPending);
+    expect(server.operationIds, hasLength(2));
+    expect(server.revision, 1);
+    expect(server.snapshot!['accounts'][0]['note'], 'small');
+  });
+
+  test(
+      'a restored oversized head already committed on server can promote its tail',
+      () async {
+    final server = _LedgerServer()..revision = 1;
+    final local = await _emptyRepository();
+    final head = await local.addAccount(_account('kept', note: 'y' * 5000));
+    server.snapshot = await head.buildJsonSnapshotPayload();
+    final tail =
+        await head.updateExistingAccount(_account('kept', note: 'small'));
+    final pending = LedgerOutboxState(
+      head: (
+        baseRevision: 0,
+        operationId: 'already-saved-head',
+        snapshot: server.snapshot!
+      ),
+      latest: (
+        baseRevision: 0,
+        operationId: 'latest-not-yet-saved',
+        snapshot: await tail.buildJsonSnapshotPayload()
+      ),
+    );
+    final store = MemoryLedgerOutboxStore();
+    await store.replace('1', 'first', null, pending);
+    final session = server.newSession(
+        outboxStore: store,
+        restored: (await store.read('1', 'first'))!,
+        initialRevision: 1,
+        limit: 4000);
+    session.kickBackgroundSync();
+    await _until(() => !session.hasPending);
+    expect(server.operationIds, ['latest-not-yet-saved']);
+    expect(server.revision, 2);
+    expect(server.snapshot!['accounts'][0]['note'], 'small');
+  });
+
   test('an older JSON export with deleted recurring rule history syncs',
       () async {
     var source = await _emptyRepository();
@@ -233,6 +401,87 @@ void main() {
     expect((await session.refresh(local)).accounts.single.id, 'remote');
   });
 
+  for (final hadPending in [true, false]) {
+    testWidgets(
+        'reloads the other tab’s edited local draft (had pending: $hadPending)',
+        (tester) async {
+      final store = MemoryLedgerOutboxStore();
+      final server = _LedgerServer();
+      final peerLedger = await (await _emptyRepository())
+          .addAccount(_account('shared', note: 'x' * 6000));
+      final original = LedgerOutboxState(head: (
+        baseRevision: 0,
+        operationId: 'original-local-head',
+        snapshot: await peerLedger.buildJsonSnapshotPayload(),
+      ));
+      await store.replace('1', 'first', null, original);
+      final stale = server.newSession(
+          outboxStore: store,
+          restored: hadPending ? original : null,
+          limit: 4000);
+      var staleLedger = await _emptyRepository();
+      if (hadPending)
+        staleLedger =
+            await staleLedger.restoreSyncedSnapshot(original.snapshot);
+      final peer = server.newSession(
+          outboxStore: store, restored: original, limit: 4000);
+      final latest = await peer.mutate(
+          peerLedger,
+          (repo) =>
+              repo.updateExistingAccount(_account('shared', note: 'y' * 5000)));
+      expect(peer.repairingSize, isTrue);
+      final durableId = (await store.read('1', 'first'))!.head.operationId;
+      await expectLater(
+          stale.mutate(
+              staleLedger,
+              (repo) => hadPending
+                  ? repo.updateExistingAccount(
+                      _account('shared', note: 'lost race'))
+                  : repo.addAccount(_account('lost-race'))),
+          throwsA(isA<SyncException>()));
+      expect(stale.requiresRefresh, isTrue);
+      expect(stale.hasPending, hadPending);
+      final container = ProviderContainer(overrides: [
+        appDatabaseProvider.overrideWithValue(staleLedger.database),
+        ledgerSyncSessionProvider.overrideWithValue(stale),
+      ]);
+      addTearDown(container.dispose);
+      final nav = GlobalKey<NavigatorState>();
+      final workspace = FinanceWorkspaceNavigation();
+      await tester.pumpWidget(UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp(
+              navigatorKey: nav,
+              home: const Scaffold(body: Text('工作账本')),
+              builder: (_, child) => LedgerSyncFrame(
+                  session: stale,
+                  navigator: nav,
+                  workspaceNavigation: workspace,
+                  logout: () async {},
+                  child: child!))));
+      await tester.pumpAndSettle();
+      expect(find.text('重试保存'), findsNothing);
+      expect(find.text('放弃并刷新'), findsNothing);
+      await tester.tap(find.text('重新载入本机草稿'));
+      await tester.pumpAndSettle();
+      expect(find.text('工作账本'), findsOneWidget);
+      expect(stale.needsRecovery, isFalse);
+      expect(stale.repairingSize, isTrue);
+      expect(
+          (await container.read(financeRepositoryProvider.future))
+              .accounts
+              .single
+              .note,
+          latest!.accounts.single.note);
+      expect((await store.read('1', 'first'))!.head.operationId, durableId);
+      expect(server.reads, 0,
+          reason: 'An existing device draft is available offline.');
+      expect(server.operationIds, isEmpty);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  }
+
   test('another tab cannot overwrite the same durable outbox', () async {
     final hold = Completer<void>();
     final server = _LedgerServer()..holdNextWrite = hold;
@@ -284,22 +533,19 @@ void main() {
     );
     expect(server.revision, 0);
 
-    await expectLater(
-      session.renewAuthentication(
-        'test-password',
-        beforeResume: () async => throw StateError('Could not detach old push'),
-      ),
-      throwsStateError,
+    await session.renewAuthentication(
+      'test-password',
+      beforeResume: () async => throw StateError('Could not detach old push'),
     );
-    expect(session.authenticationExpired, isTrue);
-    expect(session.accountMismatch, isTrue);
-    expect(session.hasPending, isTrue);
-
-    await session.renewAuthentication('test-password');
     expect(session.authenticationExpired, isFalse);
     expect(session.accountMismatch, isFalse);
     await _until(() => !session.hasPending);
     expect((await session.refresh(local)).accounts.single.id, 'draft');
+    await session.logout(
+        before: () async => throw StateError('Push is unavailable'));
+    await expectLater(
+        session.mutate(local, (repo) => repo.addAccount(_account('closed'))),
+        throwsA(isA<SyncException>()));
   });
 
   test('registration submits credentials and reports a duplicate username',
@@ -343,8 +589,9 @@ Future<FinanceRepository> _emptyRepository() async {
   return FinanceRepository.load(database);
 }
 
-Account _account(String id) => Account(
+Account _account(String id, {String? note}) => Account(
       id: id,
+      note: note,
       name: id,
       accountType: AccountType.cash,
       reportGroup: ReportGroup.cash,
@@ -358,6 +605,7 @@ class _LedgerServer {
   int revision = 0;
   Map<String, dynamic>? snapshot;
   bool dropNextAcknowledgement = false;
+  int? serverByteLimit;
   Completer<void>? holdNextWrite;
   Completer<void>? holdNextRead;
   int reads = 0;
@@ -368,6 +616,7 @@ class _LedgerServer {
     LedgerOutboxStore? outboxStore,
     LedgerOutboxState? restored,
     int initialRevision = 0,
+    int? limit,
   }) {
     final client = MockClient((request) async {
       expect(request.headers['X-Finance-Account'], '1');
@@ -407,6 +656,10 @@ class _LedgerServer {
       final hold = holdNextWrite;
       holdNextWrite = null;
       await hold?.future;
+      if (serverByteLimit != null &&
+          request.bodyBytes.length > serverByteLimit!) {
+        return http.Response('{"error":"payload_too_large"}', 413);
+      }
       if (_savedOperations[operationId] case final savedRevision?) {
         return http.Response(jsonEncode({'revision': savedRevision}), 200);
       }
@@ -420,12 +673,15 @@ class _LedgerServer {
       return http.Response(jsonEncode({'revision': revision}), 200);
     });
     final session = LedgerSyncSession(
-      LedgerSyncApi(client, Uri.https('finance.local')),
+      limit == null
+          ? LedgerSyncApi(client, Uri.https('finance.local'))
+          : LedgerSyncApi.withByteLimit(
+              client, Uri.https('finance.local'), limit),
       (
         accountId: '1',
         username: 'first',
         revision: initialRevision,
-        snapshot: null
+        snapshot: snapshot
       ),
       outboxStore: outboxStore,
       restored: restored,

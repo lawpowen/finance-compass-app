@@ -9,6 +9,7 @@ class FinanceTextField extends StatelessWidget {
     required this.label,
     this.keyboardType,
     this.isAmount = false,
+    this.readOnly = false,
     this.validator,
     this.maxLines = 1,
   });
@@ -17,6 +18,7 @@ class FinanceTextField extends StatelessWidget {
   final String label;
   final TextInputType? keyboardType;
   final bool isAmount;
+  final bool readOnly;
   final String? Function(String?)? validator;
   final int maxLines;
 
@@ -25,6 +27,7 @@ class FinanceTextField extends StatelessWidget {
     if (isAmount) {
       return FinanceAmountField(
         controller: controller,
+        readOnly: readOnly,
         validator: validator,
         decoration: InputDecoration(
           labelText: label,
@@ -34,6 +37,7 @@ class FinanceTextField extends StatelessWidget {
     }
     return TextFormField(
       controller: controller,
+      readOnly: readOnly,
       keyboardType: keyboardType,
       validator: validator,
       maxLines: maxLines,

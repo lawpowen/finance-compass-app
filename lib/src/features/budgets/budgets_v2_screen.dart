@@ -1,6 +1,8 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+
+import '../shared/category_icons.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/data/finance_repository.dart';
@@ -18,6 +20,7 @@ import '../shared/finance_amount_field.dart';
 import '../shared/finance_donut.dart';
 import '../transactions/transaction_composer_page.dart';
 import '../transactions/transaction_form_dialog.dart';
+import 'budget_rule_ui.dart';
 
 class BudgetsV2Screen extends ConsumerStatefulWidget {
   const BudgetsV2Screen({super.key, required this.repository});
@@ -37,6 +40,7 @@ class _BudgetsV2ScreenState extends ConsumerState<BudgetsV2Screen> {
         ref.watch(financeRepositoryProvider).valueOrNull ?? widget.repository;
     final month = monthKeyFromDate(selectedMonth);
     final rows = _budgetRows(repository, month);
+    final monthValued = repository.budgetMonthIsValued(month);
     final total = rows.fold<double>(0, (sum, row) => sum + row.budget);
     final allocationTotal = rows.where((row) => row.hasAllocation).fold(
           0.0,
@@ -83,35 +87,41 @@ class _BudgetsV2ScreenState extends ConsumerState<BudgetsV2Screen> {
           child: const Text('本月'),
         ),
     ];
-    void openEditor() => _openEditor(context, repository, null);
+    void openEditor() => _openEditor(context, repository);
 
     return LayoutBuilder(
       builder: (context, constraints) {
         final desktop = constraints.maxWidth >= compassDesktopMinWidth;
         final allocation = FinanceDonutPanel(
           title: '预算分配',
-          totalLabel: '已分配',
+          totalLabel: rows.every(
+                  (row) => repository.hasExchangeRate(row.source.currency))
+              ? '已分配'
+              : '已估值分配',
           totalValue: compassMoney(
             total,
             currency: repository.baseCurrency,
-            decimals: 0,
+            decimals: _budgetDecimals(total),
           ),
           slices: _budgetAllocationSlices(context, rows),
           formatLegendAmount: desktop && mono
-              ? (value) => compassMoney(value, decimals: 0, showCurrency: false)
+              ? (value) => compassMoney(value,
+                  decimals: _budgetDecimals(value), showCurrency: false)
               : null,
           footer: desktop
               ? _BudgetUsageSummary(
-                  actual: used,
-                  planned: planned,
-                  remaining: remaining,
+                  actual: rows.every((r) => r.actualValued) ? used : null,
+                  planned: rows.every((r) => r.plannedValued) ? planned : null,
+                  remaining: monthValued ? remaining : null,
                   totalAvailable: total + rollover,
                   baseCurrency: repository.baseCurrency,
                   daysRemaining: daysRemaining,
                 )
               : Text(
-                  '${remaining < 0 ? '超出' : '剩余'} '
-                  '${compassMoney(remaining.abs(), currency: repository.baseCurrency, decimals: 0)}',
+                  !monthValued
+                      ? '剩余 未估值'
+                      : '${remaining < 0 ? '超出' : '剩余'} '
+                          '${compassMoney(remaining.abs(), currency: repository.baseCurrency, decimals: _budgetDecimals(remaining))}',
                   key: const Key('budget-mobile-total-remaining'),
                   style: const TextStyle(fontFeatures: compassTabularFigures),
                 ),
@@ -185,7 +195,7 @@ class _BudgetsV2ScreenState extends ConsumerState<BudgetsV2Screen> {
                     MaterialPageRoute(
                       builder: (_) => BudgetCategoryDetailPage(
                         repository: repository,
-                        row: row,
+                        categoryId: row.source.categoryId,
                         monthKey: month,
                       ),
                     ),
@@ -287,23 +297,9 @@ class _BudgetsV2ScreenState extends ConsumerState<BudgetsV2Screen> {
   Future<void> _openEditor(
     BuildContext context,
     FinanceRepository repository,
-    _BudgetPresentation? row,
   ) async {
-    final result = await Navigator.push<Budget>(
-      context,
-      MaterialPageRoute(
-        fullscreenDialog: true,
-        builder: (_) => BudgetEditorPage(
-          repository: repository,
-          initialBudget: row?.source,
-          presentation: row,
-          monthKey: monthKeyFromDate(selectedMonth),
-        ),
-      ),
-    );
-    if (result != null) {
-      await ref.read(budgetMutationsProvider.notifier).addBudget(result);
-    }
+    await _showBudgetEditor(
+        context, repository, monthKeyFromDate(selectedMonth));
   }
 }
 
@@ -311,12 +307,12 @@ class BudgetCategoryDetailPage extends ConsumerStatefulWidget {
   const BudgetCategoryDetailPage({
     super.key,
     required this.repository,
-    required this.row,
+    required this.categoryId,
     required this.monthKey,
   });
 
   final FinanceRepository repository;
-  final _BudgetPresentation row;
+  final String categoryId;
   final String monthKey;
 
   @override
@@ -334,15 +330,16 @@ class _BudgetCategoryDetailPageState
         ref.watch(financeRepositoryProvider).valueOrNull ?? widget.repository;
     final palette = financePaletteOf(context);
     final liveRows = _budgetRows(liveRepository, widget.monthKey);
-    final row = liveRows.cast<_BudgetPresentation?>().firstWhere(
-          (item) =>
-              item != null &&
-              item.source?.categoryId == widget.row.source?.categoryId,
-          orElse: () => widget.row,
-        )!;
+    final row = liveRows
+        .where((item) => item.source.categoryId == widget.categoryId)
+        .firstOrNull;
+    if (row == null) {
+      return Scaffold(
+          appBar: AppBar(), body: const Center(child: Text('当前月份没有此类别的预算')));
+    }
     final effective = row.budget + row.rollover;
     final remaining = effective - row.actual - row.planned;
-    final threshold = row.source?.alertThreshold ?? .8;
+    final threshold = row.source.alertThreshold;
     final actualRatio =
         effective > 0 ? row.actual / effective : (row.actual > 0 ? 1.0 : 0.0);
     final plannedRatio = effective > 0 ? row.planned / effective : 0.0;
@@ -351,17 +348,14 @@ class _BudgetCategoryDetailPageState
         : (actualRatio + plannedRatio) >= threshold
             ? palette.warning
             : palette.income;
-    final transactions = liveRepository.transactions.where((item) {
-      if (item.type != TransactionType.expense ||
-          item.categoryId != row.source?.categoryId ||
-          monthKeyFromDate(item.transactionDate) != widget.monthKey) {
-        return false;
-      }
+    final transactions = liveRepository
+        .budgetUsageFor(widget.categoryId, widget.monthKey)
+        .transactions
+        .where((item) {
       if (selected == 1) return item.status != TransactionStatus.planned;
       if (selected == 2) return item.status == TransactionStatus.planned;
       return true;
-    }).toList()
-      ..sort((a, b) => b.transactionDate.compareTo(a.transactionDate));
+    });
     final sidePadding =
         math.max(20.0, (MediaQuery.sizeOf(context).width - 760) / 2);
 
@@ -396,125 +390,130 @@ class _BudgetCategoryDetailPageState
                 ],
               ),
               const SizedBox(height: 16),
-              CompassCard(
-                child: Column(
-                  children: [
-                    Text(
-                      _monthLabel(widget.monthKey),
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    const SizedBox(height: 14),
-                    Text(
-                      remaining < 0 ? '本月超支' : '本月剩余',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      compassMoney(
-                        remaining.abs(),
+              if (!row.isValued)
+                Text(
+                    '基础预算 ${compassMoney(row.source.amount, currency: row.source.currency)} · 未估值')
+              else ...[
+                CompassCard(
+                  child: Column(
+                    children: [
+                      Text(
+                        _monthLabel(widget.monthKey),
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 14),
+                      Text(
+                        remaining < 0 ? '本月超支' : '本月剩余',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        compassMoney(
+                          remaining.abs(),
+                          currency: liveRepository.baseCurrency,
+                          decimals: _budgetDecimals(remaining),
+                        ),
+                        style: TextStyle(
+                          color: statusColor,
+                          fontSize: 36,
+                          fontWeight: FontWeight.w700,
+                          fontFeatures: compassTabularFigures,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      CompassHelpHeading(
+                        title: Text(
+                          '有效预算  ${compassMoney(effective, currency: liveRepository.baseCurrency, decimals: _budgetDecimals(effective))}',
+                          style:
+                              Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    fontFeatures: compassTabularFigures,
+                                  ),
+                        ),
+                        label: '预算使用进度',
+                        message:
+                            '有效预算等于基础预算加上结转金额。父预算包含未单设预算的子类别；单设预算的子类别独立计算。实色和斜纹分别表示实际与预计支出。',
+                      ),
+                      const SizedBox(height: 4),
+                      CompassDualProgressBar(
+                        actualRatio: actualRatio,
+                        plannedRatio: plannedRatio,
+                        alertThreshold: threshold,
+                        height: 10,
+                        semanticsLabel: '${row.name} 预算使用进度',
+                      ),
+                      const SizedBox(height: 10),
+                      Wrap(
+                        alignment: WrapAlignment.center,
+                        spacing: 12,
+                        runSpacing: 4,
+                        children: [
+                          Text(
+                            '实际 ${compassMoney(row.actual, currency: liveRepository.baseCurrency, decimals: _budgetDecimals(row.actual))}',
+                            style:
+                                Theme.of(context).textTheme.bodySmall?.copyWith(
+                                      fontFeatures: compassTabularFigures,
+                                    ),
+                          ),
+                          Text(
+                            '预计 ${compassMoney(row.planned, currency: liveRepository.baseCurrency, decimals: _budgetDecimals(row.planned))}',
+                            style:
+                                Theme.of(context).textTheme.bodySmall?.copyWith(
+                                      fontFeatures: compassTabularFigures,
+                                    ),
+                          ),
+                          Text(
+                            '警戒线 ${(threshold * 100).round()}%',
+                            style:
+                                Theme.of(context).textTheme.bodySmall?.copyWith(
+                                      fontFeatures: compassTabularFigures,
+                                    ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                CompassCard(
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          Text('预算构成',
+                              style: Theme.of(context).textTheme.titleMedium),
+                          const Spacer(),
+                          CompassStatusBadge(
+                            label:
+                                row.source.rolloverEnabled ? '结转已开启' : '结转未开启',
+                            color: row.source.rolloverEnabled
+                                ? palette.income
+                                : palette.textMuted,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      _AmountLine(
+                        label: '基础预算',
+                        amount: row.budget,
                         currency: liveRepository.baseCurrency,
-                        decimals: 0,
                       ),
-                      style: TextStyle(
-                        color: statusColor,
-                        fontSize: 36,
-                        fontWeight: FontWeight.w700,
-                        fontFeatures: compassTabularFigures,
+                      _AmountLine(
+                        label: '上月结转',
+                        amount: row.rollover,
+                        currency: liveRepository.baseCurrency,
+                        positive: row.rollover >= 0,
                       ),
-                    ),
-                    const SizedBox(height: 4),
-                    CompassHelpHeading(
-                      title: Text(
-                        '有效预算  ${compassMoney(effective, currency: liveRepository.baseCurrency, decimals: 0)}',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              fontFeatures: compassTabularFigures,
-                            ),
+                      compassHairline,
+                      _AmountLine(
+                        label: '有效预算',
+                        amount: effective,
+                        currency: liveRepository.baseCurrency,
+                        emphasized: true,
                       ),
-                      label: '预算使用进度',
-                      message:
-                          '有效预算等于基础预算加上结转金额。进度条以实色显示实际支出，以斜纹显示预计支出。标线表示提醒阈值。',
-                    ),
-                    const SizedBox(height: 4),
-                    CompassDualProgressBar(
-                      actualRatio: actualRatio,
-                      plannedRatio: plannedRatio,
-                      alertThreshold: threshold,
-                      height: 10,
-                      semanticsLabel: '${row.name} 预算使用进度',
-                    ),
-                    const SizedBox(height: 10),
-                    Wrap(
-                      alignment: WrapAlignment.center,
-                      spacing: 12,
-                      runSpacing: 4,
-                      children: [
-                        Text(
-                          '实际 ${compassMoney(row.actual, currency: liveRepository.baseCurrency, decimals: 0)}',
-                          style:
-                              Theme.of(context).textTheme.bodySmall?.copyWith(
-                                    fontFeatures: compassTabularFigures,
-                                  ),
-                        ),
-                        Text(
-                          '预计 ${compassMoney(row.planned, currency: liveRepository.baseCurrency, decimals: 0)}',
-                          style:
-                              Theme.of(context).textTheme.bodySmall?.copyWith(
-                                    fontFeatures: compassTabularFigures,
-                                  ),
-                        ),
-                        Text(
-                          '警戒线 ${(threshold * 100).round()}%',
-                          style:
-                              Theme.of(context).textTheme.bodySmall?.copyWith(
-                                    fontFeatures: compassTabularFigures,
-                                  ),
-                        ),
-                      ],
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-              const SizedBox(height: 16),
-              CompassCard(
-                child: Column(
-                  children: [
-                    Row(
-                      children: [
-                        Text('预算构成',
-                            style: Theme.of(context).textTheme.titleMedium),
-                        const Spacer(),
-                        CompassStatusBadge(
-                          label: row.source?.rolloverEnabled == true
-                              ? '结转已开启'
-                              : '结转未开启',
-                          color: row.source?.rolloverEnabled == true
-                              ? palette.income
-                              : palette.textMuted,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    _AmountLine(
-                      label: '基础预算',
-                      amount: row.budget,
-                      currency: liveRepository.baseCurrency,
-                    ),
-                    _AmountLine(
-                      label: '上月结转',
-                      amount: row.rollover,
-                      currency: liveRepository.baseCurrency,
-                      positive: row.rollover >= 0,
-                    ),
-                    compassHairline,
-                    _AmountLine(
-                      label: '有效预算',
-                      amount: effective,
-                      currency: liveRepository.baseCurrency,
-                      emphasized: true,
-                    ),
-                  ],
-                ),
-              ),
+              ],
               const SizedBox(height: 22),
               Text('占用预算的交易', style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 10),
@@ -540,7 +539,7 @@ class _BudgetCategoryDetailPageState
                     date:
                         '${item.transactionDate.month}月${item.transactionDate.day}日',
                     title: item.merchant ?? item.description ?? '支出',
-                    account: _accountName(liveRepository, item.accountId),
+                    account: liveRepository.accountName(item.accountId),
                     amount: item.amount,
                     currency: item.currency,
                     isPlanned: item.status == TransactionStatus.planned,
@@ -555,7 +554,7 @@ class _BudgetCategoryDetailPageState
                 icon: Icons.delete_outline_rounded,
                 outlined: true,
                 color: palette.expense,
-                onPressed: () => _delete(row),
+                onPressed: () => _delete(liveRepository, row.source),
               ),
             ],
           ),
@@ -593,31 +592,18 @@ class _BudgetCategoryDetailPageState
     FinanceRepository repository,
     _BudgetPresentation row,
   ) async {
-    final result = await Navigator.push<Budget>(
-      context,
-      MaterialPageRoute(
-        fullscreenDialog: true,
-        builder: (_) => BudgetEditorPage(
-          repository: repository,
-          initialBudget: row.source,
-          presentation: row,
-          monthKey: widget.monthKey,
-        ),
-      ),
-    );
-    if (result == null || !mounted) return;
-    await ref.read(budgetMutationsProvider.notifier).addBudget(result);
-    if (mounted) Navigator.of(context).pop();
+    final result = await _showBudgetEditor(context, repository, widget.monthKey,
+        source: row.source);
+    if (result != null && mounted) Navigator.of(context).pop();
   }
 
-  Future<void> _delete(_BudgetPresentation row) async {
-    final budget = row.source;
-    if (budget == null) return;
+  Future<void> _delete(FinanceRepository repository, Budget budget) async {
     final confirmed = await showDialog<bool>(
           context: context,
           builder: (dialogContext) => AlertDialog(
-            title: const Text('删除预算？'),
-            content: const Text('交易不会被删除，只会移除此预算设置。'),
+            title: const Text('删除源预算规则？'),
+            content: Text(
+                budgetRuleDeletionMessage(repository, budget, widget.monthKey)),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(dialogContext, false),
@@ -625,7 +611,7 @@ class _BudgetCategoryDetailPageState
               ),
               FilledButton(
                 onPressed: () => Navigator.pop(dialogContext, true),
-                child: const Text('删除'),
+                child: const Text('删除源规则'),
               ),
             ],
           ),
@@ -637,18 +623,35 @@ class _BudgetCategoryDetailPageState
   }
 }
 
+Future<Budget?> _showBudgetEditor(
+        BuildContext context, FinanceRepository repository, String monthKey,
+        {Budget? source}) =>
+    Navigator.push<Budget>(
+        context,
+        MaterialPageRoute(
+          fullscreenDialog: true,
+          builder: (_) => liveBudgetEditor(
+              repository,
+              source,
+              (live, persist) => BudgetEditorPage(
+                  repository: live,
+                  initialBudget: source,
+                  monthKey: monthKey,
+                  persist: persist)),
+        ));
+
 class BudgetEditorPage extends StatefulWidget {
   const BudgetEditorPage({
     super.key,
     required this.repository,
     this.initialBudget,
-    this.presentation,
+    this.persist,
     required this.monthKey,
   });
 
   final FinanceRepository repository;
   final Budget? initialBudget;
-  final _BudgetPresentation? presentation;
+  final Future<void> Function(Budget)? persist;
   final String monthKey;
 
   @override
@@ -661,23 +664,66 @@ class _BudgetEditorPageState extends State<BudgetEditorPage> {
   late bool rollover;
   late String? categoryId;
   late String effectiveMonthKey;
+  late final String newRuleId = buildId('budget');
+  late final String currency;
+  bool saving = false;
+  String? get originalCategoryId =>
+      effectiveMonthKey == widget.initialBudget?.monthKey
+          ? widget.initialBudget?.categoryId
+          : null;
+  List<Category> get categoryOptions =>
+      widget.repository.categoryOptions(CategoryType.expense,
+          originalCategoryId: originalCategoryId);
+
+  Budget? get draft {
+    final id = categoryId;
+    final amount = double.tryParse(amountController.text.trim());
+    if (id == null ||
+        amount == null ||
+        !amount.isFinite ||
+        amount <= 0 ||
+        !categoryOptions.any((c) => c.id == id)) {
+      return null;
+    }
+    final initial = widget.initialBudget;
+    final sameRule = initial != null &&
+        id == initial.categoryId &&
+        effectiveMonthKey == initial.monthKey;
+    return Budget(
+        id: sameRule ? initial.id : newRuleId,
+        categoryId: id,
+        monthKey: effectiveMonthKey,
+        amount: amount,
+        currency: currency,
+        alertThreshold: threshold,
+        rolloverEnabled: rollover);
+  }
 
   @override
   void initState() {
     super.initState();
-    final initialAmount =
-        widget.initialBudget?.amount ?? widget.presentation?.budget ?? 0;
-    amountController = TextEditingController(
-      text: initialAmount > 0 ? initialAmount.toStringAsFixed(0) : '',
-    );
-    threshold = widget.initialBudget?.alertThreshold ?? .8;
-    rollover = widget.initialBudget?.rolloverEnabled ?? true;
+    final initial = widget.initialBudget;
+    currency = initial?.currency ?? widget.repository.baseCurrency;
+    amountController =
+        TextEditingController(text: initial?.amount.toString() ?? '');
+    threshold = initial?.alertThreshold ?? .8;
+    rollover = initial?.rolloverEnabled ?? true;
     effectiveMonthKey = widget.monthKey;
-    categoryId = widget.initialBudget?.categoryId ??
-        widget.repository
-            .categoriesByType(CategoryType.expense)
+    categoryId = initial == null
+        ? categoryOptions.firstOrNull?.id
+        : categoryOptions
+            .where((c) => c.id == initial.categoryId)
             .firstOrNull
             ?.id;
+  }
+
+  @override
+  void didUpdateWidget(BudgetEditorPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.repository != widget.repository &&
+        !categoryOptions.any((c) => c.id == categoryId)) {
+      categoryId = null;
+    }
   }
 
   @override
@@ -688,14 +734,20 @@ class _BudgetEditorPageState extends State<BudgetEditorPage> {
 
   @override
   Widget build(BuildContext context) {
-    final base = double.tryParse(amountController.text) ?? 0;
-    final currency = widget.repository.baseCurrency;
-    final carried =
-        (rollover ? widget.presentation?.rollover ?? 0 : 0).toDouble();
-    final effective = base + carried;
+    final budget = draft;
+    final repository = widget.repository;
+    final priced = repository.hasExchangeRate(currency);
+    final preview = budget == null ? null : repository.previewBudget(budget);
+    double inCurrency(double value) =>
+        repository.convertFromBase(value, currency);
+    final entered = double.tryParse(amountController.text.trim());
+    final base = entered != null && entered.isFinite ? entered : 0.0;
+    String displayAmount(double value, bool valued) => priced && valued
+        ? compassMoney(inCurrency(value), currency: currency)
+        : '未估值';
     final categoryName = categoryId == null
         ? '请选择'
-        : _translatedBudgetName(widget.repository.categoryName(categoryId!));
+        : budgetCategoryLabel(repository, categoryId!);
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: CompassBackground(
@@ -723,14 +775,18 @@ class _BudgetEditorPageState extends State<BudgetEditorPage> {
                 child: Column(
                   children: [
                     Text(
-                      '${compassMoney(base, currency: currency, decimals: 0)}  +  结转 ${compassMoney(carried, currency: currency, decimals: 0)}',
+                      '${compassMoney(base, currency: currency)}  +  结转 ${preview == null ? '—' : displayAmount(preview.carried, preview.carriedValued)}',
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
                     const SizedBox(height: 14),
                     Text('有效预算', style: Theme.of(context).textTheme.bodySmall),
                     const SizedBox(height: 5),
                     Text(
-                      compassMoney(effective, currency: currency, decimals: 0),
+                      preview == null
+                          ? '—'
+                          : displayAmount(
+                              preview.effective, preview.effectiveValued),
+                      key: const Key('budget-editor-effective'),
                       style: TextStyle(
                         color: financePaletteOf(context).seed,
                         fontSize: 44,
@@ -743,12 +799,22 @@ class _BudgetEditorPageState extends State<BudgetEditorPage> {
                   ],
                 ),
               ),
-              if (widget.presentation case final row?) ...[
+              if (preview != null && widget.initialBudget != null) ...[
                 const SizedBox(height: 16),
                 _BudgetUsageSummary(
-                  actual: row.actual,
-                  planned: row.planned,
-                  remaining: effective - row.actual - row.planned,
+                  actual: priced && preview.actualValued
+                      ? inCurrency(preview.actual)
+                      : null,
+                  planned: priced && preview.plannedValued
+                      ? inCurrency(preview.planned)
+                      : null,
+                  remaining: priced &&
+                          preview.effectiveValued &&
+                          preview.actualValued &&
+                          preview.plannedValued
+                      ? inCurrency(
+                          preview.effective - preview.actual - preview.planned)
+                      : null,
                   baseCurrency: currency,
                 ),
               ],
@@ -762,7 +828,7 @@ class _BudgetEditorPageState extends State<BudgetEditorPage> {
               _BudgetEditorInputRow(
                 icon: Icons.account_balance_wallet_outlined,
                 title: '基础预算',
-                currency: widget.repository.baseCurrency,
+                currency: currency,
                 controller: amountController,
                 onChanged: (_) => setState(() {}),
               ),
@@ -801,17 +867,23 @@ class _BudgetEditorPageState extends State<BudgetEditorPage> {
               ),
               const SizedBox(height: 8),
               TextButton.icon(
-                onPressed: () => _showNextMonthPreview(
-                  base: base,
-                  carried: carried,
-                ),
+                onPressed: preview == null
+                    ? null
+                    : () => _showNextMonthPreview(
+                          displayAmount(
+                              preview.nextBaseAmount, preview.nextBaseValued),
+                          displayAmount(
+                              preview.nextCarried, preview.nextCarriedValued),
+                          displayAmount(preview.nextEffective,
+                              preview.nextEffectiveValued),
+                        ),
                 icon: const Icon(Icons.trending_up_rounded),
                 label: const Text('预览下月预算'),
               ),
               const SizedBox(height: 28),
               CompassPrimaryButton(
                 label: '保存更改',
-                onPressed: _save,
+                onPressed: saving ? null : _save,
               ),
             ],
           ),
@@ -820,33 +892,22 @@ class _BudgetEditorPageState extends State<BudgetEditorPage> {
     );
   }
 
-  void _save() {
-    final amount = double.tryParse(amountController.text.trim());
-    if (categoryId == null || amount == null || amount <= 0) {
+  Future<void> _save() async {
+    if (saving) return;
+    final budget = draft;
+    if (budget == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请选择支出类别并输入大于 0 的预算。')),
+        const SnackBar(content: Text('请选择支出类别并输入大于 0 的有效预算。')),
       );
       return;
     }
-    final initial = widget.initialBudget;
-    final updatesSameRule = initial != null &&
-        initial.categoryId == categoryId &&
-        initial.monthKey == effectiveMonthKey;
-    Navigator.pop(
-      context,
-      Budget(
-        id: updatesSameRule ? initial.id : buildId('budget'),
-        categoryId: categoryId!,
-        monthKey: effectiveMonthKey,
-        amount: amount,
-        alertThreshold: threshold,
-        rolloverEnabled: rollover,
-      ),
-    );
+    setState(() => saving = true);
+    await saveBudgetDraft(context, budget, widget.persist);
+    if (mounted) setState(() => saving = false);
   }
 
   Future<void> _pickCategory() async {
-    final categories = widget.repository.categoriesByType(CategoryType.expense);
+    final categories = categoryOptions;
     final selected = await showModalBottomSheet<Category>(
       context: context,
       showDragHandle: true,
@@ -859,7 +920,9 @@ class _BudgetEditorPageState extends State<BudgetEditorPage> {
             const SizedBox(height: 10),
             ...categories.map(
               (category) => ListTile(
-                title: Text(category.name),
+                title:
+                    Text(budgetCategoryLabel(widget.repository, category.id)),
+                subtitle: category.isArchived ? const Text('已归档') : null,
                 trailing: category.id == categoryId
                     ? const Icon(Icons.check_rounded)
                     : null,
@@ -871,7 +934,8 @@ class _BudgetEditorPageState extends State<BudgetEditorPage> {
       ),
     );
     if (selected != null && mounted) {
-      setState(() => categoryId = selected.id);
+      setState(() => categoryId =
+          categoryOptions.any((c) => c.id == selected.id) ? selected.id : null);
     }
   }
 
@@ -908,7 +972,10 @@ class _BudgetEditorPageState extends State<BudgetEditorPage> {
       ),
     );
     if (selected != null && mounted) {
-      setState(() => effectiveMonthKey = monthKeyFromDate(selected));
+      setState(() {
+        effectiveMonthKey = monthKeyFromDate(selected);
+        if (!categoryOptions.any((c) => c.id == categoryId)) categoryId = null;
+      });
     }
   }
 
@@ -942,14 +1009,8 @@ class _BudgetEditorPageState extends State<BudgetEditorPage> {
     }
   }
 
-  Future<void> _showNextMonthPreview({
-    required double base,
-    required double carried,
-  }) async {
-    final currency = widget.repository.baseCurrency;
-    final actual = widget.presentation?.actual ?? 0;
-    final planned = widget.presentation?.planned ?? 0;
-    final projectedCarry = rollover ? base + carried - actual - planned : 0.0;
+  Future<void> _showNextMonthPreview(
+      String base, String projectedCarry, String nextEffective) async {
     final month = _monthDateFromKey(effectiveMonthKey);
     final nextMonth = DateTime(month.year, month.month + 1);
     await showDialog<void>(
@@ -961,9 +1022,7 @@ class _BudgetEditorPageState extends State<BudgetEditorPage> {
           message: '按当前实际与预计支出计算，月底前仍会随交易变化。',
         ),
         content: Text(
-          '基础预算：${compassMoney(base, currency: currency)}\n'
-          '预计结转：${compassMoney(projectedCarry, currency: currency)}\n'
-          '预计可用：${compassMoney(base + projectedCarry, currency: currency)}',
+          '基础预算：$base\n预计结转：$projectedCarry\n预计可用：$nextEffective',
           style: const TextStyle(fontFeatures: compassTabularFigures),
         ),
         actions: [
@@ -985,7 +1044,10 @@ class _BudgetPresentation {
     required this.actual,
     required this.planned,
     required this.rollover,
-    this.source,
+    required this.source,
+    required this.limitValued,
+    required this.actualValued,
+    required this.plannedValued,
   });
 
   final String name;
@@ -994,7 +1056,11 @@ class _BudgetPresentation {
   final double actual;
   final double planned;
   final double rollover;
-  final Budget? source;
+  final Budget source;
+  final bool limitValued;
+  final bool actualValued;
+  final bool plannedValued;
+  bool get isValued => limitValued && actualValued && plannedValued;
 
   bool get hasAllocation => budget.isFinite && budget > 0;
 }
@@ -1005,16 +1071,19 @@ List<_BudgetPresentation> _budgetRows(
 ) {
   final budgets = repository.activeBudgetsForMonth(month);
   return budgets.map((budget) {
-    final name = repository.categoryName(budget.categoryId);
+    final name = budgetCategoryLabel(repository, budget.categoryId);
+    final usage = repository.budgetUsageFor(budget.categoryId, month);
     final base = repository.budgetAmountInBase(budget);
     final effective = repository.effectiveBudgetForMonth(budget, month);
     return _BudgetPresentation(
-      name: _translatedBudgetName(name),
-      icon: _budgetIcon(name),
+      name: name,
+      limitValued: repository.budgetLimitIsValued(budget.categoryId, month),
+      actualValued: usage.actualValued,
+      plannedValued: usage.plannedValued,
+      icon: categoryIcon(repository.categoryHierarchy.byId[budget.categoryId]),
       budget: base,
-      actual: repository.expenseTotalForCategory(budget.categoryId, month),
-      planned:
-          repository.plannedExpenseTotalForCategory(budget.categoryId, month),
+      actual: usage.actual,
+      planned: usage.planned,
       rollover: effective - base,
       source: budget,
     );
@@ -1058,13 +1127,23 @@ class _BudgetRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = financePaletteOf(context);
+    if (!row.isValued) {
+      return ListTile(
+        onTap: onTap,
+        title: Text(row.name),
+        subtitle: Text(
+            compassMoney(row.source.amount, currency: row.source.currency)),
+        trailing: const Text('未估值'),
+      );
+    }
     final effective = row.budget + row.rollover;
     final remaining = effective - row.actual - row.planned;
-    final remainingAmount = remaining.abs().toStringAsFixed(0);
+    final remainingAmount =
+        remaining.abs().toStringAsFixed(_budgetDecimals(remaining));
     final share = row.hasAllocation && allocationTotal.isFinite
         ? row.budget / allocationTotal * 100
         : 0;
-    final threshold = row.source?.alertThreshold ?? .8;
+    final threshold = row.source.alertThreshold;
     final actualRatio =
         effective > 0 ? row.actual / effective : (row.actual > 0 ? 1.0 : 0.0);
     final plannedRatio = effective > 0 ? row.planned / effective : 0.0;
@@ -1082,8 +1161,8 @@ class _BudgetRow extends StatelessWidget {
                 : palette.textPrimary);
     if (!desktop) {
       final textTheme = Theme.of(context).textTheme;
-      final amount =
-          compassMoney(remaining.abs(), decimals: 0, showCurrency: false);
+      final amount = compassMoney(remaining.abs(),
+          decimals: _budgetDecimals(remaining), showCurrency: false);
       return InkWell(
         onTap: onTap,
         child: Padding(
@@ -1182,7 +1261,7 @@ class _BudgetRow extends StatelessWidget {
               child: FittedBox(
                 fit: BoxFit.scaleDown,
                 child: Text(
-                  '${row.rollover > 0 ? '+' : ''}${row.rollover.toStringAsFixed(0)}',
+                  '${row.rollover > 0 ? '+' : ''}${row.rollover.toStringAsFixed(_budgetDecimals(row.rollover))}',
                   style: TextStyle(
                     color: row.rollover > 0
                         ? palette.income
@@ -1238,7 +1317,7 @@ class _BudgetCategorySummary extends StatelessWidget {
             style: Theme.of(context).textTheme.titleSmall,
           ),
           Text(
-            '预算 ${budget.toStringAsFixed(0)}',
+            '预算 ${budget.toStringAsFixed(_budgetDecimals(budget))}',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   fontFeatures: compassTabularFigures,
                 ),
@@ -1332,7 +1411,7 @@ class _BudgetSpendValue extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final amount = value.toStringAsFixed(0);
+    final amount = value.toStringAsFixed(_budgetDecimals(value));
     return Semantics(
       label: '${planned ? '预计' : '实际'} $amount',
       excludeSemantics: true,
@@ -1375,8 +1454,8 @@ class _BudgetUsageSummary extends StatelessWidget {
     this.daysRemaining,
   });
 
-  final double actual;
-  final double planned;
+  final double? actual;
+  final double? planned;
   final double? remaining;
   final double? totalAvailable;
   final String baseCurrency;
@@ -1385,18 +1464,22 @@ class _BudgetUsageSummary extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = financePaletteOf(context);
-    String amount(double value) =>
-        compassMoney(value, decimals: 0, showCurrency: false);
+    String amount(double? value) => value == null
+        ? '未估值'
+        : compassMoney(value,
+            decimals: _budgetDecimals(value), showCurrency: false);
 
     final labels = [
       '已用 ${amount(actual)}',
       '预计 ${amount(planned)}',
-      if (remaining case final value?) '剩余 ${amount(value)}',
+      '剩余 ${amount(remaining)}',
     ];
     final available = totalAvailable ?? 0;
-    final usedTotal = actual + planned;
-    final progressPct =
-        available > 0 ? (usedTotal / available * 100).round() : null;
+    final usedTotal =
+        actual == null || planned == null ? null : actual! + planned!;
+    final progressPct = available > 0 && usedTotal != null
+        ? (usedTotal / available * 100).round()
+        : null;
     final rem = remaining;
     String? guidance;
     Color guidanceColor = palette.textMuted;
@@ -1466,7 +1549,7 @@ class _AmountLine extends StatelessWidget {
             Text(label, style: Theme.of(context).textTheme.bodySmall),
             const Spacer(),
             Text(
-              '${positive ? '+ ' : emphasized ? '= ' : ''}${compassMoney(amount, currency: currency, decimals: 0)}',
+              '${positive ? '+ ' : emphasized ? '= ' : ''}${compassMoney(amount, currency: currency, decimals: _budgetDecimals(amount))}',
               style: TextStyle(
                 color: positive || emphasized
                     ? financePaletteOf(context).seed
@@ -1527,9 +1610,9 @@ class _BudgetExpenseRow extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           Text(
-            '- ${compassMoney(amount, currency: currency, decimals: 0)}',
+            compassMoney(-amount, currency: currency),
             style: TextStyle(
-              color: palette.expense,
+              color: amount < 0 ? palette.income : palette.expense,
               fontWeight: FontWeight.w600,
               fontFeatures: compassTabularFigures,
             ),
@@ -1629,25 +1712,8 @@ class _BudgetEditorInputRow extends StatelessWidget {
       );
 }
 
-String _translatedBudgetName(String name) {
-  final lower = name.toLowerCase();
-  if (lower.contains('food')) return '餐饮';
-  if (lower.contains('shopping')) return '购物';
-  if (lower.contains('transport')) return '交通';
-  if (lower.contains('housing')) return '住房';
-  return name;
-}
-
-IconData _budgetIcon(String name) {
-  final translated = _translatedBudgetName(name);
-  return switch (translated) {
-    '餐饮' => Icons.restaurant_outlined,
-    '购物' => Icons.shopping_bag_outlined,
-    '交通' => Icons.directions_bus_outlined,
-    '住房' => Icons.home_outlined,
-    _ => Icons.shield_outlined,
-  };
-}
+int _budgetDecimals(double amount) =>
+    (amount - amount.roundToDouble()).abs() < 1e-9 ? 0 : 2;
 
 String _monthLabel(String monthKey) {
   final parts = monthKey.split('-');
@@ -1658,11 +1724,4 @@ String _monthLabel(String monthKey) {
 DateTime _monthDateFromKey(String monthKey) {
   final parts = monthKey.split('-');
   return DateTime(int.parse(parts[0]), int.parse(parts[1]));
-}
-
-String _accountName(FinanceRepository repository, String accountId) {
-  for (final account in repository.accounts) {
-    if (account.id == accountId) return account.name;
-  }
-  return '已删除账户';
 }

@@ -133,7 +133,8 @@ void main() {
     final projection = repository
         .futureCashFlowProjection(months: 2, asOf: now)
         .singleWhere((point) => point.monthKey == nextMonth);
-    expect(projection.expense, 1316);
+    expect(projection.expense, 0);
+    expect(projection.transfers, -1316);
     expect(projection.net, -1316);
   });
 
@@ -222,11 +223,12 @@ void main() {
         accountId: 'cash',
         toAccountId: 'loan',
         amount: 1316,
-        toAmount: 1108.94,
+        toAmount: 1105.67,
         currency: 'MYR',
         toCurrency: 'MYR',
         transactionDate: DateTime(nextMonthDate.year, nextMonthDate.month, 23),
         status: TransactionStatus.planned,
+        loanInstallmentNumber: 1,
         description: 'Car loan repayment',
       ),
     ]);

@@ -136,14 +136,20 @@ void main() {
     await tester.tap(find.text('补生成预计交易'));
     await tester.pumpAndSettle();
     expect(find.text('12 个月'), findsOneWidget);
-    await tester.tapAt(const Offset(8, 8));
-    await tester.pumpAndSettle();
-
-    await tester.ensureVisible(find.text('保存更改'));
-    await tester.tap(find.text('保存更改'));
+    await tester.tap(find.text('12 个月'));
     await tester.pumpAndSettle();
     final updated = await container.read(financeRepositoryProvider.future);
-    expect(updated.recurringTransactionRules.single.intervalMonths, 3);
+    final rule = updated.recurringTransactionRules.single;
+    expect(rule.intervalMonths, 3);
+    final offsets = updated.transactions
+        .where((tx) => tx.recurringRuleId == rule.id)
+        .map((tx) =>
+            (tx.transactionDate.year - rule.startDate.year) * 12 +
+            tx.transactionDate.month -
+            rule.startDate.month)
+        .toList()
+      ..sort();
+    expect(offsets, [1, 2, 3, 6, 9, 12]);
     expect(tester.takeException(), isNull);
   });
 

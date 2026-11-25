@@ -11,33 +11,46 @@ LazyDatabase openDatabaseConnection() {
   return LazyDatabase(() async {
     final directory = await getApplicationDocumentsDirectory();
     final file = File(p.join(directory.path, 'finance_app.sqlite'));
-    await _createPreSchemaMigrationBackup(file, directory);
+    await createPreSchemaMigrationBackup(file, directory);
     return NativeDatabase.createInBackground(file);
   });
 }
 
-Future<void> _createPreSchemaMigrationBackup(
+/// Publishes one self-contained SQLite file and its logical table dump.
+/// The SQLite backup API includes committed WAL pages. Both artifacts and the
+/// version check refer to the same read snapshot even if another app writes.
+Future<Directory?> createPreSchemaMigrationBackup(
   File databaseFile,
   Directory documentsDirectory,
 ) async {
-  if (!await databaseFile.exists()) return;
-
-  sqlite.Database? source;
+  if (!await databaseFile.exists()) return null;
+  final source =
+      sqlite.sqlite3.open(databaseFile.path, mode: sqlite.OpenMode.readOnly);
+  Directory? staging;
+  sqlite.Database? image;
   try {
-    source =
-        sqlite.sqlite3.open(databaseFile.path, mode: sqlite.OpenMode.readOnly);
+    source.execute('BEGIN');
     final version = source.userVersion;
-    if (version <= 0 || version >= 9) return;
+    if (version <= 0 || version >= 9) return null;
 
-    final timestamp = DateTime.now()
-        .toIso8601String()
-        .replaceAll(':', '-')
-        .replaceAll('.', '-');
-    final backupDirectory = Directory(p.join(documentsDirectory.path,
-        'finance_compass_backups', 'pre_v9_$timestamp'));
-    await backupDirectory.create(recursive: true);
+    final parent =
+        Directory(p.join(documentsDirectory.path, 'finance_compass_backups'));
+    await parent.create(recursive: true);
+    staging = await parent.createTemp('.pending_');
+    image = sqlite.sqlite3.open(p.join(staging.path, 'finance_app.sqlite'));
+    await source.backup(image, nPage: -1).drain<void>();
+    source.execute('COMMIT');
+    // A single-file recovery point is portable to devices without the source WAL.
+    image.execute('PRAGMA journal_mode = DELETE');
+    final check = image.select('PRAGMA quick_check');
+    if (image.userVersion != version ||
+        check.length != 1 ||
+        check.first.values.first != 'ok' ||
+        image.select('PRAGMA foreign_key_check').isNotEmpty) {
+      throw StateError('升级前 SQLite 恢复点未通过完整性检查。');
+    }
 
-    const tableNames = [
+    const names = [
       'accounts',
       'categories',
       'budgets',
@@ -48,38 +61,38 @@ Future<void> _createPreSchemaMigrationBackup(
       'recurring_transaction_rules',
     ];
     final tables = <String, List<Map<String, Object?>>>{};
-    for (final tableName in tableNames) {
-      final exists = source.select(
+    for (final name in names) {
+      final exists = image.select(
           "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
-          [tableName]);
+          [name]);
       if (exists.isEmpty) continue;
-      tables[tableName] = source
-          .select('SELECT * FROM $tableName')
-          .map((row) => Map<String, Object?>.from(row))
+      tables[name] = image
+          .select('SELECT * FROM $name')
+          .map(Map<String, Object?>.from)
           .toList();
     }
-    final jsonBackup = File(p.join(backupDirectory.path, 'snapshot.json'));
-    await jsonBackup.writeAsString(
+    image.dispose();
+    image = null;
+    final now = DateTime.now().toUtc().toIso8601String();
+    await File(p.join(staging.path, 'snapshot.json')).writeAsString(
       const JsonEncoder.withIndent(' ').convert({
         'backup_type': 'pre_schema_migration',
         'source_schema_version': version,
         'target_schema_version': 9,
-        'exported_at': DateTime.now().toIso8601String(),
+        'exported_at': now,
         'tables': tables,
       }),
       flush: true,
     );
-    source.dispose();
-    source = null;
-    await databaseFile.copy(p.join(backupDirectory.path, 'finance_app.sqlite'));
-    for (final suffix in const ['-wal', '-shm']) {
-      final sidecar = File('${databaseFile.path}$suffix');
-      if (await sidecar.exists()) {
-        await sidecar
-            .copy(p.join(backupDirectory.path, 'finance_app.sqlite$suffix'));
-      }
-    }
+    final stamp = now.replaceAll(':', '-').replaceAll('.', '-');
+    final suffix = p.basename(staging.path).substring('.pending_'.length);
+    final published =
+        await staging.rename(p.join(parent.path, 'pre_v9_${stamp}_$suffix'));
+    staging = null;
+    return published;
   } finally {
-    source?.dispose();
+    image?.dispose();
+    source.dispose();
+    if (staging != null) await staging.delete(recursive: true);
   }
 }

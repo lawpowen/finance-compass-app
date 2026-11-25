@@ -1,6 +1,17 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { reminderEvents } from './reminder-events.mjs';
+import { activeLoanInstallment, reminderEvents } from './reminder-events.mjs';
+import { validSnapshot } from './snapshot.mjs';
+
+test('Flutter settlement fixture suppresses a paid bill and reopens a reversed payment', () => {
+  const ledger = JSON.parse(readFileSync(
+    new URL('../test/fixtures/loan_settlement_v3.json', import.meta.url), 'utf8',
+  ));
+  assert.equal(validSnapshot(ledger), true);
+  assert.deepEqual(reminderEvents(ledger, '2026-11-20'), []);
+  assert.deepEqual(reminderEvents(ledger, '2026-11-23').map((e) => e.title), ['贷款今天到期']);
+});
 
 const car = {
   id: 'loan-car',
@@ -30,8 +41,10 @@ const card = {
   initial_balance: 0,
   current_balance: -100,
 };
+const wallet = { id: 'wallet', account_type: 'cash', report_group: 'cash', currency: 'MYR',
+  initial_balance: 500, current_balance: 500 };
 const snapshot = (accounts, transactions = [], meta = {}) => ({
-  format_version: 3, accounts, transactions, meta,
+  format_version: 3, accounts: [...accounts, wallet], transactions, meta,
 });
 const loanPayment = (overrides = {}) => ({
   id: 'transfer-1',
@@ -165,10 +178,11 @@ test('credit reminders use ledger balance and only account for occurred entries'
   assert.deepEqual(reminderEvents(snapshot([{ ...card, current_balance: -200 }], [nextCycleCharge]), '2026-11-23'), []);
   assert.equal(reminderEvents(snapshot([{ ...card, current_balance: -300 }], [futureCharge]), '2026-11-23').length, 1);
   const payment = loanPayment({ to_account_id: card.id, amount: 100, to_amount: 0 });
-  const paid = snapshot([{ ...card, current_balance: 0 }], [payment]);
+  const phase2 = { investment_snapshot_semantics: 'immutable_v1' };
+  const paid = snapshot([{ ...card, current_balance: 0 }], [payment], phase2);
   assert.deepEqual(reminderEvents(paid, '2026-11-23'), []);
   const futurePayment = loanPayment({ ...payment, transaction_date: '2026-11-24' });
-  assert.equal(reminderEvents(snapshot([{ ...card, current_balance: 0 }], [futurePayment]), '2026-11-23').length, 1);
+  assert.equal(reminderEvents(snapshot([{ ...card, current_balance: 0 }], [futurePayment], phase2), '2026-11-23').length, 1);
 });
 
 test('reminder preferences and inactive accounts suppress all applicable events', () => {
@@ -183,4 +197,91 @@ test('reminder preferences and inactive accounts suppress all applicable events'
   assert.deepEqual(reminderEvents(snapshot([{ ...card, is_active: false }, { ...car, is_active: false }]), '2026-11-23'), []);
   assert.deepEqual(reminderEvents(null, '2026-11-23'), []);
   assert.deepEqual(reminderEvents(snapshot([car]), '2026-11-23T10:00:00.000Z'), []);
+});
+
+const explicit = { loan_installment_semantics: 'explicit_v1' };
+
+test('card due reminders distinguish preserved zero receipts from full ordinary repayments', () => {
+  const oldCard = { ...card, initial_balance: -100, current_balance: -100 };
+  const payment = { ...loanPayment(), to_account_id: card.id, description: 'ordinary', to_amount: 0 };
+  const due = (bill, tx, meta, payer) => reminderEvents({ accounts: [bill, payer], transactions: [tx], meta },
+    '2026-11-23').length;
+  const paidFrom = { ...wallet, current_balance: 400 };
+  assert.equal(due(oldCard, payment, explicit, paidFrom), 1);
+  assert.equal(due({ ...oldCard, current_balance: 0 }, { ...payment, to_amount: null }, explicit, paidFrom), 0);
+  // An old cached target debit can be repaired if the source actually debited the transfer.
+  assert.equal(due(oldCard, payment, {}, paidFrom), 0);
+  assert.equal(due(oldCard, payment, {}, wallet), 1, 'unexplained old source balance does not prove a credit');
+});
+
+test('installments settle contract-currency principal and interest independently after signed reversals', () => {
+  const loan = { ...car, loan_annual_interest_rate: 12 };
+  const payment = loanPayment({
+    description: 'edited', loan_installment_number: 1,
+    currency: 'USD', amount: 28, loan_payment_amount: 112, to_amount: 100,
+  });
+  const reversal = { ...payment, id: 'reverse-interest', amount: -3, loan_payment_amount: -12, to_amount: 0 };
+  const partial = { ...payment, id: 'partial', amount: 2, loan_payment_amount: 8, to_amount: 0 };
+  const occurs = (rows) => reminderEvents(snapshot([loan], rows, explicit), '2026-11-23').length;
+  assert.equal(occurs([payment]), 0);
+  assert.equal(occurs([payment, reversal]), 1);
+  assert.equal(occurs([payment, reversal, partial]), 1);
+  assert.equal(occurs([payment, reversal, { ...partial, loan_payment_amount: 12 }]), 0);
+  assert.equal(occurs([{ ...payment, to_amount: 105 }]), 1, 'extra principal cannot cover unpaid interest');
+  assert.equal(occurs([loanPayment({ amount: 112 })]), 1, 'new ordinary transfers have no installment identity');
+  assert.equal(occurs([{ ...payment, status: 'planned' }]), 1);
+  assert.equal(occurs([{ ...payment, transaction_date: '2026-11-24' }]), 1);
+});
+
+test('zero-principal interest installments and explicit split halves can clear a payment', () => {
+  const small = { ...car, loan_term_months: 360, initial_balance: -1, current_balance: -1,
+    loan_principal: 1, loan_annual_interest_rate: 12 };
+  const interestOnly = loanPayment({ amount: .01, to_amount: 0, loan_installment_number: 1, description: '' });
+  assert.equal(reminderEvents(snapshot([small], [interestOnly], explicit), '2026-11-23').length, 0);
+  const loan = { ...car, loan_annual_interest_rate: 12 };
+  const linked = { legacy_loan_part_number: 1, legacy_loan_id: loan.id };
+  const principal = loanPayment({ ...linked, description: 'changed principal memo' });
+  const interest = { ...linked, id: 'interest', type: 'expense', account_id: 'wallet',
+    currency: 'MYR', amount: 12, description: 'changed interest memo', transaction_date: '2026-11-20' };
+  assert.equal(reminderEvents(snapshot([loan], [principal, interest], explicit), '2026-11-23').length, 0);
+  assert.equal(reminderEvents(snapshot([loan], [principal], explicit), '2026-11-23').length, 1);
+  const fakePrincipal = loanPayment({ description: '贷款本金 #1' });
+  const fakeInterest = { ...interest, legacy_loan_part_number: null, legacy_loan_id: null,
+    transaction_date: fakePrincipal.transaction_date, description: '贷款利息 #1' };
+  assert.equal(reminderEvents(snapshot([loan], [fakePrincipal, fakeInterest], explicit), '2026-11-23').length, 1);
+});
+
+test('flat rates distribute integer cents through the last contracted month', () => {
+  const flat = { ...car, loan_repayment_method: 'flatRate', loan_term_months: 600,
+    loan_principal: 1000, initial_balance: -1000 };
+  const schedule = Array.from({ length: 600 }, (_, i) => activeLoanInstallment(flat, i + 1));
+  const cent = (value) => Math.round(value * 100);
+  assert.deepEqual(schedule.slice(0, 3).map((p) => cent(p.principal)), [166, 167, 167]);
+  assert.equal(cent(schedule.at(-1).principal), 167);
+  assert.equal(schedule.reduce((sum, row) => sum + cent(row.principal), 0), 100000);
+  const fraction = { ...flat, loan_principal: 1000.01, initial_balance: -1000.01, loan_annual_interest_rate: 3.875 };
+  const fractional = Array.from({ length: 600 }, (_, i) => activeLoanInstallment(fraction, i + 1));
+  assert.equal(fractional.reduce((sum, row) => sum + cent(row.principal), 0), 100001);
+  assert.equal(fractional.reduce((sum, row) => sum + cent(row.payment) - cent(row.principal), 0), 193752);
+  const midstream = { ...flat, initial_balance: -3.33 };
+  assert.equal(cent(activeLoanInstallment(midstream, 1).principal) + cent(activeLoanInstallment(midstream, 2).principal), 333);
+  assert.equal(activeLoanInstallment(midstream, 3), null);
+});
+
+test('old overdue credit is not reissued as a new monthly due and refunds cover current debt', () => {
+  const overdue = { ...card, statement_day: 10, payment_due_day: 20, current_balance: -100 };
+  const charge = { id: 'march', account_id: card.id, currency: 'MYR', amount: 100, type: 'expense',
+    status: 'actual', transaction_date: '2026-03-08' };
+  assert.equal(reminderEvents(snapshot([overdue], [charge]), '2026-03-20').length, 1);
+  assert.equal(reminderEvents(snapshot([overdue], [charge]), '2026-04-20').length, 0);
+  const april = { ...charge, id: 'april', transaction_date: '2026-04-08', amount: 50 };
+  const refund = { ...april, type: 'adjustment', amount: 50, id: 'credit' };
+  assert.equal(reminderEvents(snapshot([overdue], [charge, april, refund]), '2026-04-20').length, 0);
+});
+
+test('short February and March closes can both be payable on March 31', () => {
+  const account = { ...card, statement_day: 30, payment_due_day: 31 };
+  const february = { id: 'feb', account_id: card.id, type: 'expense', amount: 100, currency: 'MYR',
+    transaction_date: '2027-02-15', status: 'actual' };
+  assert.equal(reminderEvents(snapshot([account], [february]), '2027-03-31')[0].title, '信用卡今天到期');
 });

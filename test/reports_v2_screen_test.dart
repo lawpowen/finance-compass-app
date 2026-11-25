@@ -23,6 +23,102 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('parent rankings reconcile refunds and uncategorized expenses',
+      (tester) async {
+    final day = DateTime(DateTime.now().year, DateTime.now().month, 1);
+    final repo = await _categoryReportLedger(day);
+    await _pumpReports(tester, repo);
+    expect(_text(tester, 'reports-category-0-name'), 'Home');
+    expect(_text(tester, 'reports-category-0-amount'), compassMoney(70));
+    expect(_text(tester, 'reports-category-1-name'), 'Travel');
+    expect(_text(tester, 'reports-category-1-amount'), compassMoney(-20));
+    expect(
+        _text(tester, 'reports-category-total'), '已分类支出合计 ${compassMoney(50)}');
+    expect(_text(tester, 'reports-unclassified-total'),
+        '未分类支出 ${compassMoney(10)}');
+    expect(
+        _text(tester, 'reports-all-expense-total'), '支出净额 ${compassMoney(60)}');
+    expect(tester.takeException(), isNull);
+  });
+
+  test(
+      'category JSON and planning CSV retain duplicate names, unclassified amounts and refunds',
+      () async {
+    final now = DateTime.now();
+    final day = DateTime(now.year, now.month + 1, 1);
+    final month = monthKeyFromDate(day);
+    var repo = await _categoryReportLedger(day);
+    for (final id in ['a', 'b']) {
+      repo = await repo.addBudget(Budget(
+          id: 'budget-$id',
+          categoryId: id,
+          monthKey: monthKeyFromDate(now),
+          amount: 50));
+    }
+    final payload = repo.buildAiSummaryPayload(monthKeys: [month]);
+    final budgetRows =
+        (payload['budget_rows_current_month'] as List).cast<Map>();
+    expect(
+        budgetRows.map((r) => r['category_id']), unorderedEquals(['a', 'b']));
+    expect((payload['budgets_current_month'] as Map).length, 2);
+    expect((payload['expense_by_month'] as Map)[month], 60);
+    expect((payload['planned_expense_by_month'] as Map)[month], 22);
+    final categoryRows = ((payload['category_rows_by_month'] as Map)[month]
+        as Map)['expense'] as List;
+    final byId = {for (final row in categoryRows.cast<Map>()) row['id']: row};
+    expect(byId['home']!['actual'], 30);
+    expect(byId['home']!['subtree_actual'], 70);
+    expect(byId['a']!['actual'], 40);
+    expect(byId['b']!['actual'], -20);
+    expect(byId['a']!['path'], ['Home', 'Other']);
+    expect(byId['b']!['path'], ['Travel', 'Other']);
+    expect(byId[null]!['actual'], 10);
+    expect(byId[null]!['planned'], 15);
+    expect(byId['a']!['planned'], 7);
+    final legacy =
+        (payload['expense_categories_by_month'] as Map)[month] as Map;
+    expect(legacy.values, unorderedEquals([30, 40, -20, 10]));
+    final csv = utf8.decode(repo.exportFuturePlanningCsvBytes(months: 1));
+    expect(csv, contains('Home / Other,a,Actual,MYR,40.00,40.00'));
+    expect(csv, contains('Travel / Other,b,Actual,MYR,-20.00,-20.00'));
+    expect(csv, contains('Uncategorized,,Actual,MYR,10.00,10.00'));
+    expect(csv, contains('Uncategorized,,Planned,MYR,15.00,15.00'));
+    expect(csv, contains('Total Actual,,Actual,MYR,60.00,60.00'));
+    expect(csv, contains('Total Planned,,Planned,MYR,22.00,22.00'));
+    expect(csv, contains('Total Known,,Actual + Planned,MYR,82.00,82.00'));
+  });
+
+  test('unpriced spending survives summary and CSV with native units',
+      () async {
+    final now = DateTime.now();
+    final day = DateTime(now.year, now.month + 1, 1);
+    final month = monthKeyFromDate(day);
+    var repo = await _emptyRepository();
+    repo = await repo.addAccount(const Account(
+        id: 'chf',
+        name: 'Swiss',
+        accountType: AccountType.cash,
+        reportGroup: ReportGroup.cash,
+        currency: 'CHF',
+        currentBalance: 0));
+    repo = await repo.addTransaction(FinanceTransaction(
+        id: 'chf-tx',
+        accountId: 'chf',
+        type: TransactionType.expense,
+        amount: 13,
+        currency: 'CHF',
+        transactionDate: day));
+    final payload = repo.buildAiSummaryPayload(monthKeys: [month]);
+    expect(payload['unpriced_currencies'], contains('CHF'));
+    expect(payload['months'], [month]);
+    final buckets = (payload['category_rows'] as Map)['expense'] as List;
+    expect(buckets.single['id'], isNull);
+    expect(buckets.single['unpriced_actual'], {'CHF': 13.0});
+    final csv = utf8.decode(repo.exportFuturePlanningCsvBytes(months: 1));
+    expect(csv, contains('Uncategorized,,Unpriced actual,CHF,13.00,13.00'));
+    expect(csv, isNot(contains('Uncategorized,,Actual,MYR,0.00')));
+  });
+
   testWidgets('all report totals, expense ranks and chart labels use TWD',
       (tester) async {
     var repository = await _emptyRepository();
@@ -230,10 +326,10 @@ void main() {
       find.byKey(const Key('reports-asset-composition')),
     );
     expect(repository.totalAssetsByGroup(ReportGroup.cash), lessThan(0));
-    expect(composition.slices.map((slice) => slice.value), [100, 0, 0]);
-    expect(composition.totalValue, compassMoney(100, decimals: 0));
+    expect(composition.slices.map((slice) => slice.value), [100, 0, 0, 1000]);
+    expect(composition.totalValue, compassMoney(1100, decimals: 0));
     expect(
-      find.text('负债 ${compassMoney(68906.33, decimals: 0)}'),
+      find.text('负债 ${compassMoney(69522.33, decimals: 0)}'),
       findsOneWidget,
     );
     expect(
@@ -484,7 +580,7 @@ void main() {
       '暂无资产余额',
       '本月尚未设置预算',
       '尚未添加投资或退休账户',
-      '尚无成本数据',
+      '净投入不大于零，收益率不适用',
     ]) {
       expect(find.text(emptyState), findsNothing, reason: emptyState);
     }
@@ -528,9 +624,9 @@ void main() {
       '投资': [
         find.text('投资与退休账户'),
         find.text('当前市值'),
-        find.text('剩余成本'),
+        find.text('净投入'),
         find.byKey(const Key('reports-investment-pnl')),
-        find.textContaining('未实现收益率'),
+        find.textContaining('资金收益率'),
       ],
     };
 
@@ -592,7 +688,7 @@ void main() {
     expect(position.pixels, position.maxScrollExtent);
     _expectFullyOnScreen(
       tester,
-      find.textContaining('未实现收益率'),
+      find.textContaining('资金收益率'),
       viewport,
       section: '页面底部',
     );
@@ -654,6 +750,30 @@ Future<FinanceRepository> _emptyRepository() async {
   final database = AppDatabase.forTesting(NativeDatabase.memory());
   addTearDown(database.close);
   return FinanceRepository.load(database);
+}
+
+Future<FinanceRepository> _categoryReportLedger(DateTime day) async {
+  var repo = await _emptyRepository();
+  repo = await repo.addAccount(_cash);
+  for (final c in const [
+    Category(id: 'home', name: 'Home', type: CategoryType.expense),
+    Category(id: 'travel', name: 'Travel', type: CategoryType.expense),
+    Category(
+        id: 'a', name: 'Other', type: CategoryType.expense, parentId: 'home'),
+    Category(
+        id: 'b', name: 'Other', type: CategoryType.expense, parentId: 'travel'),
+  ]) {
+    repo = await repo.addCategory(c);
+  }
+  return repo.addTransactions([
+    _expense('parent', 30, day, categoryId: 'home'),
+    _expense('child', 40, day, categoryId: 'a'),
+    _expense('refund', -20, day, categoryId: 'b'),
+    _expense('uncategorized', 10, day),
+    _expense('future-child', 7, day,
+        categoryId: 'a', status: TransactionStatus.planned),
+    _expense('future-none', 15, day, status: TransactionStatus.planned),
+  ]);
 }
 
 Future<FinanceRepository> _addExpenseCategories(

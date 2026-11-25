@@ -1,7 +1,11 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/finance_repository.dart';
+import '../../models/account.dart';
+import '../../models/loan_amortization.dart';
+import '../../models/loan_settlement.dart';
 import '../../models/transaction.dart';
+import '../../utils/id_generator.dart';
 import '../repository_provider.dart';
 
 /// Transaction CRUD operations.
@@ -51,42 +55,221 @@ class TransactionMutations extends Notifier<void> {
     });
   }
 
+  /// Atomically replaces [deleteIds] with [insertItems] in one transaction.
+  Future<void> replaceTransactions({
+    required Iterable<String> deleteIds,
+    required List<FinanceTransaction> insertItems,
+  }) async {
+    await _repoNotifier.mutate(
+      (repository) => repository.replaceExistingTransactions(
+        deleteIds: deleteIds,
+        insertItems: insertItems,
+      ),
+    );
+  }
+
+  /// Recheck the amount displayed in the confirmation inside the write transaction.
+  Future<bool> recordLoanInstallment({
+    required String loanId,
+    required String payerId,
+    required LoanInstallment confirmed,
+  }) async {
+    final result = await _repoNotifier
+        .mutate((current) => current.database.transaction(() async {
+              final ledger = await current.refresh();
+              final loan =
+                  ledger.accounts.where((a) => a.id == loanId).firstOrNull;
+              final payer = ledger
+                  .repaymentSources(loanId)
+                  .where((a) => a.id == payerId)
+                  .firstOrNull;
+              if (loan == null || payer == null) return null;
+              final schedule = tryCalculateLoanScheduleForAccount(loan);
+              final due = schedule?.installments
+                  .where((i) => i.number == confirmed.number)
+                  .firstOrNull;
+              if (due == null || due.dueDate != confirmed.dueDate) return null;
+              final now = DateTime.now();
+              final cutoff =
+                  DateTime(now.year, now.month, now.day, 23, 59, 59, 999);
+              final occurred = LoanSettlement.forLoan(
+                  loanId: loanId,
+                  currency: loan.currency,
+                  transactions: ledger.transactions,
+                  cutoff: cutoff);
+              final booked = LoanSettlement.forLoan(
+                  loanId: loanId,
+                  currency: loan.currency,
+                  transactions: ledger.transactions);
+              final remaining =
+                  installmentAvailableToRecord(due, occurred, booked);
+              if (remaining.payment == 0 ||
+                  remaining.principal != confirmed.principal ||
+                  remaining.interest != confirmed.interest) {
+                return null;
+              }
+              final planIds = ledger.transactions
+                  .where((tx) =>
+                      tx.status == TransactionStatus.planned &&
+                      ((tx.toAccountId == loanId &&
+                              tx.loanInstallmentNumber == due.number) ||
+                          (tx.legacyLoanId == loanId &&
+                              tx.legacyLoanPartNumber == due.number)))
+                  .map((tx) => tx.id);
+              return ledger.replaceExistingTransactions(
+                deleteIds: planIds,
+                insertItems: [
+                  _loanPayment(loan, payer, remaining,
+                      date: now, status: TransactionStatus.actual)
+                ],
+              );
+            }));
+    return result != null;
+  }
+
+  Future<int> generateLoanInstallmentPlans({
+    required String loanId,
+    required String payerId,
+    required List<LoanInstallment> confirmed,
+  }) async {
+    var count = 0;
+    await _repoNotifier.mutate((current) =>
+        current.database.transaction(() async {
+          final ledger = await current.refresh();
+          final loan = ledger.accounts.where((a) => a.id == loanId).firstOrNull;
+          final payer = ledger
+              .repaymentSources(loanId)
+              .where((a) => a.id == payerId)
+              .firstOrNull;
+          if (loan == null || payer == null) return null;
+          final schedule = tryCalculateLoanScheduleForAccount(loan);
+          if (schedule == null) return null;
+          final pending = unplannedLoanInstallments(
+              loanId: loan.id,
+              currency: loan.currency,
+              transactions: ledger.transactions,
+              schedule: schedule);
+          final accepted = {for (final entry in confirmed) entry.number: entry};
+          final rows = <FinanceTransaction>[];
+          for (final item in pending) {
+            final quote = accepted[item.number];
+            if (quote == null ||
+                quote.dueDate != item.dueDate ||
+                quote.principal != item.principal ||
+                quote.interest != item.interest) {
+              continue;
+            }
+            rows.add(_loanPayment(loan, payer, item,
+                date: item.dueDate, status: TransactionStatus.planned));
+          }
+          if (rows.isEmpty) return null;
+          count = rows.length;
+          return ledger.addTransactions(rows);
+        }));
+    return count;
+  }
+
+  Future<void> consolidateLegacyLoanPlans(String loanId) async {
+    await _repoNotifier.mutate((current) =>
+        current.database.transaction(() async {
+          final ledger = await current.refresh();
+          final parts = ledger.transactions
+              .where((tx) =>
+                  tx.legacyLoanId == loanId &&
+                  tx.legacyLoanPartNumber != null &&
+                  tx.status == TransactionStatus.planned)
+              .toList();
+          final insertItems = <FinanceTransaction>[];
+          final deleteIds = <String>[];
+          for (final principal
+              in parts.where((tx) => tx.type == TransactionType.transfer)) {
+            final companions = parts
+                .where((tx) =>
+                    tx.accountId == principal.accountId &&
+                    tx.legacyLoanPartNumber == principal.legacyLoanPartNumber &&
+                    tx.currency == principal.currency &&
+                    _sameDay(tx.transactionDate, principal.transactionDate))
+                .toList();
+            if (companions.length != 2) continue;
+            final interest = companions
+                .where((tx) => tx.type == TransactionType.expense)
+                .firstOrNull;
+            if (interest == null) continue;
+            final number = principal.legacyLoanPartNumber!;
+            final paidPrincipal = principal.toAmount ?? principal.amount;
+            final payment = ((principal.amount * 100).round() +
+                    (interest.amount * 100).round()) /
+                100;
+            if (payment <= 0 || paidPrincipal < 0 || paidPrincipal > payment) {
+              continue;
+            }
+            deleteIds.addAll([principal.id, interest.id]);
+            insertItems.add(FinanceTransaction(
+              id: principal.id,
+              type: TransactionType.transfer,
+              accountId: principal.accountId,
+              toAccountId: loanId,
+              amount: payment,
+              toAmount: paidPrincipal,
+              currency: principal.currency,
+              toCurrency: principal.transferInCurrency,
+              transactionDate: principal.transactionDate,
+              recordDate: principal.recordDate,
+              status: TransactionStatus.planned,
+              loanInstallmentNumber: number,
+              description: '贷款月供 #$number',
+            ));
+          }
+          if (deleteIds.isEmpty) return null;
+          return ledger.replaceExistingTransactions(
+              deleteIds: deleteIds, insertItems: insertItems);
+        }));
+  }
+
+  FinanceTransaction _loanPayment(
+          Account loan, Account payer, LoanInstallment payment,
+          {required DateTime date, required TransactionStatus status}) =>
+      FinanceTransaction(
+        id: '${buildId('txn_loan_payment')}_${payment.number}',
+        type: TransactionType.transfer,
+        accountId: payer.id,
+        toAccountId: loan.id,
+        loanInstallmentNumber: payment.number,
+        amount: payment.payment,
+        toAmount: payment.principal,
+        currency: payer.currency,
+        toCurrency: loan.currency,
+        transactionDate: date,
+        status: status,
+        description: '贷款月供 #${payment.number}',
+      );
+
   Set<String> _expandLoanInstallmentDeletionIds(
     FinanceRepository repository,
     Iterable<String> requestedIds,
   ) {
     final result = requestedIds.toSet();
-    final byId = {
-      for (final transaction in repository.transactions)
-        transaction.id: transaction,
-    };
-    final installmentPattern = RegExp(r'^贷款(月供|本金|利息) #(\d+)$');
-    for (final id in result.toList()) {
+    final byId = {for (final tx in repository.transactions) tx.id: tx};
+    for (final id in requestedIds.toSet()) {
       final selected = byId[id];
-      if (selected == null) continue;
-      final match = installmentPattern.firstMatch(selected.description ?? '');
-      if (match == null || match.group(1) == '月供') continue;
-      final number = match.group(2)!;
-      final candidates = repository.transactions.where((item) {
-        if (item.id == selected.id ||
-            item.accountId != selected.accountId ||
-            item.status != selected.status ||
-            !_sameDay(item.transactionDate, selected.transactionDate)) {
-          return false;
-        }
-        final candidate = installmentPattern.firstMatch(item.description ?? '');
-        return candidate != null &&
-            candidate.group(2) == number &&
-            candidate.group(1) != '月供';
-      }).toList();
-      final selectedPart = match.group(1)!;
-      final complementary = candidates.where((item) {
-        final part =
-            installmentPattern.firstMatch(item.description ?? '')!.group(1)!;
-        return part != selectedPart;
-      }).toList();
-      if (complementary.length == 1) {
-        result.add(complementary.single.id);
+      if (selected == null ||
+          selected.legacyLoanPartNumber == null ||
+          selected.legacyLoanId == null) {
+        continue;
+      }
+      final parts = repository.transactions
+          .where((tx) =>
+              tx.legacyLoanId == selected.legacyLoanId &&
+              tx.legacyLoanPartNumber == selected.legacyLoanPartNumber &&
+              tx.accountId == selected.accountId &&
+              tx.status == selected.status &&
+              tx.currency == selected.currency &&
+              _sameDay(tx.transactionDate, selected.transactionDate))
+          .toList();
+      if (parts.length == 2 &&
+          parts.where((t) => t.type == TransactionType.transfer).length == 1 &&
+          parts.where((t) => t.type == TransactionType.expense).length == 1) {
+        result.addAll(parts.map((tx) => tx.id));
       }
     }
     return result;
@@ -101,11 +284,15 @@ class TransactionMutations extends Notifier<void> {
   Future<void> addTransactionTemplate({
     required String name,
     required FinanceTransaction transaction,
+    PresetCategoryChoice? categoryChoice,
+    bool fromStoredTransaction = false,
   }) async {
     await _repoNotifier
         .mutate((repository) => repository.addTransactionTemplate(
               name: name,
               transaction: transaction,
+              categoryChoice: categoryChoice,
+              fromStoredTransaction: fromStoredTransaction,
             ));
   }
 
@@ -132,12 +319,16 @@ class TransactionMutations extends Notifier<void> {
   Future<void> addRecurringTransactionRule({
     required String name,
     required FinanceTransaction transaction,
+    PresetCategoryChoice? categoryChoice,
+    bool fromStoredTransaction = false,
     required int intervalMonths,
   }) async {
     await _repoNotifier
         .mutate((repository) => repository.addRecurringTransactionRule(
               name: name,
               transaction: transaction,
+              categoryChoice: categoryChoice,
+              fromStoredTransaction: fromStoredTransaction,
               intervalMonths: intervalMonths,
             ));
   }
@@ -149,11 +340,11 @@ class TransactionMutations extends Notifier<void> {
   }
 
   /// Replaces an existing recurring rule while preserving generated history.
-  Future<void> saveRecurringTransactionRule(
-    RecurringTransactionRule rule,
-  ) async {
-    await _repoNotifier
-        .mutate((repository) => repository.saveRecurringTransactionRule(rule));
+  Future<void> saveRecurringTransactionRule(RecurringTransactionRule rule,
+      {int? generateMonthsAhead}) async {
+    await _repoNotifier.mutate((repository) =>
+        repository.saveRecurringTransactionRule(rule,
+            generateMonthsAhead: generateMonthsAhead, requireExisting: true));
   }
 
   /// Generates future transactions from a recurring rule.
@@ -168,4 +359,5 @@ class TransactionMutations extends Notifier<void> {
 
 /// Provider for transaction CRUD mutations.
 final transactionMutationsProvider =
-    NotifierProvider<TransactionMutations, void>(TransactionMutations.new);
+    NotifierProvider<TransactionMutations, void>(TransactionMutations.new,
+        dependencies: [financeRepositoryProvider]);

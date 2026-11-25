@@ -7,6 +7,7 @@ import '../../core/models/credit_card_billing.dart';
 import '../../core/providers/mutations/account_mutations.dart';
 import '../../core/providers/repository_provider.dart';
 import '../../core/theme/finance_theme.dart';
+import '../../core/utils/currency_formatter.dart' show normalizeCurrency;
 import '../shared/compass_ui.dart';
 import '../shared/finance_donut.dart';
 import '../settings/settings_reference_pages.dart';
@@ -41,35 +42,22 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
     final cutoffDate = _endOfMonth(selectedCutoffMonth);
     final isHistorical = selectedCutoffMonth.year != now.year ||
         selectedCutoffMonth.month != now.month;
-    final cash = repository.displayTotalAssetsByGroup(
-      ReportGroup.cash,
-      cutoffDate: cutoffDate,
-    );
-    final investment = repository.displayTotalAssetsByGroup(
-      ReportGroup.investment,
-      cutoffDate: cutoffDate,
-    );
-    final retirement = repository.displayTotalAssetsByGroup(
-      ReportGroup.retirement,
-      cutoffDate: cutoffDate,
-    );
-    final totalAssets = cash + investment + retirement;
-    final debtCutoff = isHistorical ? cutoffDate : null;
-    final debt = repository.accountLiabilities(
-      cutoffDate: debtCutoff,
-    );
-    final creditLiability = debt.credit;
-    final loanLiability = debt.loans;
-    // Overpaid cards are clamped out of creditLiability; add the credit back so
-    // net assets keep it without treating it as cash or a goal asset.
-    final creditCardCredit = repository.totalCreditCardCredit(
-      cutoffDate: debtCutoff,
-    );
-    final liabilities = creditLiability + loanLiability;
-    final netAssets = totalAssets - liabilities + creditCardCredit;
+    final sheet = repository.balanceSheetAt(cutoffDate);
+    final totalAssets = sheet.assets;
+    final creditLiability = sheet.cardDebt;
+    final loanLiability = sheet.loanDebt;
+    final creditCardCredit = sheet.cardCredit;
+    final liabilities = sheet.liabilities;
+    final netAssets = sheet.netWorth;
+    final historicalCutoff = isHistorical ? cutoffDate : null;
     final baseCurrency = repository.baseCurrency;
-    final visibleAccounts = _accountsForGroup(repository, selectedGroup);
-    final goalSummaries = repository.assetGoalSummaries();
+    final visibleAccounts = _accountsForGroup(repository, selectedGroup).where(
+        (account) =>
+            account.accountType != AccountType.loan ||
+            account.loanStartDate == null ||
+            !account.loanStartDate!.isAfter(cutoffDate));
+    final goalSummaries =
+        repository.assetGoalSummaries(cutoffDate: historicalCutoff);
     final featuredGoal =
         goalSummaries.cast<AssetGoalProgressSummary?>().firstWhere(
               (item) => item != null && !item.isReached,
@@ -102,7 +90,7 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
               IconButton(
                 key: const Key('asset-goals-entry'),
                 tooltip: '资产目标',
-                onPressed: () => _openAssetGoals(context),
+                onPressed: () => _openAssetGoals(context, historicalCutoff),
                 icon: const CompassIconBadge(
                   icon: Icons.flag_outlined,
                   size: 38,
@@ -111,30 +99,32 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
               ),
               const SizedBox(width: 6),
             ],
-            accountManagement,
-            const SizedBox(width: 10),
-            if (desktop)
-              FilledButton.icon(
-                onPressed: () => _editAccount(context),
-                icon: const Icon(Icons.add_rounded, size: 20),
-                label: const Text('新增账户'),
-              )
-            else
-              SizedBox(
-                width: 40,
-                height: 40,
-                child: OutlinedButton(
+            if (!isHistorical) ...[
+              accountManagement,
+              const SizedBox(width: 10),
+              if (desktop)
+                FilledButton.icon(
                   onPressed: () => _editAccount(context),
-                  style: OutlinedButton.styleFrom(
-                    padding: EdgeInsets.zero,
-                    shape: const CircleBorder(),
-                    side: BorderSide(color: palette.textMuted),
-                    foregroundColor: palette.textMuted,
+                  icon: const Icon(Icons.add_rounded, size: 20),
+                  label: const Text('新增账户'),
+                )
+              else
+                SizedBox(
+                  width: 40,
+                  height: 40,
+                  child: OutlinedButton(
+                    onPressed: () => _editAccount(context),
+                    style: OutlinedButton.styleFrom(
+                      padding: EdgeInsets.zero,
+                      shape: const CircleBorder(),
+                      side: BorderSide(color: palette.textMuted),
+                      foregroundColor: palette.textMuted,
+                    ),
+                    child: const Icon(Icons.add_rounded,
+                        size: 26, semanticLabel: '新增账户'),
                   ),
-                  child: const Icon(Icons.add_rounded,
-                      size: 26, semanticLabel: '新增账户'),
                 ),
-              ),
+            ],
           ],
         );
         final netAssetsSummary = [
@@ -145,6 +135,7 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
             alignment: AlignmentDirectional.centerStart,
             child: Text(
               compassMoney(netAssets, currency: baseCurrency),
+              key: const Key('accounts-net-worth'),
               style: TextStyle(
                 color: netAssets < 0 ? palette.expense : palette.textPrimary,
                 fontSize: 34,
@@ -198,9 +189,18 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
               ),
             ],
           ),
+          if (sheet.overdrafts > 0)
+            _BreakdownLine(
+                label: '其他账户负余额',
+                value: sheet.overdrafts,
+                currency: baseCurrency),
+          if (sheet.loanCredit > 0)
+            _BreakdownLine(
+                label: '贷款溢还', value: sheet.loanCredit, currency: baseCurrency),
           if (creditCardCredit > 0) ...[
             const SizedBox(height: 8),
             _BreakdownLine(
+              key: const Key('accounts-card-credit'),
               label: '信用卡溢缴款',
               value: creditCardCredit,
               currency: baseCurrency,
@@ -209,10 +209,61 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
             ),
           ],
         ];
+        final goalDetails = Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text('资产目标', style: textTheme.titleMedium),
+                ),
+                if (featuredGoal != null)
+                  Text(
+                    !featuredGoal.valuationAvailable
+                        ? '未估值'
+                        : featuredGoal.isReached
+                            ? '已达成'
+                            : '${(featuredGoal.progressRatio * 100).clamp(0, 100).round()}%',
+                    style: TextStyle(
+                      color: featuredGoal.isReached
+                          ? palette.income
+                          : palette.textMuted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      fontFeatures: compassTabularFigures,
+                    ),
+                  ),
+              ],
+            ),
+            if (featuredGoal != null) ...[
+              const SizedBox(height: 3),
+              Text(
+                '${featuredGoal.goal.name} · 目标 ${compassMoney(featuredGoal.goal.targetAmount, currency: featuredGoal.goal.currency, decimals: 0)}'
+                '${repository.assetGoals.length > 1 ? '（共 ${repository.assetGoals.length} 个）' : ''}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: textTheme.bodySmall,
+              ),
+              const SizedBox(height: 6),
+              if (featuredGoal.valuationAvailable)
+                CompassDualProgressBar(
+                  actualRatio: featuredGoal.progressRatio.clamp(0.0, 1.0),
+                  alertThreshold: 1.0,
+                  height: 5,
+                  actualColor:
+                      featuredGoal.isReached ? palette.income : palette.seed,
+                ),
+            ] else if (repository.assetGoals.isNotEmpty)
+              Text(
+                '${repository.assetGoals.length} 个目标',
+                style: textTheme.bodySmall,
+              ),
+          ],
+        );
         final assetGoals = CompassCard(
           key: const Key('asset-goals-card'),
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          onTap: () => _openAssetGoals(context),
+          onTap: () => _openAssetGoals(context, historicalCutoff),
           child: Row(
             children: [
               const CompassIconBadge(
@@ -221,57 +272,7 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
                 outlined: true,
               ),
               const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text('资产目标', style: textTheme.titleMedium),
-                        ),
-                        if (featuredGoal != null)
-                          Text(
-                            featuredGoal.isReached
-                                ? '已达成'
-                                : '${(featuredGoal.progressRatio * 100).clamp(0, 100).round()}%',
-                            style: TextStyle(
-                              color: featuredGoal.isReached
-                                  ? palette.income
-                                  : palette.textMuted,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              fontFeatures: compassTabularFigures,
-                            ),
-                          ),
-                      ],
-                    ),
-                    if (featuredGoal != null) ...[
-                      const SizedBox(height: 3),
-                      Text(
-                        '${featuredGoal.goal.name} · 目标 ${compassMoney(featuredGoal.goal.targetAmount, currency: baseCurrency, decimals: 0)}'
-                        '${repository.assetGoals.length > 1 ? '（共 ${repository.assetGoals.length} 个）' : ''}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: textTheme.bodySmall,
-                      ),
-                      const SizedBox(height: 6),
-                      CompassDualProgressBar(
-                        actualRatio: featuredGoal.progressRatio.clamp(0.0, 1.0),
-                        alertThreshold: 1.0,
-                        height: 5,
-                        actualColor: featuredGoal.isReached
-                            ? palette.income
-                            : palette.seed,
-                      ),
-                    ] else if (repository.assetGoals.isNotEmpty)
-                      Text(
-                        '${repository.assetGoals.length} 个目标',
-                        style: textTheme.bodySmall,
-                      ),
-                  ],
-                ),
-              ),
+              Expanded(child: goalDetails),
               const SizedBox(width: 4),
               const Icon(Icons.chevron_right_rounded),
             ],
@@ -281,9 +282,27 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
             ? financeDonutSeries(context)
             : [palette.seed, const Color(0xFF8A63B4), const Color(0xFF6AA064)];
         final assetGroups = [
-          (label: '现金', value: cash, color: assetColors[0]),
-          (label: '投资', value: investment, color: assetColors[2]),
-          (label: '退休', value: retirement, color: assetColors[1]),
+          (
+            label: '现金',
+            value: sheet.assetsIn(ReportGroup.cash),
+            color: assetColors[0]
+          ),
+          (
+            label: '投资',
+            value: sheet.assetsIn(ReportGroup.investment),
+            color: assetColors[2]
+          ),
+          (
+            label: '退休',
+            value: sheet.assetsIn(ReportGroup.retirement),
+            color: assetColors[1]
+          ),
+          if (sheet.cardCredit + sheet.loanCredit > 0)
+            (
+              label: '溢付',
+              value: sheet.cardCredit + sheet.loanCredit,
+              color: palette.income
+            ),
         ];
         final allocation = [
           CompassHelpHeading(
@@ -306,13 +325,7 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
           else ...[
             CompassDistributionBar(
               values: [for (final group in assetGroups) group.value],
-              colors: palette.monochrome
-                  ? [for (final group in assetGroups) group.color]
-                  : [
-                      palette.seed,
-                      const Color(0xFF5F9464),
-                      const Color(0xFF7B5BA4),
-                    ],
+              colors: [for (final group in assetGroups) group.color],
               height: 10,
             ),
             const SizedBox(height: 10),
@@ -426,11 +439,11 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
           ],
         ];
         final groupTotal = switch (selectedGroup) {
-          0 => cash,
+          0 => sheet.netIn(ReportGroup.cash),
           1 => creditLiability,
           2 => loanLiability,
-          3 => investment,
-          _ => retirement,
+          3 => sheet.netIn(ReportGroup.investment),
+          _ => sheet.netIn(ReportGroup.retirement),
         };
         final groupTotalLabel = switch (selectedGroup) {
           1 => '负债总额  ${compassMoney(creditLiability, currency: baseCurrency)}',
@@ -497,7 +510,7 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
             CompassSettingsRow(
               icon: Icons.calendar_month_outlined,
               title: '管理信用卡账期',
-              onTap: () => _manageCreditCards(context),
+              onTap: () => _manageCreditCards(context, historicalCutoff),
             ),
           ],
         ];
@@ -718,10 +731,11 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
     }
   }
 
-  void _openAssetGoals(BuildContext context) {
+  void _openAssetGoals(BuildContext context, DateTime? cutoffDate) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => AssetGoalsPage(repository: repository),
+        builder: (_) =>
+            AssetGoalsPage(repository: repository, cutoffDate: cutoffDate),
       ),
     );
   }
@@ -754,7 +768,8 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
     );
   }
 
-  Future<void> _manageCreditCards(BuildContext context) async {
+  Future<void> _manageCreditCards(
+      BuildContext context, DateTime? cutoffDate) async {
     final cards = repository.accounts
         .where((item) => item.accountType == AccountType.creditCard)
         .toList();
@@ -788,7 +803,7 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
       ),
     );
     if (selected != null && context.mounted) {
-      _openAccount(context, selected);
+      _openAccount(context, selected, cutoffDate: cutoffDate);
     }
   }
 }
@@ -830,6 +845,7 @@ class _AmountSummary extends StatelessWidget {
 
 class _BreakdownLine extends StatelessWidget {
   const _BreakdownLine({
+    super.key,
     required this.label,
     required this.value,
     required this.currency,
@@ -1028,16 +1044,17 @@ class _AccountRow extends StatelessWidget {
     final scopedTransactions = repository.transactions.where(
       (item) => !item.transactionDate.isAfter(cutoffDate),
     );
+    final rawBalance = repository.accountBalanceAt(account.id, cutoffDate);
     final creditDebt = account.accountType == AccountType.creditCard
         ? repository.creditCardOutstandingBalance(
             account.id,
-            cutoffDate: isHistorical ? cutoffDate : null,
+            cutoffDate: cutoffDate,
           )
         : null;
     final overpaid = account.accountType == AccountType.creditCard
         ? repository.creditCardCreditBalance(
             account.id,
-            cutoffDate: isHistorical ? cutoffDate : null,
+            cutoffDate: cutoffDate,
           )
         : 0.0;
     final billing = account.accountType == AccountType.creditCard
@@ -1058,13 +1075,18 @@ class _AccountRow extends StatelessWidget {
                 now: now,
               ),
               now: now,
-              committedOutstanding: creditDebt,
+              committedOutstanding: isHistorical
+                  ? creditDebt
+                  : repository
+                      .creditCardCommittedOutstandingBalance(account.id),
             ),
             billing,
             palette,
           );
-    final rawBalance = repository.accountBalanceAt(account.id, cutoffDate);
-    final amount = creditDebt ?? rawBalance.abs();
+    final amount = creditDebt ??
+        (account.accountType == AccountType.loan
+            ? (-rawBalance).clamp(0.0, double.infinity).toDouble()
+            : rawBalance.abs());
     final isNegativeCash = account.accountType != AccountType.creditCard &&
         account.accountType != AccountType.loan &&
         rawBalance < 0;
@@ -1072,26 +1094,32 @@ class _AccountRow extends StatelessWidget {
     final foreignCurrency = account.currency.trim().toUpperCase() !=
         baseCurrency.trim().toUpperCase();
     final baseEquivalent = foreignCurrency
-        ? repository.convertToBase(
-            isNegativeCash ? -amount : amount,
-            account.currency,
+        ? repository.tryConvertAmount(
+            amount: isNegativeCash ? -amount : amount,
+            fromCurrency: account.currency,
+            toCurrency: baseCurrency,
           )
         : null;
-    final reconciledMonth = repository.reconciledMonthForAccount(account.id);
-    final isInvestmentGroup = account.reportGroup == ReportGroup.investment ||
-        account.reportGroup == ReportGroup.retirement;
+    final savedReconciliation =
+        repository.reconciledMonthForAccount(account.id);
+    final cutoffMonth =
+        '${cutoffDate.year}-${cutoffDate.month.toString().padLeft(2, '0')}';
+    final reconciledMonth = isHistorical &&
+            savedReconciliation != null &&
+            savedReconciliation.compareTo(cutoffMonth) > 0
+        ? null
+        : savedReconciliation;
+    final isInvestmentGroup =
+        account.effectiveReportGroup == ReportGroup.investment ||
+            account.effectiveReportGroup == ReportGroup.retirement;
     double? investmentReturnRatio;
     if (isInvestmentGroup) {
-      final snapshots =
-          repository.snapshotsForAccountUpTo(account.id, cutoffDate);
-      if (snapshots.isNotEmpty) {
-        final remainingCost = repository.remainingCostBasisForAccount(
-          account.id,
-          upToDate: cutoffDate,
-        );
-        if (remainingCost > 0) {
-          investmentReturnRatio = (rawBalance - remainingCost) / remainingCost;
-        }
+      final remainingCost = repository.remainingCostBasisForAccount(
+        account.id,
+        upToDate: cutoffDate,
+      );
+      if (remainingCost > 0) {
+        investmentReturnRatio = (rawBalance - remainingCost) / remainingCost;
       }
     }
     final creditLimit = account.creditLimit;
@@ -1103,7 +1131,10 @@ class _AccountRow extends StatelessWidget {
         : null;
     final subtitle = billing == null
         ? [
+            if (!account.isActive && !isHistorical) '已停用',
             account.institution,
+            if (account.accountType == AccountType.loan && rawBalance > 0)
+              '溢还 ${compassMoney(rawBalance, currency: account.currency)}',
             if (account.accountType == AccountType.loan &&
                 account.hasCompleteLoanProfile)
               '${account.loanAnnualInterestRate!.toStringAsFixed(2)}% · ${account.loanTermMonths}期',
@@ -1111,6 +1142,9 @@ class _AccountRow extends StatelessWidget {
             if (reconciledMonth != null) '已对账 $reconciledMonth',
           ].whereType<String>().where((item) => item.isNotEmpty).join(' · ')
         : [
+            if (!account.isActive && !isHistorical) '已停用',
+            if (!isHistorical && account.currentBalance != rawBalance)
+              '含未来承诺余额 ${compassMoney(account.currentBalance, currency: account.currency)}',
             billing.isEstimated
                 ? '当前为估算提醒'
                 : '结算日 ${account.statementDay}日 · 还款日 ${account.paymentDueDay}日',
@@ -1135,7 +1169,7 @@ class _AccountRow extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '${account.name}${account.accountType == AccountType.creditCard ? ' · ${_cardSuffix(account)}' : ''}',
+                    account.name,
                     style: Theme.of(context).textTheme.titleMedium,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -1267,7 +1301,7 @@ class _AccountAmountColumn extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           if (hasBilling)
-            Text('当前欠款', style: Theme.of(context).textTheme.bodySmall),
+            Text('月末欠款', style: Theme.of(context).textTheme.bodySmall),
           const SizedBox(height: 3),
           Text(
             '${isNegativeCash ? '- ' : ''}${compassMoney(amount, currency: currency)}',
@@ -1287,7 +1321,9 @@ class _AccountAmountColumn extends StatelessWidget {
                     fontFeatures: compassTabularFigures,
                   ),
             ),
-          ],
+          ] else if (normalizeCurrency(currency) !=
+              normalizeCurrency(baseCurrency))
+            Text('未估值', style: Theme.of(context).textTheme.bodySmall),
         ],
       );
 }
@@ -1386,12 +1422,6 @@ IconData _accountIcon(AccountType type) => switch (type) {
       AccountType.loan => Icons.request_quote_outlined,
       AccountType.other => Icons.account_balance_wallet_outlined,
     };
-
-String _cardSuffix(Account account) {
-  final digits =
-      RegExp(r'\d').allMatches(account.note ?? '').map((m) => m[0]).join();
-  return digits.length >= 4 ? digits.substring(digits.length - 4) : '1234';
-}
 
 DateTime _endOfMonth(DateTime month) =>
     DateTime(month.year, month.month + 1, 0, 23, 59, 59, 999);

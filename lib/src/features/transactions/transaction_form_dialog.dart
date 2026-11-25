@@ -1,13 +1,71 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/data/finance_repository.dart';
 import '../../core/models/account.dart';
 import '../../core/models/category.dart';
 import '../../core/models/transaction.dart';
+import '../../core/providers/repository_provider.dart';
 import '../../core/utils/currency_formatter.dart';
+import '../../core/utils/anchored_month.dart';
 import '../../core/utils/id_generator.dart';
 import '../shared/finance_form_fields.dart';
 
+/// Retain the editing session's database when a standalone form is supplied.
+FinanceRepository currentEntryLedger(
+    BuildContext context, FinanceRepository ledger) {
+  final scope =
+      context.getInheritedWidgetOfExactType<UncontrolledProviderScope>();
+  if (scope != null && scope.container.exists(financeRepositoryProvider)) {
+    final latest = scope.container.read(financeRepositoryProvider).valueOrNull;
+    if (latest != null && identical(latest.database, ledger.database)) {
+      return latest;
+    }
+  }
+  return ledger;
+}
+
+Widget watchEntryLedger(
+    BuildContext context, FinanceRepository ledger, WidgetBuilder build) {
+  final scope =
+      context.getInheritedWidgetOfExactType<UncontrolledProviderScope>();
+  if (scope == null || !scope.container.exists(financeRepositoryProvider)) {
+    return build(context);
+  }
+  final current = scope.container.read(financeRepositoryProvider).valueOrNull;
+  if (current != null && !identical(current.database, ledger.database)) {
+    return build(context);
+  }
+  return Consumer(builder: (context, ref, _) {
+    ref.watch(financeRepositoryProvider);
+    return build(context);
+  });
+}
+
+List<Category> entryCategoryOptions(
+        BuildContext context, FinanceRepository ledger, TransactionType type,
+        {String? originalCategoryId}) =>
+    currentEntryLedger(context, ledger).transactionCategoryOptions(type,
+        originalCategoryId: originalCategoryId);
+
+/// Older loan transfers can contain a real principal leg without enough
+/// evidence to allocate it to a particular contractual installment.
+bool hasUnallocatedLoanSplit(
+    LoanInstallmentFields? entry, FinanceRepository repository) {
+  if (entry == null ||
+      entry.loanInstallmentNumber != null ||
+      (entry is FinanceTransaction && entry.legacyLoanPartNumber != null) ||
+      entry.type != TransactionType.transfer ||
+      entry.toAmount == null) {
+    return false;
+  }
+  final target =
+      repository.accounts.where((a) => a.id == entry.toAccountId).firstOrNull;
+  if (target == null || target.accountType != AccountType.loan) return false;
+  return entry.toAmount != entry.amount || entry.currency != target.currency;
+}
+
+/// Legacy layout retained for compatibility; the active UI uses TransactionComposerPage.
 class TransactionFormDialog extends StatefulWidget {
   const TransactionFormDialog({
     super.key,
@@ -28,6 +86,7 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
   final formKey = GlobalKey<FormState>();
   final amountController = TextEditingController();
   final toAmountController = TextEditingController();
+  final loanPaymentController = TextEditingController();
   final descriptionController = TextEditingController();
   final merchantController = TextEditingController();
 
@@ -44,10 +103,22 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
   bool _isAutoSettingToAmount = false;
   bool _toAmountEditedByUser = false;
 
+  FinanceRepository get _ledger =>
+      currentEntryLedger(context, widget.repository);
+
   bool get _isEditing => widget.initialTransaction != null;
 
+  FinanceTransaction? get _seed =>
+      widget.initialTransaction ?? widget.draftTransaction;
+  bool get _isInstallment => _seed?.loanInstallmentNumber != null;
+  bool get _keepUnallocatedSplit => hasUnallocatedLoanSplit(_seed, _ledger);
+  double? get _loanPayment => double.tryParse(
+      (currency == toCurrency ? amountController : loanPaymentController)
+          .text
+          .trim());
+
   bool get _usesCreditCardAccount {
-    final creditCardIds = widget.repository.accounts
+    final creditCardIds = _ledger.accounts
         .where((item) => item.accountType == AccountType.creditCard)
         .map((item) => item.id)
         .toSet();
@@ -74,7 +145,9 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
       settlementDate =
           initialTransaction == null ? null : seedTransaction.transactionDate;
       accountId = seedTransaction.accountId;
-      toAccountId = seedTransaction.toAccountId;
+      toAccountId = transactionType == TransactionType.transfer
+          ? seedTransaction.toAccountId
+          : null;
       if (_usesCreditCardAccount) {
         settlementDate = null;
       }
@@ -82,17 +155,24 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
       amountController.text = seedTransaction.amount.toString();
       currency = normalizeCurrency(seedTransaction.currency);
       toAmountController.text = seedTransaction.toAmount?.toString() ?? '';
+      loanPaymentController.text =
+          seedTransaction.loanPaymentAmount?.toString() ?? '';
       toCurrency = normalizeCurrency(
         seedTransaction.toCurrency ?? seedTransaction.transferInCurrency,
       );
       _toAmountEditedByUser = seedTransaction.toAmount != null;
       descriptionController.text = seedTransaction.description ?? '';
       merchantController.text = seedTransaction.merchant ?? '';
-      _syncCategoryDefault();
     }
 
     final accountOptions = _sortedAccounts();
-    if (accountOptions.isNotEmpty && accountId == null) {
+    if (seedTransaction != null && !_isEditing) {
+      if (!accountOptions.any((a) => a.id == accountId)) accountId = null;
+      if (!_sortedAccounts(target: true).any((a) => a.id == toAccountId)) {
+        toAccountId = null;
+      }
+    }
+    if (seedTransaction == null && accountOptions.isNotEmpty) {
       accountId = _preferredAccountId(accountOptions);
       currency = _currencyForAccount(accountId!) ?? currency;
     }
@@ -102,7 +182,7 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
     if (toAccountId != null) {
       toCurrency = _currencyForAccount(toAccountId!) ?? toCurrency;
     }
-    _syncCategoryDefault();
+    _syncCategoryDefault(newEntry: seedTransaction == null);
     amountController.addListener(_updateTransferEstimateIfAllowed);
     toAmountController.addListener(_markToAmountEdited);
     _updateTransferEstimate(force: toAmountController.text.trim().isEmpty);
@@ -112,14 +192,27 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
   void dispose() {
     amountController.dispose();
     toAmountController.dispose();
+    loanPaymentController.dispose();
     descriptionController.dispose();
     merchantController.dispose();
     super.dispose();
   }
 
   @override
-  Widget build(BuildContext context) {
-    final accountOptions = _sortedAccounts();
+  Widget build(BuildContext context) =>
+      watchEntryLedger(context, widget.repository, _buildForm);
+
+  Widget _buildForm(BuildContext context) {
+    final accountOptions = _sortedAccounts()
+        .where((a) => !_isInstallment || a.id != toAccountId)
+        .toList();
+    final targetOptions = _sortedAccounts(target: true)
+        .where((a) =>
+            a.id != accountId ||
+            (_isEditing &&
+                _seed!.accountId == _seed!.toAccountId &&
+                a.id == _seed!.toAccountId))
+        .toList();
     final categoryOptions = _categoryOptions();
 
     return AlertDialog(
@@ -142,18 +235,24 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                       .map((type) => DropdownMenuItem(
                           value: type, child: Text(_typeLabel(type))))
                       .toList(),
-                  onChanged: (value) {
-                    if (value == null) {
-                      return;
-                    }
-                    setState(() {
-                      transactionType = value;
-                      toAccountId = null;
-                      _toAmountEditedByUser = false;
-                      _syncCategoryDefault();
-                    });
-                    _updateTransferEstimate(force: true);
-                  },
+                  onChanged: _isInstallment || _keepUnallocatedSplit
+                      ? null
+                      : (value) {
+                          if (value == null || value == transactionType) {
+                            return;
+                          }
+                          setState(() {
+                            transactionType = value;
+                            toAccountId = null;
+                            toAmountController.clear();
+                            loanPaymentController.clear();
+                            toCurrency = currency;
+                            categoryId = null;
+                            _toAmountEditedByUser = false;
+                            _syncCategoryDefault(newEntry: true);
+                          });
+                          _updateTransferEstimate(force: true);
+                        },
                 ),
                 const SizedBox(height: 12),
                 _StatusSwitch(
@@ -183,7 +282,10 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                 ],
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
-                  value: accountId,
+                  key: const Key('entry-source-account'),
+                  value: accountOptions.any((a) => a.id == accountId)
+                      ? accountId
+                      : null,
                   decoration: const InputDecoration(
                     labelText: '转出账户',
                     border: OutlineInputBorder(),
@@ -196,28 +298,48 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                         ),
                       )
                       .toList(),
-                  onChanged: (value) => setState(() {
-                    accountId = value;
-                    if (_usesCreditCardAccount) {
-                      settlementDate = null;
-                    }
-                    if (value != null) {
-                      currency = _currencyForAccount(value) ?? currency;
-                    }
-                    _toAmountEditedByUser = false;
-                    _updateTransferEstimate(force: true);
-                  }),
+                  onChanged: _keepUnallocatedSplit
+                      ? null
+                      : (value) => setState(() {
+                            final loanPayment =
+                                _isInstallment ? _loanPayment : null;
+                            final oldCurrency = currency;
+                            accountId = value;
+                            if (accountId == toAccountId) toAccountId = null;
+                            if (_usesCreditCardAccount) {
+                              settlementDate = null;
+                            }
+                            if (value != null) {
+                              currency = _currencyForAccount(value) ?? currency;
+                            }
+                            if (loanPayment != null &&
+                                oldCurrency != currency) {
+                              loanPaymentController.text =
+                                  loanPayment.toStringAsFixed(2);
+                              amountController.text = _ledger
+                                      .tryConvertAmount(
+                                          amount: loanPayment,
+                                          fromCurrency: toCurrency,
+                                          toCurrency: currency)
+                                      ?.toStringAsFixed(2) ??
+                                  '';
+                            }
+                            _toAmountEditedByUser = false;
+                            _updateTransferEstimate(force: true);
+                          }),
                 ),
                 if (transactionType == TransactionType.transfer) ...[
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
-                    value: toAccountId,
+                    key: const Key('entry-target-account'),
+                    value: targetOptions.any((a) => a.id == toAccountId)
+                        ? toAccountId
+                        : null,
                     decoration: const InputDecoration(
                       labelText: '转入账户',
                       border: OutlineInputBorder(),
                     ),
-                    items: accountOptions
-                        .where((account) => account.id != accountId)
+                    items: targetOptions
                         .map(
                           (account) => DropdownMenuItem(
                             value: account.id,
@@ -226,23 +348,29 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                           ),
                         )
                         .toList(),
-                    onChanged: (value) => setState(() {
-                      toAccountId = value;
-                      if (_usesCreditCardAccount) {
-                        settlementDate = null;
-                      }
-                      if (value != null) {
-                        toCurrency = _currencyForAccount(value) ?? toCurrency;
-                      }
-                      _toAmountEditedByUser = false;
-                      _updateTransferEstimate(force: true);
-                    }),
+                    onChanged: _isInstallment || _keepUnallocatedSplit
+                        ? null
+                        : (value) => setState(() {
+                              toAccountId = value;
+                              if (_usesCreditCardAccount) {
+                                settlementDate = null;
+                              }
+                              if (value != null) {
+                                toCurrency =
+                                    _currencyForAccount(value) ?? toCurrency;
+                              }
+                              _toAmountEditedByUser = false;
+                              _updateTransferEstimate(force: true);
+                            }),
                   ),
                 ],
                 if (categoryOptions.isNotEmpty) ...[
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
-                    value: categoryId,
+                    value: categoryOptions.any((c) => c.id == categoryId)
+                        ? categoryId
+                        : null,
+                    hint: const Text('未分类'),
                     decoration: const InputDecoration(
                       labelText: '类别',
                       border: OutlineInputBorder(),
@@ -252,7 +380,7 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                           (category) => DropdownMenuItem(
                             value: category.id,
                             child: Text(
-                                '${category.name} (${_categoryTypeLabel(category.type)})'),
+                                '${category.name} (${_categoryTypeLabel(category.type)})${category.isArchived ? ' · 已归档' : ''}'),
                           ),
                         )
                         .toList(),
@@ -264,6 +392,7 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                   isAmount: true,
                   controller: amountController,
                   label: '金额',
+                  readOnly: _keepUnallocatedSplit,
                   keyboardType: const TextInputType.numberWithOptions(
                     decimal: true,
                     signed: true,
@@ -281,13 +410,34 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                   FinanceTextField(
                     isAmount: true,
                     controller: toAmountController,
-                    label: '转入金额',
+                    label: _isInstallment ? '偿还本金' : '转入金额',
+                    readOnly: _keepUnallocatedSplit ||
+                        (!_isInstallment && currency == toCurrency),
                     keyboardType: const TextInputType.numberWithOptions(
                       decimal: true,
                       signed: true,
                     ),
-                    validator: _numberRequired,
+                    validator: _isInstallment
+                        ? (value) {
+                            final principal = double.tryParse(value ?? '');
+                            final paid =
+                                double.tryParse(amountController.text.trim());
+                            return paid != null &&
+                                    validLoanInstallmentAmounts(paid, principal,
+                                        loanPaymentAmount: _loanPayment,
+                                        sameCurrency: currency == toCurrency)
+                                ? null
+                                : '请核对还款金额、本金及冲正符号';
+                          }
+                        : _numberRequired,
                   ),
+                  if (_isInstallment && currency != toCurrency)
+                    FinanceTextField(
+                      isAmount: true,
+                      controller: loanPaymentController,
+                      label: '贷款原币还款总额 ($toCurrency)',
+                      validator: _numberRequired,
+                    ),
                   const SizedBox(height: 12),
                   _CurrencyDisplayField(
                     label: '转入币种',
@@ -298,7 +448,9 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                   Align(
                     alignment: Alignment.centerLeft,
                     child: Text(
-                      _transferPreviewText(),
+                      _keepUnallocatedSplit
+                          ? '未关联贷款期号，保留原始付款与到账金额。'
+                          : _transferPreviewText(),
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ),
@@ -347,7 +499,9 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                   Align(
                     alignment: Alignment.centerLeft,
                     child: Text(
-                      '会从当前日期开始，按月生成未来 $recurrenceMonths 个月的记录，包含当前这笔。',
+                      _isInstallment && recurrenceMonths > 1
+                          ? '这 $recurrenceMonths 笔还款均计入第 ${_seed!.loanInstallmentNumber} 期。跨期月供可在贷款详情按合同生成。'
+                          : '会从当前日期开始，按月生成未来 $recurrenceMonths 个月的记录，包含当前这笔。',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ),
@@ -377,36 +531,23 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
     );
   }
 
-  List<Account> _sortedAccounts() {
-    final accounts = [...widget.repository.accounts]
+  List<Account> _sortedAccounts({bool target = false}) {
+    final original = widget.initialTransaction;
+    final accounts = _ledger.entryAccounts(
+        originalAccountId: target ? original?.toAccountId : original?.accountId)
       ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     return accounts;
   }
 
-  List<Category> _categoryOptions() {
-    final categories = switch (transactionType) {
-      TransactionType.income =>
-        widget.repository.categoriesByType(CategoryType.income),
-      TransactionType.expense =>
-        widget.repository.categoriesByType(CategoryType.expense),
-      TransactionType.transfer => [
-          ...widget.repository.categoriesByType(CategoryType.transfer),
-          ...widget.repository.categoriesByType(CategoryType.investment),
-        ],
-      TransactionType.adjustment => [
-          ...widget.repository.categoriesByType(CategoryType.investment),
-          ...widget.repository.categoriesByType(CategoryType.transfer),
-        ],
-    };
-
-    categories
-        .sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-    return categories;
-  }
+  List<Category> _categoryOptions() =>
+      entryCategoryOptions(context, widget.repository, transactionType,
+          originalCategoryId: widget.initialTransaction?.type == transactionType
+              ? widget.initialTransaction?.categoryId
+              : null);
 
   String _preferredAccountId(List<Account> accounts) {
     final counts = <String, int>{};
-    for (final transaction in widget.repository.transactions) {
+    for (final transaction in _ledger.transactions) {
       counts[transaction.accountId] = (counts[transaction.accountId] ?? 0) + 1;
     }
 
@@ -423,7 +564,7 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
   }
 
   String? _currencyForAccount(String accountId) {
-    for (final account in widget.repository.accounts) {
+    for (final account in _ledger.accounts) {
       if (account.id == accountId) {
         return normalizeCurrency(account.currency);
       }
@@ -443,27 +584,35 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
   }
 
   void _updateTransferEstimate({bool force = false}) {
-    if (transactionType != TransactionType.transfer) {
+    if (transactionType != TransactionType.transfer ||
+        _isInstallment ||
+        _keepUnallocatedSplit) {
       return;
     }
-    if (!force && _toAmountEditedByUser) {
+    if (!force && _toAmountEditedByUser && currency != toCurrency) {
       return;
     }
     final amount = double.tryParse(amountController.text.trim());
     if (amount == null) {
       return;
     }
-    final estimate = widget.repository.convertAmount(
+    final estimate = _ledger.tryConvertAmount(
       amount: amount,
       fromCurrency: currency,
       toCurrency: toCurrency,
     );
     _isAutoSettingToAmount = true;
-    toAmountController.text = estimate.toStringAsFixed(2);
+    toAmountController.text = estimate?.toStringAsFixed(2) ?? '';
     _isAutoSettingToAmount = false;
   }
 
   String _transferPreviewText() {
+    if (currency != toCurrency &&
+        _ledger.tryConvertAmount(
+                amount: 1, fromCurrency: currency, toCurrency: toCurrency) ==
+            null) {
+      return _isInstallment ? '缺少汇率，请核对两端实际还款金额' : '缺少汇率，请输入实际到账金额';
+    }
     final amount = double.tryParse(amountController.text.trim());
     final toAmount = double.tryParse(toAmountController.text.trim());
     if (amount == null || toAmount == null) {
@@ -480,7 +629,7 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
 
     final allowedCategoryIds = categories.map((item) => item.id).toSet();
     final counts = <String, int>{};
-    for (final transaction in widget.repository.transactions) {
+    for (final transaction in _ledger.transactions) {
       if (transaction.type != transactionType) {
         continue;
       }
@@ -504,7 +653,7 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
     return categories.first.id;
   }
 
-  void _syncCategoryDefault() {
+  void _syncCategoryDefault({bool newEntry = false}) {
     final categories = _categoryOptions();
     if (categories.isEmpty) {
       categoryId = null;
@@ -513,7 +662,10 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
     if (categoryId != null && categories.any((item) => item.id == categoryId)) {
       return;
     }
-    categoryId = _preferredCategoryId(categories);
+    categoryId = transactionType == TransactionType.transfer ||
+            (!newEntry && categoryId == null)
+        ? null
+        : _preferredCategoryId(categories.where((c) => !c.isArchived).toList());
   }
 
   Future<void> _pickRecordDate() async {
@@ -541,6 +693,22 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
   }
 
   void _submit() {
+    if (!_sortedAccounts().any((a) => a.id == accountId) ||
+        (transactionType == TransactionType.transfer &&
+            !_sortedAccounts(target: true).any((a) => a.id == toAccountId))) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请选择启用的账户；已停用账户只能保留在原记录中。')),
+      );
+      return;
+    }
+    if (categoryId != null &&
+        !_categoryOptions().any((c) => c.id == categoryId)) {
+      setState(() => categoryId = null);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('所选类别已变更，请重新选择类别或确认为未分类。')),
+      );
+      return;
+    }
     if (!formKey.currentState!.validate() || accountId == null) {
       return;
     }
@@ -549,18 +717,24 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
     }
 
     final amount = double.parse(amountController.text.trim());
-    final transferInAmount = transactionType == TransactionType.transfer
+    final transferInAmount = transactionType == TransactionType.transfer &&
+            (currency != toCurrency || _isInstallment || _keepUnallocatedSplit)
         ? double.parse(toAmountController.text.trim())
         : null;
-    final transferInCurrency = transactionType == TransactionType.transfer
-        ? normalizeCurrency(toCurrency)
-        : null;
+    final transferInCurrency = _keepUnallocatedSplit
+        ? _seed!.toCurrency
+        : transactionType == TransactionType.transfer
+            ? normalizeCurrency(toCurrency)
+            : null;
     final description = _nullIfEmpty(descriptionController.text);
     final merchant = _nullIfEmpty(merchantController.text);
     final effectiveSettlementDate =
         _usesCreditCardAccount ? recordDate : settlementDate ?? recordDate;
 
     if (_isEditing) {
+      final keepLegacyLink =
+          widget.initialTransaction!.type == transactionType &&
+              widget.initialTransaction!.toAccountId == toAccountId;
       Navigator.of(context).pop(
         TransactionFormResult(
           transactions: [
@@ -571,8 +745,18 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
               toAccountId: toAccountId,
               categoryId: categoryId,
               amount: amount,
-              currency: currency,
+              currency: _keepUnallocatedSplit ? _seed!.currency : currency,
               toAmount: transferInAmount,
+              loanInstallmentNumber: _seed?.loanInstallmentNumber,
+              loanPaymentAmount: _isInstallment && currency != toCurrency
+                  ? _loanPayment
+                  : null,
+              legacyLoanPartNumber: keepLegacyLink
+                  ? widget.initialTransaction?.legacyLoanPartNumber
+                  : null,
+              legacyLoanId: keepLegacyLink
+                  ? widget.initialTransaction?.legacyLoanId
+                  : null,
               toCurrency: transferInCurrency,
               recordDate: recordDate,
               transactionDate: effectiveSettlementDate,
@@ -596,8 +780,11 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
         toAccountId: toAccountId,
         categoryId: categoryId,
         amount: amount,
-        currency: currency,
+        currency: _keepUnallocatedSplit ? _seed!.currency : currency,
         toAmount: transferInAmount,
+        loanInstallmentNumber: _seed?.loanInstallmentNumber,
+        loanPaymentAmount:
+            _isInstallment && currency != toCurrency ? _loanPayment : null,
         toCurrency: transferInCurrency,
         recordDate: recordDate,
         transactionDate: effectiveSettlementDate,
@@ -879,16 +1066,9 @@ List<FinanceTransaction> buildRecurringTransactions({
   final idPrefix = baseTransaction.id;
 
   return List.generate(safeMonths, (index) {
-    final settlementDate = DateTime(
-      baseTransaction.transactionDate.year,
-      baseTransaction.transactionDate.month + index,
-      baseTransaction.transactionDate.day,
-    );
-    final recordDate = DateTime(
-      baseTransaction.recordDate.year,
-      baseTransaction.recordDate.month + index,
-      baseTransaction.recordDate.day,
-    );
+    final settlementDate =
+        anchoredMonthDate(baseTransaction.transactionDate, index);
+    final recordDate = anchoredMonthDate(baseTransaction.recordDate, index);
     return FinanceTransaction(
       id: '$idPrefix-${index + 1}',
       type: baseTransaction.type,
@@ -898,6 +1078,8 @@ List<FinanceTransaction> buildRecurringTransactions({
       amount: baseTransaction.amount,
       currency: baseTransaction.currency,
       toAmount: baseTransaction.toAmount,
+      loanInstallmentNumber: baseTransaction.loanInstallmentNumber,
+      loanPaymentAmount: baseTransaction.loanPaymentAmount,
       toCurrency: baseTransaction.toCurrency,
       recordDate: recordDate,
       transactionDate: settlementDate,

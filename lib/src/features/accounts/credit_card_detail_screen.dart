@@ -2,6 +2,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../shared/category_icons.dart';
+
 import '../shared/finance_amount_field.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -18,6 +20,8 @@ import '../shared/compass_ui.dart';
 import '../transactions/transaction_composer_page.dart';
 import '../transactions/transaction_form_dialog.dart';
 import 'account_form_dialog.dart';
+import 'repayment_account_picker.dart';
+import 'unavailable_account_page.dart';
 
 class CreditCardDetailScreen extends ConsumerStatefulWidget {
   const CreditCardDetailScreen({
@@ -52,10 +56,11 @@ class _CreditCardDetailScreenState
   Widget build(BuildContext context) {
     final liveRepository =
         ref.watch(financeRepositoryProvider).valueOrNull ?? widget.repository;
-    final liveAccount = liveRepository.accounts.firstWhere(
-      (item) => item.id == widget.account.id,
-      orElse: () => widget.account,
-    );
+    final liveAccount = liveRepository.accounts.where((a) => a.id == widget.account.id).firstOrNull;
+    if (!identical(liveRepository.database, widget.repository.database) ||
+        liveAccount == null || liveAccount.accountType != AccountType.creditCard) {
+      return const UnavailableAccountPage();
+    }
     final isHistoricalCutoff = _historicalCutoff != null;
     final now = _historicalCutoff ?? DateTime.now();
     final scopedTransactions = isHistoricalCutoff
@@ -77,12 +82,16 @@ class _CreditCardDetailScreenState
       cutoffDate: isHistoricalCutoff ? now : null,
       now: now,
     );
-    final limit = liveAccount.creditLimit ?? 10000;
+    final limit = liveAccount.creditLimit;
     final usageAmount = liveRepository.creditCardOutstandingBalance(
       liveAccount.id,
       cutoffDate: isHistoricalCutoff ? now : null,
     );
-    final usage = (usageAmount / limit).clamp(0, 1).toDouble();
+    final usage = limit != null && limit.isFinite && limit > 0
+        ? (usageAmount / limit).clamp(0, 1).toDouble()
+        : null;
+    final unpaidPeriod =
+        summary.openStatements.firstOrNull?.period ?? currentPeriod;
     final isSelectedStatement = selectedHistoricalStatementDate != null;
     final period = isSelectedStatement
         ? calculateCreditCardBillingPeriodForStatement(
@@ -90,7 +99,7 @@ class _CreditCardDetailScreenState
             paymentDueDay: paymentDay,
             statementDate: selectedHistoricalStatementDate!,
           )
-        : currentPeriod;
+        : unpaidPeriod;
     final isFutureStatement = isSelectedStatement &&
         period.statementDate.isAfter(currentPeriod.statementDate);
     final billedPurchases = _presentedPurchases(
@@ -103,7 +112,7 @@ class _CreditCardDetailScreenState
     final unbilledPurchases = _presentedPurchases(
       liveRepository,
       liveAccount,
-      period,
+      currentPeriod,
       unbilled: true,
       cutoffDate: isHistoricalCutoff ? now : null,
     );
@@ -136,6 +145,7 @@ class _CreditCardDetailScreenState
             ),
             palette,
             isFuture: isFutureStatement,
+            isCurrent: period.statementDate == currentPeriod.statementDate,
           )
         : _creditCardDisplayCopy(
             displayState,
@@ -168,7 +178,7 @@ class _CreditCardDetailScreenState
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      '${liveAccount.name}  ···· ${_cardSuffix(liveAccount)}',
+                      liveAccount.name,
                       style: Theme.of(context).textTheme.titleMedium,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -232,6 +242,12 @@ class _CreditCardDetailScreenState
                           label: display.statusLabel,
                           color: display.color,
                         ),
+                        if (!isSelectedStatement &&
+                            summary.openStatements.length > 1)
+                          Text(
+                            '其余已出账待还 ${compassMoney(summary.openStatements.skip(1).fold<double>(0, (sum, bill) => sum + bill.amount), currency: liveAccount.currency)}',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
                       ],
                     ),
                   ),
@@ -243,7 +259,7 @@ class _CreditCardDetailScreenState
                           key: const Key('record-credit-card-repayment'),
                           label: display.paymentActionLabel,
                           height: 42,
-                          onPressed: display.canRepay && !isHistoricalCutoff
+                          onPressed: liveAccount.isActive && display.canRepay && !isHistoricalCutoff
                               ? () => _addRepayment(
                                     context,
                                     liveRepository,
@@ -264,7 +280,9 @@ class _CreditCardDetailScreenState
                             liveRepository,
                             liveAccount,
                             currentPeriod,
+                            unpaidPeriod,
                             now,
+                            scopedTransactions,
                           ),
                           style: OutlinedButton.styleFrom(
                             minimumSize: const Size.fromHeight(42),
@@ -286,7 +304,7 @@ class _CreditCardDetailScreenState
                   title: Text('账单周期时间线',
                       style: Theme.of(context).textTheme.titleMedium),
                   label: '账单周期',
-                  message: '消费与信用卡转出会按交易日期自动归入对应账单。',
+                  message: '消费、转出与退款按发生日归入账单；还款优先偿还最早的未清账期。',
                 ),
               ),
               const SizedBox(height: 10),
@@ -306,7 +324,7 @@ class _CreditCardDetailScreenState
                   ),
                   const SizedBox(width: 10),
                   Text(
-                    '额度使用 ${(usage * 100).round()}%',
+                    usage == null ? '额度使用 —' : '额度使用 ${(usage * 100).round()}%',
                     style: Theme.of(context).textTheme.titleSmall,
                   ),
                   const SizedBox(width: 8),
@@ -316,7 +334,7 @@ class _CreditCardDetailScreenState
                       alignment: Alignment.centerRight,
                       child: Text(
                         '${compassMoney(usageAmount, currency: liveAccount.currency)} / '
-                        '${compassMoney(limit, currency: liveAccount.currency)}',
+                        '${usage == null ? '未设置额度' : compassMoney(limit!, currency: liveAccount.currency)}',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                               fontFeatures: compassTabularFigures,
                             ),
@@ -327,7 +345,7 @@ class _CreditCardDetailScreenState
               ),
               const SizedBox(height: 8),
               LinearProgressIndicator(
-                value: usage,
+                value: usage ?? 0,
                 minHeight: 6,
                 borderRadius: BorderRadius.circular(8),
                 color: financePaletteOf(context).seed,
@@ -340,7 +358,7 @@ class _CreditCardDetailScreenState
                   children: [
                     Expanded(
                       child: Text(
-                        '${period.billingMonthDate.year}年${period.billingMonthDate.month}月${isFutureStatement ? '已确定' : '历史'}账单',
+                        '${period.billingMonthDate.year}年${period.billingMonthDate.month}月${isFutureStatement ? '已确定' : period.statementDate == currentPeriod.statementDate ? '本期' : '历史'}账单',
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
                     ),
@@ -355,7 +373,13 @@ class _CreditCardDetailScreenState
                 )
               else
                 CompassSegmentedControl(
-                  labels: const ['本期账单', '未出账'],
+                  labels: [
+                    unpaidPeriod.statementDate
+                            .isBefore(currentPeriod.statementDate)
+                        ? '最早未还账单'
+                        : '本期账单',
+                    '未出账'
+                  ],
                   selectedIndex: selectedStatement,
                   onChanged: (value) =>
                       setState(() => selectedStatement = value),
@@ -368,7 +392,7 @@ class _CreditCardDetailScreenState
                     child: Text(
                       isSelectedStatement || selectedStatement == 0
                           ? '账单周期 ${_shortDate(period.cycleStartDate)}—${_shortDate(period.statementDate)} · 共 ${purchases.length} 笔'
-                          : '未出账周期 ${_shortDate(period.statementDate.add(const Duration(days: 1)))}—${_shortDate(period.nextStatementDate)} · 共 ${purchases.length} 笔',
+                          : '未出账周期 ${_shortDate(currentPeriod.statementDate.add(const Duration(days: 1)))}—${_shortDate(currentPeriod.nextStatementDate)} · 共 ${purchases.length} 笔',
                       maxLines: 2,
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
@@ -414,7 +438,7 @@ class _CreditCardDetailScreenState
                   padding: const EdgeInsets.symmetric(vertical: 36),
                   child: Center(
                     child: Text(
-                      selectedStatement == 0 ? '本账期没有信用卡消费或转出' : '当前没有未出账消费或转出',
+                      selectedStatement == 0 ? '本账期没有信用卡明细' : '当前没有未出账明细',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ),
@@ -427,7 +451,7 @@ class _CreditCardDetailScreenState
                           liveRepository,
                           purchases,
                           isSelectedStatement
-                              ? '${period.billingMonthDate.year}年${period.billingMonthDate.month}月${isFutureStatement ? '已确定' : '历史'}账单明细'
+                              ? '${period.billingMonthDate.year}年${period.billingMonthDate.month}月${isFutureStatement ? '已确定' : period.statementDate == currentPeriod.statementDate ? '本期' : '历史'}账单明细'
                               : selectedStatement == 0
                                   ? '本期账单明细'
                                   : '未出账明细',
@@ -454,7 +478,9 @@ class _CreditCardDetailScreenState
     FinanceRepository repository,
     Account account,
     CreditCardBillingPeriod currentPeriod,
+    CreditCardBillingPeriod unpaidPeriod,
     DateTime now,
+    List<FinanceTransaction> scopedTransactions,
   ) async {
     if (!account.hasCompleteCreditCardProfile) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -464,7 +490,7 @@ class _CreditCardDetailScreenState
     }
     final periods = availableCreditCardBillingPeriods(
       account: account,
-      transactions: repository.transactions,
+      transactions: scopedTransactions,
       now: now,
     );
     final selected = await showModalBottomSheet<CreditCardBillingPeriod>(
@@ -505,12 +531,12 @@ class _CreditCardDetailScreenState
                         item.statementDate == currentPeriod.statementDate;
                     final isFuture =
                         item.statementDate.isAfter(currentPeriod.statementDate);
-                    final isSelected = isCurrent
-                        ? selectedHistoricalStatementDate == null
-                        : selectedHistoricalStatementDate == item.statementDate;
+                    final isSelected = item.statementDate ==
+                        (selectedHistoricalStatementDate ??
+                            unpaidPeriod.statementDate);
                     final amount = calculateCreditCardOriginalStatementAmount(
                       accountId: account.id,
-                      transactions: repository.transactions,
+                      transactions: scopedTransactions,
                       period: item,
                       statementAmountOverride:
                           repository.creditCardStatementAmountOverride(
@@ -578,18 +604,18 @@ class _CreditCardDetailScreenState
     );
     if (!mounted || selected == null) return;
     setState(() {
-      selectedHistoricalStatementDate =
-          selected.statementDate == currentPeriod.statementDate
-              ? null
-              : selected.statementDate;
+      // The picker opens the original statement even when that statement
+      // also supplies the live oldest unpaid balance.
+      selectedHistoricalStatementDate = selected.statementDate;
       selectedStatement = 0;
     });
   }
 
   Future<void> _editAccount(BuildContext context, Account current) async {
+    final live = ref.read(financeRepositoryProvider).valueOrNull ?? widget.repository;
     final updated = await showDialog<Account>(
       context: context,
-      builder: (_) => AccountFormDialog(initialAccount: current),
+      builder: (_) => AccountFormDialog.edit(current, live),
     );
     if (updated != null) {
       await ref.read(accountMutationsProvider.notifier).updateAccount(updated);
@@ -640,43 +666,7 @@ class _CreditCardDetailScreenState
     Account card,
     double suggestedAmount,
   ) async {
-    final sources = repo.accounts
-        .where(
-          (item) =>
-              item.id != card.id &&
-              item.reportGroup == ReportGroup.cash &&
-              item.currency == card.currency,
-        )
-        .toList();
-    if (sources.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('请先建立一个 ${card.currency} 资金账户。')),
-      );
-      return;
-    }
-    final source = await showModalBottomSheet<Account>(
-      context: context,
-      showDragHandle: true,
-      builder: (sheetContext) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-          children: [
-            Text('选择还款账户', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 8),
-            ...sources.map(
-              (item) => ListTile(
-                key: Key('credit-card-repayment-source-${item.id}'),
-                title: Text(item.name),
-                subtitle: Text(item.currency),
-                trailing: const Icon(Icons.chevron_right_rounded),
-                onTap: () => Navigator.pop(sheetContext, item),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+    final source = await pickRepaymentAccount(context, repo, card);
     if (!context.mounted || source == null) return;
 
     final amountController = TextEditingController(
@@ -729,7 +719,8 @@ class _CreditCardDetailScreenState
     if (!context.mounted || amount == null) return;
 
     final now = DateTime.now();
-    await ref.read(transactionMutationsProvider.notifier).addTransaction(
+    try {
+      await ref.read(transactionMutationsProvider.notifier).addTransaction(
           FinanceTransaction(
             id: buildId('txn_card_payment'),
             type: TransactionType.transfer,
@@ -743,6 +734,12 @@ class _CreditCardDetailScreenState
             description: '信用卡还款',
           ),
         );
+    } on FormatException catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
+      }
+      return;
+    }
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('已从 ${source.name} 记录信用卡还款')),
@@ -1048,8 +1045,6 @@ List<_PresentedPurchase> _presentedPurchases(
       .where((item) =>
           item.accountId == account.id &&
           (cutoffDate == null || !item.transactionDate.isAfter(cutoffDate)) &&
-          (item.type == TransactionType.expense ||
-              item.type == TransactionType.transfer) &&
           item.affectsBalance &&
           (unbilled
               ? period.containsUnbilled(item.transactionDate)
@@ -1059,33 +1054,32 @@ List<_PresentedPurchase> _presentedPurchases(
   return matches.map(
     (item) {
       final isTransfer = item.type == TransactionType.transfer;
-      final destinationName = item.toAccountId == null
+      final destinationName = !isTransfer || item.toAccountId == null
           ? '其他账户'
           : repository.accountName(item.toAccountId!);
+      final charge = creditCardSourceCharge(item, account.id);
+      final direction = switch (item.type) {
+        TransactionType.income => '信用卡收入',
+        TransactionType.adjustment => '信用卡调整',
+        TransactionType.expense => charge < 0 ? '消费退款' : '信用卡消费',
+        TransactionType.transfer => '转账至 $destinationName',
+      };
       return _PresentedPurchase(
         transaction: item,
         date: '${item.transactionDate.month}月${item.transactionDate.day}日',
-        title: isTransfer
-            ? (item.description ?? '转账至 $destinationName')
-            : item.merchant ?? item.description ?? '信用卡消费',
+        title: item.merchant ?? item.description ?? direction,
         category: isTransfer
             ? '信用卡转出 · $destinationName'
             : item.categoryId == null
-                ? '消费'
+                ? direction
                 : repository.categoryName(item.categoryId!),
-        amount: item.amount,
+        amount: charge,
         icon: isTransfer
             ? Icons.swap_horiz_rounded
-            : _purchaseIcon(item.categoryId),
+            : categoryIcon(repository.categoryHierarchy.byId[item.categoryId]),
       );
     },
   ).toList();
-}
-
-String _cardSuffix(Account account) {
-  final digits =
-      RegExp(r'\d').allMatches(account.note ?? '').map((m) => m[0]).join();
-  return digits.length >= 4 ? digits.substring(digits.length - 4) : '1234';
 }
 
 String _shortDate(DateTime value) => '${value.month}月${value.day}日';
@@ -1125,12 +1119,13 @@ _CreditCardDisplayCopy _selectedStatementDisplay(
   double amount,
   FinanceThemePalette palette, {
   required bool isFuture,
+  required bool isCurrent,
 }) {
   return _CreditCardDisplayCopy(
     amountLabel:
         '${period.billingMonthDate.year}年${period.billingMonthDate.month}月${isFuture ? '已确定账单' : '账单'}',
     amount: amount,
-    statusLabel: isFuture ? '已确定' : '历史账单',
+    statusLabel: isFuture ? '已确定' : (isCurrent ? '本期账单' : '历史账单'),
     dueStatusLabel: '还款日 ${_shortDate(period.dueDate)}',
     paymentActionLabel: isFuture ? '已确定' : '历史账单',
     color: amount > 0 ? palette.expense : palette.income,
@@ -1227,12 +1222,4 @@ _CreditCardDisplayCopy _creditCardDisplayCopy(
         canRepay: false,
       );
   }
-}
-
-IconData _purchaseIcon(String? categoryId) {
-  if (categoryId?.contains('food') ?? false) return Icons.restaurant_outlined;
-  if (categoryId?.contains('transport') ?? false) {
-    return Icons.local_gas_station_outlined;
-  }
-  return Icons.shopping_bag_outlined;
 }

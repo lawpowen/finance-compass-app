@@ -11,10 +11,12 @@ import 'package:finance_app/src/core/providers/repository_provider.dart';
 import 'package:finance_app/src/core/services/asset_service.dart';
 import 'package:finance_app/src/core/services/currency_service.dart';
 import 'package:finance_app/src/core/settings/app_theme_style.dart';
+import 'package:finance_app/src/core/settings/app_settings_controller.dart';
 import 'package:finance_app/src/core/theme/finance_theme.dart';
 import 'package:finance_app/src/core/utils/currency_formatter.dart';
 import 'package:finance_app/src/features/accounts/accounts_v2_screen.dart';
 import 'package:finance_app/src/features/accounts/asset_goals_page.dart';
+import 'package:finance_app/src/features/settings/settings_screen.dart';
 import 'package:finance_app/src/features/shared/compass_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -80,6 +82,109 @@ AssetGoalProgressSummary _goal(
 }
 
 void main() {
+  testWidgets(
+      'changing only the reporting currency preserves an exactly met mixed-currency goal',
+      (tester) async {
+    final (_, ledger) = await _cashRepository();
+    var repository = await ledger.updateExchangeRates(
+      {'MYR': 1, 'USD': 4.7, 'CNY': .65, 'TWD': .14},
+      ['MYR', 'USD'],
+    );
+    repository = await repository.addAccount(const Account(
+      id: 'usd',
+      name: 'US cash',
+      accountType: AccountType.cash,
+      reportGroup: ReportGroup.cash,
+      currency: 'USD',
+      initialBalance: 100,
+      currentBalance: 100,
+    ));
+    repository =
+        await repository.addTransaction(_cashIncome('reach', _noon(-1), 100));
+    repository = await repository.addAssetGoal(name: 'Exact', amount: 570);
+    final crossing = repository.assetGoalSummaries().single.reachedAt;
+    expect(crossing, _dayOf(_noon(-1)));
+    final container = ProviderContainer(overrides: [
+      financeRepositoryProvider
+          .overrideWith(() => _TestRepositoryNotifier(repository)),
+    ]);
+    addTearDown(container.dispose);
+    final settings = AppSettingsController();
+    addTearDown(settings.dispose);
+    await tester.pumpWidget(UncontrolledProviderScope(
+      container: container,
+      child: MaterialApp(
+          home: Scaffold(
+              body: SettingsScreen(
+        repository: repository,
+        settingsController: settings,
+      ))),
+    ));
+    await tester.pumpAndSettle();
+    Future<void> switchBaseAndSave() async {
+      final reorder =
+          tester.widget<ReorderableListView>(find.byType(ReorderableListView));
+      reorder.onReorder!(1, 0);
+      await tester.pumpAndSettle();
+      final save = find.text('保存汇率和优先级');
+      await tester.ensureVisible(save);
+      await tester.tap(save);
+      await tester.pumpAndSettle();
+    }
+
+    await switchBaseAndSave();
+    final inUsd = await container.read(financeRepositoryProvider.future);
+    expect(inUsd.baseCurrency, 'USD');
+    expect(inUsd.exchangeRatesToBase['MYR'], 1 / 4.7);
+    final summary = inUsd.assetGoalSummaries().single;
+    expect(summary.isReached, isTrue);
+    expect(summary.progressRatio, closeTo(1, 1e-12));
+    expect(summary.reachedAt, crossing);
+
+    final cny = find.byWidgetPredicate((widget) =>
+        widget is TextField &&
+        widget.decoration?.labelText?.startsWith('1 CNY =') == true);
+    await tester.ensureVisible(cny);
+    await tester.enterText(cny, '0.2');
+    await switchBaseAndSave();
+    final inMyr = await container.read(financeRepositoryProvider.future);
+    expect(inMyr.baseCurrency, 'MYR');
+    expect(inMyr.exchangeRatesToBase['CNY'], closeTo(.2 * 4.7, 1e-12));
+    expect(inMyr.assetGoalSummaries().single.reachedAt, crossing);
+  });
+
+  testWidgets('historical goal page keeps original target units and cutoff',
+      (tester) async {
+    final (_, ledger) = await _cashRepository();
+    var repository = await ledger.addTransaction(
+      _cashIncome('held', _noon(-10), 400),
+    );
+    repository = await repository.addAssetGoal(name: '备用金', amount: 1000);
+    repository = await repository.addTransaction(
+      _cashIncome('later', _noon(-2), 800),
+    );
+    repository = await repository.updateExchangeRates(
+      {'USD': 1, 'MYR': .25},
+      ['USD', 'MYR'],
+    );
+    await tester.pumpWidget(ProviderScope(
+      overrides: [
+        financeRepositoryProvider.overrideWith(
+          () => _TestRepositoryNotifier(repository),
+        ),
+      ],
+      child: MaterialApp(
+        home: AssetGoalsPage(repository: repository, cutoffDate: _noon(-5)),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('目标 MYR 1,000.00'), findsOneWidget);
+    expect(find.text('还差 USD 150.00'), findsOneWidget);
+    expect(find.text('40.0%'), findsOneWidget);
+    expect(find.byKey(const Key('asset-goal-add')), findsNothing);
+    expect(find.byTooltip('管理目标'), findsNothing);
+  });
+
   testWidgets(
       'asset goals use the ledger base for current, target and remaining',
       (tester) async {
@@ -341,6 +446,7 @@ void main() {
         accountType: AccountType.bankSaving,
         reportGroup: ReportGroup.cash,
         currency: 'MYR',
+        initialBalance: 1000,
         currentBalance: 1000,
       ),
       Account(
@@ -349,6 +455,7 @@ void main() {
         accountType: AccountType.fund,
         reportGroup: ReportGroup.investment,
         currency: 'MYR',
+        initialBalance: 500,
         currentBalance: 500,
       ),
       Account(
@@ -357,6 +464,7 @@ void main() {
         accountType: AccountType.creditCard,
         reportGroup: ReportGroup.credit,
         currency: 'MYR',
+        initialBalance: -800,
         currentBalance: -800,
       ),
     ]) {

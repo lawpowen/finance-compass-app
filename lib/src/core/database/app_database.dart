@@ -2,13 +2,18 @@ import 'dart:convert';
 
 import 'package:drift/drift.dart';
 
+import '../data/data_migration.dart';
 import '../models/account.dart' as model;
+import '../models/account_valuation.dart'
+    show accountTransactionDelta, compareAssetSnapshots;
 import '../models/asset_snapshot.dart' as model;
 import '../models/budget.dart' as model;
 import '../models/category.dart' as model;
 import '../models/category_hierarchy.dart';
 import '../models/transaction.dart' as model;
 import '../models/transaction_preset.dart' as model;
+import '../utils/anchored_month.dart';
+import '../utils/id_generator.dart';
 import 'enum_codec.dart';
 import 'database_connection.dart';
 import 'tables/accounts_table.dart';
@@ -21,6 +26,8 @@ import 'tables/transaction_templates_table.dart';
 import 'tables/recurring_transaction_rules_table.dart';
 
 part 'app_database.g.dart';
+part 'investment_snapshot_upgrade.dart';
+part 'loan_installment_storage.dart';
 
 @DriftDatabase(
   tables: [
@@ -49,7 +56,7 @@ class AppDatabase extends _$AppDatabase {
         onCreate: (m) async {
           await m.createAll();
         },
-        onUpgrade: (m, from, to) async {
+        onUpgrade: (m, from, to) => super.transaction(() async {
           if (from < 2) {
             await m.createTable(appMeta);
           }
@@ -90,18 +97,35 @@ class AppDatabase extends _$AppDatabase {
           if (from < 9) {
             await m.addColumn(accounts, accounts.loanTrackingStartDate);
           }
-        },
-        beforeOpen: (_) async {
-          await _migrateLegacyPresetMetadata();
-          await _migrateCreditCardTransactionDates();
-          await _ensureLocalProfileId();
-          await _applyV2VisualDefault();
-          await super.transaction(
-            () => _repairLegacyZeroSameCurrencyTransfers(),
-          );
-          await _validateDatabaseIntegrity();
+          // Drift normally sets user_version after beforeOpen. Commit it with
+          // the DDL and data fixes so interrupted upgrades can safely reopen.
+          await _prepareLedger(OpeningDetails(from, to));
+          await customStatement('PRAGMA user_version = $to');
+        }),
+        beforeOpen: (details) async {
+          if (!details.hadUpgrade) {
+            await super.transaction(() => _prepareLedger(details));
+          }
         },
       );
+
+  Future<void> _prepareLedger(OpeningDetails details) async {
+    await repairLegacyAccountReportGroups(this);
+    await _migrateLegacyPresetMetadata(details);
+    await _migrateCreditCardTransactionDates();
+    await _ensureLocalProfileId();
+    await _applyV2VisualDefault();
+    final oldLoanFormat = await getMetaValue(_loanSemanticsKey) == null;
+    await _migrateLegacyLoanLinks();
+    if (oldLoanFormat) {
+      final phaseTwo = await getMetaValue(_investmentSemanticsKey) ==
+          _immutableInvestmentSemantics;
+      await _repairLegacyZeroSameCurrencyTransfers(
+          alreadyPosted: phaseTwo, forceScan: phaseTwo);
+    }
+    await _prepareInvestmentSnapshotSemantics();
+    await _validateDatabaseIntegrity();
+  }
 
   Future<List<model.Account>> fetchAccounts() async {
     final rows = await select(accounts).get();
@@ -175,30 +199,36 @@ class AppDatabase extends _$AppDatabase {
   }
 
   Future<List<model.FinanceTransaction>> fetchTransactions() async {
-    final rows = await select(transactions).get();
-    return rows
-        .map(
-          (row) => model.FinanceTransaction(
-            id: row.id,
-            type: enumByName(model.TransactionType.values, row.type),
-            accountId: row.accountId,
-            toAccountId: row.toAccountId,
-            categoryId: row.categoryId,
-            amount: row.amount,
-            currency: row.currency,
-            toAmount: row.toAmount,
-            toCurrency: row.toCurrency,
-            recordDate: row.recordDate ?? row.transactionDate,
-            transactionDate: row.transactionDate,
-            status: row.status == null
-                ? model.TransactionStatus.actual
-                : enumByName(model.TransactionStatus.values, row.status!),
-            recurringRuleId: row.recurringRuleId,
-            description: row.description,
-            merchant: row.merchant,
-          ),
-        )
+    final links = await _readLoanLinks(_loanTransactions);
+    return (await select(transactions).get())
+        .map((row) => _transactionModel(row, links[row.id]))
         .toList();
+  }
+
+  model.FinanceTransaction _transactionModel(Transaction row,
+      [Map<String, dynamic>? link]) {
+    return model.FinanceTransaction(
+      id: row.id,
+      loanInstallmentNumber: link?['loan_installment_number'] as int?,
+      loanPaymentAmount: (link?['loan_payment_amount'] as num?)?.toDouble(),
+      legacyLoanId: link?['legacy_loan_id'] as String?,
+      legacyLoanPartNumber: link?['legacy_loan_part_number'] as int?,
+      type: enumByName(model.TransactionType.values, row.type),
+      accountId: row.accountId,
+      toAccountId: row.toAccountId,
+      categoryId: row.categoryId,
+      amount: row.amount,
+      currency: row.currency,
+      toAmount: row.toAmount,
+      toCurrency: row.toCurrency,
+      recordDate: row.recordDate ?? row.transactionDate,
+      transactionDate: row.transactionDate,
+      status: enumByName(model.TransactionStatus.values,
+          row.status ?? model.TransactionStatus.actual.name),
+      recurringRuleId: row.recurringRuleId,
+      description: row.description,
+      merchant: row.merchant,
+    );
   }
 
   Future<List<model.AssetSnapshot>> fetchAssetSnapshots() async {
@@ -219,6 +249,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   Future<List<model.TransactionTemplate>> fetchTransactionTemplates() async {
+    final links = await _readLoanLinks(_loanTemplates);
     final rows = await (select(transactionTemplates)
           ..orderBy([
             (row) => OrderingTerm.asc(row.sortOrder),
@@ -230,6 +261,10 @@ class AppDatabase extends _$AppDatabase {
           (row) => model.TransactionTemplate(
             id: row.id,
             name: row.name,
+            loanInstallmentNumber:
+                links[row.id]?['loan_installment_number'] as int?,
+            loanPaymentAmount:
+                (links[row.id]?['loan_payment_amount'] as num?)?.toDouble(),
             type: enumByName(model.TransactionType.values, row.type),
             accountId: row.accountId,
             toAccountId: row.toAccountId,
@@ -249,6 +284,7 @@ class AppDatabase extends _$AppDatabase {
 
   Future<List<model.RecurringTransactionRule>>
       fetchRecurringTransactionRules() async {
+    final links = await _readLoanLinks(_loanRules);
     final rows = await (select(recurringTransactionRules)
           ..orderBy([(row) => OrderingTerm.asc(row.name)]))
         .get();
@@ -257,6 +293,10 @@ class AppDatabase extends _$AppDatabase {
           (row) => model.RecurringTransactionRule(
             id: row.id,
             name: row.name,
+            loanInstallmentNumber:
+                links[row.id]?['loan_installment_number'] as int?,
+            loanPaymentAmount:
+                (links[row.id]?['loan_payment_amount'] as num?)?.toDouble(),
             type: enumByName(model.TransactionType.values, row.type),
             accountId: row.accountId,
             toAccountId: row.toAccountId,
@@ -283,8 +323,31 @@ class AppDatabase extends _$AppDatabase {
 
   Future<void> replaceTransactionTemplates(
     List<model.TransactionTemplate> items,
-  ) async {
+  ) =>
+      _replaceTransactionTemplates(items, restoringLegacy: false);
+
+  Future<void> _replaceTransactionTemplates(
+      List<model.TransactionTemplate> items,
+      {required bool restoringLegacy}) async {
     await super.transaction(() async {
+      if (!restoringLegacy) {
+        final previous = {
+          for (final row in await select(transactionTemplates).get())
+            row.id: row
+        };
+        await _requireActiveAccounts(items.expand((item) =>
+            _newAccountReferences(item,
+                originalSource: previous[item.id]?.accountId,
+                originalTarget: previous[item.id]?.toAccountId)));
+        for (final item in items) {
+          final old = previous[item.id];
+          await _validateCategoryChoice(
+              item.categoryId, allowedCategoryTypes(item.type),
+              originalCategoryId:
+                  old?.type == item.type.name ? old?.categoryId : null);
+        }
+      }
+      await _replaceLoanLinks(_loanTemplates, items);
       await delete(transactionTemplates).go();
       if (items.isEmpty) return;
       await batch((batch) {
@@ -296,10 +359,41 @@ class AppDatabase extends _$AppDatabase {
     });
   }
 
+  Future<void> linkTransactionToRecurringRule(
+      String transactionId, String ruleId) async {
+    final count = await (update(transactions)
+          ..where((t) => t.id.equals(transactionId)))
+        .write(TransactionsCompanion(recurringRuleId: Value(ruleId)));
+    if (count != 1) throw StateError('找不到要关联的原交易。');
+  }
+
   Future<void> replaceRecurringTransactionRules(
     List<model.RecurringTransactionRule> items,
-  ) async {
+  ) =>
+      _replaceRecurringTransactionRules(items, restoringLegacy: false);
+
+  Future<void> _replaceRecurringTransactionRules(
+      List<model.RecurringTransactionRule> items,
+      {required bool restoringLegacy}) async {
     await super.transaction(() async {
+      if (!restoringLegacy) {
+        final previous = {
+          for (final row in await select(recurringTransactionRules).get())
+            row.id: row
+        };
+        await _requireActiveAccounts(items.expand((item) =>
+            _newAccountReferences(item,
+                originalSource: previous[item.id]?.accountId,
+                originalTarget: previous[item.id]?.toAccountId)));
+        for (final item in items) {
+          final old = previous[item.id];
+          await _validateCategoryChoice(
+              item.categoryId, allowedCategoryTypes(item.type),
+              originalCategoryId:
+                  old?.type == item.type.name ? old?.categoryId : null);
+        }
+      }
+      await _replaceLoanLinks(_loanRules, items);
       await delete(recurringTransactionRules).go();
       if (items.isEmpty) return;
       await batch((batch) {
@@ -357,50 +451,83 @@ class AppDatabase extends _$AppDatabase {
     );
   }
 
-  Future<void> _migrateLegacyPresetMetadata() async {
-    final templateCount = await (selectOnly(transactionTemplates)
-          ..addColumns([transactionTemplates.id.count()]))
-        .map((row) => row.read(transactionTemplates.id.count()) ?? 0)
-        .getSingle();
-    if (templateCount == 0) {
-      final raw = await getMetaValue('transaction_templates_json');
-      if (raw != null && raw.trim().isNotEmpty) {
-        try {
-          final decoded = jsonDecode(raw) as List<dynamic>;
-          final items = decoded
-              .whereType<Map>()
-              .map((item) => model.TransactionTemplate.fromJson(
-                    Map<String, dynamic>.from(item),
-                  ))
-              .toList();
-          await replaceTransactionTemplates(items);
-        } catch (_) {
-          // Keep the legacy JSON untouched so the recovery path remains valid.
+  static const presetTablesMarker = 'preset_tables_authoritative_v1';
+  static const legacyTemplatesKey = 'transaction_templates_json';
+  static const legacyRulesKey = 'recurring_transaction_rules_json';
+
+  Future<void> _migrateLegacyPresetMetadata(OpeningDetails details) async {
+    if (await getMetaValue(presetTablesMarker) == 'true') return;
+    // Earlier releases created local_profile_id after their preset migration.
+    // In a previously opened v7+ ledger an empty table may be an intentional
+    // deletion. Keep ambiguous old bytes available for recovery, never replay them.
+    final profile = await getMetaValue('local_profile_id');
+    final firstMigration = (details.versionBefore ?? 0) < 7 ||
+        profile == null ||
+        profile.trim().isEmpty;
+    Future<void> migrate(String key, bool empty,
+        Future<void> Function(List<dynamic>) insert) async {
+      final raw = await getMetaValue(key);
+      if (raw == null) return;
+      if (empty && raw.trim().isNotEmpty && raw.trim() != '[]') {
+        if (firstMigration) {
+          // A malformed legacy preference must not prevent access to the
+          // rest of the ledger. Keep its original bytes for manual recovery.
+          try {
+            final decoded = jsonDecode(raw);
+            if (decoded is! List) throw FormatException('旧预设数据格式无效：$key');
+            final ids = <String>{};
+            final accountIds = (await (selectOnly(accounts)
+                  ..addColumns([accounts.id]))
+                .map((row) => row.read(accounts.id)!)
+                .get()).toSet();
+            final categoryIds = (await (selectOnly(categories)
+                  ..addColumns([categories.id]))
+                .map((row) => row.read(categories.id)!)
+                .get()).toSet();
+            for (final row in decoded) {
+              if (row is! Map) throw FormatException('旧预设条目无效：$key');
+              final id = row['id'];
+              if (id is! String || id.trim().isEmpty || !ids.add(id) ||
+                  !accountIds.contains(row['account_id']) ||
+                  (row['to_account_id'] != null && !accountIds.contains(row['to_account_id'])) ||
+                  (row['category_id'] != null && !categoryIds.contains(row['category_id']))) {
+                throw FormatException('旧预设 ID 或关联账户、类别无效：$key');
+              }
+            }
+            await insert(decoded);
+          } on FormatException {
+            await setMetaValue('legacy_preset_recovery/$key', raw);
+          } on TypeError {
+            await setMetaValue('legacy_preset_recovery/$key', raw);
+          } on ArgumentError {
+            await setMetaValue('legacy_preset_recovery/$key', raw);
+          }
+        } else {
+          await setMetaValue('legacy_preset_recovery/$key', raw);
         }
       }
+      await deleteMetaValue(key);
     }
 
-    final ruleCount = await (selectOnly(recurringTransactionRules)
-          ..addColumns([recurringTransactionRules.id.count()]))
-        .map((row) => row.read(recurringTransactionRules.id.count()) ?? 0)
-        .getSingle();
-    if (ruleCount == 0) {
-      final raw = await getMetaValue('recurring_transaction_rules_json');
-      if (raw != null && raw.trim().isNotEmpty) {
-        try {
-          final decoded = jsonDecode(raw) as List<dynamic>;
-          final items = decoded
-              .whereType<Map>()
-              .map((item) => model.RecurringTransactionRule.fromJson(
-                    Map<String, dynamic>.from(item),
-                  ))
-              .toList();
-          await replaceRecurringTransactionRules(items);
-        } catch (_) {
-          // Keep the legacy JSON untouched so the recovery path remains valid.
-        }
-      }
-    }
+    await migrate(
+        legacyTemplatesKey,
+        (await (select(transactionTemplates)..limit(1)).get()).isEmpty,
+        (rows) => _replaceTransactionTemplates(
+            rows
+                .map((row) => model.TransactionTemplate.fromJson(
+                    Map<String, dynamic>.from(row as Map)))
+                .toList(),
+            restoringLegacy: true));
+    await migrate(
+        legacyRulesKey,
+        (await (select(recurringTransactionRules)..limit(1)).get()).isEmpty,
+        (rows) => _replaceRecurringTransactionRules(
+            rows
+                .map((row) => model.RecurringTransactionRule.fromJson(
+                    Map<String, dynamic>.from(row as Map)))
+                .toList(),
+            restoringLegacy: true));
+    await setMetaValue(presetTablesMarker, 'true');
   }
 
   Future<void> _ensureLocalProfileId() async {
@@ -408,7 +535,7 @@ class AppDatabase extends _$AppDatabase {
     if (existing != null && existing.trim().isNotEmpty) return;
     await setMetaValue(
       'local_profile_id',
-      'local_${DateTime.now().microsecondsSinceEpoch}',
+      buildId('local'),
     );
   }
 
@@ -514,6 +641,28 @@ class AppDatabase extends _$AppDatabase {
   }
 
   Future<void> seedAll({
+    required List<model.Account> accountItems,
+    required List<model.Category> categoryItems,
+    required List<model.Budget> budgetItems,
+    required List<model.FinanceTransaction> transactionItems,
+    required List<model.AssetSnapshot> snapshotItems,
+  }) =>
+      transaction(() async {
+        if (categoryItems.isNotEmpty) {
+          CategoryHierarchy([...await fetchCategories(), ...categoryItems])
+              .validate();
+        }
+        await _seedRows(
+            accountItems: accountItems,
+            categoryItems: categoryItems,
+            budgetItems: budgetItems,
+            transactionItems: transactionItems,
+            snapshotItems: snapshotItems);
+        await _saveSeedLoanLinks(transactionItems);
+        await _rebuildInvestmentCaches(accountItems, snapshotItems);
+      });
+
+  Future<void> _seedRows({
     required List<model.Account> accountItems,
     required List<model.Category> categoryItems,
     required List<model.Budget> budgetItems,
@@ -637,6 +786,7 @@ class AppDatabase extends _$AppDatabase {
     List<model.RecurringTransactionRule> recurringRuleItems = const [],
     Map<String, String>? metaValues,
   }) async {
+    CategoryHierarchy(categoryItems).validate();
     await super.transaction(() async {
       await delete(recurringTransactionRules).go();
       await delete(transactionTemplates).go();
@@ -647,7 +797,7 @@ class AppDatabase extends _$AppDatabase {
       await delete(accounts).go();
       await delete(appMeta).go();
 
-      await seedAll(
+      await _seedRows(
         accountItems: accountItems,
         categoryItems: categoryItems,
         budgetItems: budgetItems,
@@ -695,14 +845,39 @@ class AppDatabase extends _$AppDatabase {
         ),
       );
       await _ensureLocalProfileId();
+      // Preset sections, including explicit empty arrays, were resolved by the importer.
+      await setMetaValue(presetTablesMarker, 'true');
+      await deleteMetaValue(legacyTemplatesKey);
+      await deleteMetaValue(legacyRulesKey);
       // Import parsing has already applied the source format's date semantics.
       // Mark the resulting snapshot so a later reopen does not reinterpret a
       // v3 user-edited occurrence date as a legacy settlement date.
       await setMetaValue('credit_card_account_billing_dates_v1', 'true');
-      // Imported snapshots from affected debug builds can contain a valid
-      // transfer target together with an explicit zero receiving amount.
-      // Force a scan because imported meta may come from another installation.
-      await _repairLegacyZeroSameCurrencyTransfers(forceScan: true);
+      // Sample data is created using current semantics. Imported backups
+      // supply a metadata map, even if their legacy format had no metadata.
+      if (metaValues == null) {
+        await setMetaValue(
+            _investmentSemanticsKey, _immutableInvestmentSemantics);
+      }
+      await _replaceLoanLinks(_loanTransactions, transactionItems);
+      await _replaceLoanLinks(_loanTemplates, templateItems);
+      await _replaceLoanLinks(_loanRules, recurringRuleItems);
+      if (metaValues == null) {
+        await setMetaValue(_loanSemanticsKey, _explicitLoanSemantics);
+      } else {
+        await _migrateLegacyLoanLinks();
+      }
+      if (metaValues != null && metaValues[_loanSemanticsKey] == null) {
+        await _repairLegacyZeroSameCurrencyTransfers(
+            forceScan: true,
+            alreadyPosted: metaValues[_investmentSemanticsKey] ==
+                _immutableInvestmentSemantics);
+      } else {
+        await setMetaValue(_zeroSameCurrencyTransferRepairKey, 'true');
+      }
+      if (!await _prepareInvestmentSnapshotSemantics()) {
+        await _rebuildInvestmentCaches(accountItems, snapshotItems);
+      }
       await _validateDatabaseIntegrity();
     });
   }
@@ -712,12 +887,14 @@ class AppDatabase extends _$AppDatabase {
 
   Future<void> _repairLegacyZeroSameCurrencyTransfers({
     bool forceScan = false,
+    bool alreadyPosted = false,
   }) async {
     if (!forceScan &&
         await getMetaValue(_zeroSameCurrencyTransferRepairKey) == 'true') {
       return;
     }
 
+    final loanLinks = await _readLoanLinks(_loanTransactions);
     final rows = await (select(transactions)
           ..where((tbl) =>
               tbl.type.equals(model.TransactionType.transfer.name) &
@@ -725,6 +902,12 @@ class AppDatabase extends _$AppDatabase {
               tbl.toAmount.equals(0)))
         .get();
 
+    final evidence =
+        alreadyPosted ? null : await _legacyZeroEvidence(rows, loanLinks);
+    final loanIds = {
+      for (final account in await fetchAccounts())
+        if (account.accountType == model.AccountType.loan) account.id
+    };
     for (final row in rows) {
       if (row.amount == 0) {
         continue;
@@ -733,6 +916,22 @@ class AppDatabase extends _$AppDatabase {
       final targetCurrency =
           (row.toCurrency ?? row.currency).trim().toUpperCase();
       if (sourceCurrency != targetCurrency) {
+        continue;
+      }
+      if (loanLinks.containsKey(row.id)) continue;
+      // Phase 2 left only the old loan-payment shape at zero; other ordinary
+      // same-currency receipts already used the source amount in its cache.
+      if (loanIds.contains(row.toAccountId) &&
+          (!alreadyPosted ||
+              RegExp(r'^贷款月供 #\d+$').hasMatch(row.description ?? ''))) {
+        continue;
+      }
+      final actual = (row.status ?? 'actual') != 'planned';
+      if (row.toAccountId == row.accountId && !alreadyPosted) continue;
+      if (actual &&
+          evidence != null &&
+          !evidence.missing.contains(row.id) &&
+          !evidence.credited.contains(row.id)) {
         continue;
       }
 
@@ -746,20 +945,104 @@ class AppDatabase extends _$AppDatabase {
         model.TransactionStatus.values,
         row.status ?? model.TransactionStatus.actual.name,
       );
-      if (status != model.TransactionStatus.planned) {
-        await _incrementAccountBalance(row.toAccountId!, row.amount);
-        await _syncInvestmentFlowIntoSnapshot(
-          accountId: row.toAccountId!,
-          delta: row.amount,
-          transactionDate: row.transactionDate,
-        );
+      if (status != model.TransactionStatus.planned &&
+          !alreadyPosted &&
+          evidence!.missing.contains(row.id)) {
+        await _updateBalanceCaches({row.toAccountId!: row.amount});
       }
     }
 
     await setMetaValue(_zeroSameCurrencyTransferRepairKey, 'true');
   }
 
+  /// An old zero receipt alone does not prove that the cached credit is missing.
+  /// Require the expected opening-to-closing reconciliation on both accounts.
+  Future<({Set<String> missing, Set<String> credited})> _legacyZeroEvidence(
+      List<Transaction> candidates, _LoanLinks links) async {
+    if (candidates.isEmpty) return (missing: <String>{}, credited: <String>{});
+    final ledgerAccounts = {for (final a in await fetchAccounts()) a.id: a};
+    final expected = {
+      for (final a in ledgerAccounts.values) a.id: a.initialBalance
+    };
+    for (final tx in await fetchTransactions()) {
+      for (final id in {
+        tx.accountId,
+        if (tx.toAccountId != null) tx.toAccountId!
+      }) {
+        final a = ledgerAccounts[id];
+        if (a != null) {
+          expected[id] = expected[id]! + accountTransactionDelta(id, tx);
+        }
+      }
+    }
+    final missing = <String, double>{};
+    final sources = <String, Set<String>>{};
+    final candidateIds = <String, Set<String>>{};
+    final observed =
+        (await fetchAssetSnapshots()).map((row) => row.accountId).toSet();
+    for (final row in candidates) {
+      final target = row.toAccountId!;
+      final currency = row.currency.trim().toUpperCase();
+      if (links.containsKey(row.id) ||
+          row.status == 'planned' ||
+          row.accountId == target ||
+          row.amount == 0 ||
+          ledgerAccounts[target]?.accountType == model.AccountType.loan ||
+          ledgerAccounts[target]?.currency.trim().toUpperCase() != currency ||
+          ledgerAccounts[row.accountId]?.currency.trim().toUpperCase() !=
+              currency ||
+          currency != (row.toCurrency ?? row.currency).trim().toUpperCase()) {
+        continue;
+      }
+      expected[target] = expected[target]! + row.amount;
+      missing[target] = (missing[target] ?? 0) + row.amount;
+      (sources[target] ??= {}).add(row.accountId);
+      (candidateIds[target] ??= {}).add(row.id);
+    }
+    bool reconciles(String id, double residual) =>
+        !observed.contains(id) &&
+        expected[id] != null &&
+        _sameBalance(
+            expected[id]! - residual, ledgerAccounts[id]!.currentBalance);
+    final supported = {
+      for (final target in missing.keys)
+        if (sources[target]!.every(
+            (id) => reconciles(id, 0) || reconciles(id, missing[id] ?? 0)))
+          target
+    };
+    return (
+      missing: {
+        for (final id in supported)
+          if (missing[id] != 0 && reconciles(id, missing[id]!))
+            ...candidateIds[id]!
+      },
+      credited: {
+        for (final id in supported)
+          if (reconciles(id, 0)) ...candidateIds[id]!
+      }
+    );
+  }
+
+  bool _investmentGroup(String group) =>
+      group == model.ReportGroup.investment.name ||
+      group == model.ReportGroup.retirement.name;
+
+  void _checkAccountGroup(model.Account account) {
+    if (!model
+        .allowedReportGroups(account.accountType)
+        .contains(account.reportGroup)) {
+      throw ArgumentError('账户类型与报表分组不匹配。');
+    }
+  }
+
   Future<void> insertAccount(model.Account account) {
+    _checkAccountGroup(account);
+    // A new investment's only value is its opening balance. Legacy API callers
+    // sometimes pass this value as currentBalance with the default initial zero.
+    final investment = _investmentGroup(account.reportGroup.name);
+    final opening = investment && account.initialBalance == 0
+        ? account.currentBalance
+        : account.initialBalance;
     return into(accounts).insert(
       AccountsCompanion.insert(
         id: account.id,
@@ -767,8 +1050,8 @@ class AppDatabase extends _$AppDatabase {
         accountType: account.accountType.name,
         reportGroup: account.reportGroup.name,
         currency: account.currency,
-        currentBalance: account.currentBalance,
-        initialBalance: Value(account.initialBalance),
+        currentBalance: investment ? opening : account.currentBalance,
+        initialBalance: Value(opening),
         institution: Value(account.institution),
         note: Value(account.note),
         isActive: Value(account.isActive),
@@ -787,31 +1070,84 @@ class AppDatabase extends _$AppDatabase {
     );
   }
 
-  Future<void> updateAccount(model.Account account) {
-    return (update(accounts)..where((tbl) => tbl.id.equals(account.id))).write(
-      AccountsCompanion(
-        name: Value(account.name),
-        accountType: Value(account.accountType.name),
-        reportGroup: Value(account.reportGroup.name),
-        currency: Value(account.currency),
-        initialBalance: Value(account.initialBalance),
-        currentBalance: Value(account.currentBalance),
-        institution: Value(account.institution),
-        note: Value(account.note),
-        isActive: Value(account.isActive),
-        creditLimit: Value(account.creditLimit),
-        statementDay: Value(account.statementDay),
-        paymentDueDay: Value(account.paymentDueDay),
-        loanPrincipal: Value(account.loanPrincipal),
-        loanAnnualInterestRate: Value(account.loanAnnualInterestRate),
-        loanTermMonths: Value(account.loanTermMonths),
-        loanStartDate: Value(account.loanStartDate),
-        loanTrackingStartDate: Value(account.loanTrackingStartDate),
-        loanPaymentDay: Value(account.loanPaymentDay),
-        loanRepaymentMethod: Value(account.loanRepaymentMethod?.name),
-        loanQuotedMonthlyPayment: Value(account.loanQuotedMonthlyPayment),
-      ),
-    );
+  Future<void> setAccountActive(String accountId, bool active) async {
+    final count = await (update(accounts)..where((a) => a.id.equals(accountId)))
+        .write(AccountsCompanion(isActive: Value(active)));
+    if (count != 1) throw const FormatException('账户已移除，请返回账户列表。');
+  }
+
+  Future<void> updateAccount(model.Account account,
+          {bool preserveActivity = false}) =>
+      super.transaction(() async {
+        _checkAccountGroup(account);
+        final existing = await (select(accounts)
+              ..where((row) => row.id.equals(account.id)))
+            .getSingle();
+        final linked = await _hasEconomicRecords(account.id);
+        if (linked && existing.currency != account.currency) {
+          throw StateError('已有流水或快照的账户不能更改币种。');
+        }
+        if (linked && existing.accountType != account.accountType.name) {
+          throw StateError('已有流水或快照的账户不能更改账户类型。');
+        }
+        if (linked && _effectiveGroup(existing) != account.reportGroup) {
+          throw StateError('已有流水或快照的账户不能更改报表分组。');
+        }
+        final openingChange = account.initialBalance - existing.initialBalance;
+        final loan = existing.accountType == model.AccountType.loan.name;
+        if (linked && !loan && openingChange != 0) {
+          throw StateError('已有流水或快照的账户请通过调整交易更正余额。');
+        }
+        // A loan opening correction preserves the principal already repaid.
+        final expectedBalance =
+            existing.currentBalance + (loan ? openingChange : 0);
+        if (linked &&
+            (!account.currentBalance.isFinite ||
+                (account.currentBalance - expectedBalance).abs() > 0.0000001)) {
+          throw StateError('账户余额已由流水或快照确定，请重新加载或记录调整交易。');
+        }
+        final newBalance = linked
+            ? expectedBalance
+            : _investmentGroup(account.reportGroup.name)
+                ? account.initialBalance
+                : account.currentBalance;
+        await (update(accounts)..where((tbl) => tbl.id.equals(account.id)))
+            .write(
+          AccountsCompanion(
+            name: Value(account.name),
+            accountType: Value(account.accountType.name),
+            reportGroup: Value(account.reportGroup.name),
+            currency: Value(account.currency),
+            initialBalance: Value(account.initialBalance),
+            currentBalance: Value(newBalance),
+            institution: Value(account.institution),
+            note: Value(account.note),
+            isActive: preserveActivity
+                ? const Value.absent()
+                : Value(account.isActive),
+            creditLimit: Value(account.creditLimit),
+            statementDay: Value(account.statementDay),
+            paymentDueDay: Value(account.paymentDueDay),
+            loanPrincipal: Value(account.loanPrincipal),
+            loanAnnualInterestRate: Value(account.loanAnnualInterestRate),
+            loanTermMonths: Value(account.loanTermMonths),
+            loanStartDate: Value(account.loanStartDate),
+            loanTrackingStartDate: Value(account.loanTrackingStartDate),
+            loanPaymentDay: Value(account.loanPaymentDay),
+            loanRepaymentMethod: Value(account.loanRepaymentMethod?.name),
+            loanQuotedMonthlyPayment: Value(account.loanQuotedMonthlyPayment),
+          ),
+        );
+      });
+
+  Future<bool> _hasEconomicRecords(String accountId) async {
+    final entry = await (select(transactions)
+          ..where((tbl) =>
+              tbl.accountId.equals(accountId) |
+              tbl.toAccountId.equals(accountId))
+          ..limit(1))
+        .getSingleOrNull();
+    return entry != null || await _latestBalanceAnchor(accountId) != null;
   }
 
   Future<bool> accountHasLinkedData(String accountId) async {
@@ -877,6 +1213,14 @@ class AppDatabase extends _$AppDatabase {
 
   Future<void> updateCategory(model.Category category) {
     return super.transaction(() async {
+      final existing = await (select(categories)
+            ..where((c) => c.id.equals(category.id)))
+          .getSingleOrNull();
+      if (existing == null) throw ArgumentError('此类别已删除，请刷新后重试。');
+      if (existing.type != category.type.name &&
+          await categoryHasLinkedData(category.id)) {
+        throw ArgumentError('此类别已有关联记录或子类别，不能更改类型。');
+      }
       await _validateCategoryParent(category);
       await (update(categories)..where((tbl) => tbl.id.equals(category.id)))
           .write(
@@ -897,17 +1241,55 @@ class AppDatabase extends _$AppDatabase {
     final parentId = category.parentId;
     if (parentId == null) return;
     final rows = await (selectOnly(categories)
-          ..addColumns([categories.id, categories.parentId]))
+          ..addColumns([categories.id, categories.parentId, categories.type]))
         .get();
     final parents = {
       for (final row in rows)
         row.read(categories.id)!: row.read(categories.parentId),
     };
-    if (!parents.containsKey(parentId)) {
-      throw ArgumentError.value(parentId, 'parentId', 'Parent does not exist');
+    if (!rows.any((row) =>
+        row.read(categories.id) == parentId &&
+        row.read(categories.type) == category.type.name)) {
+      throw ArgumentError('父类别不存在或与当前类别类型不同。');
     }
     if (categoryParentWouldCycle(category.id, parentId, parents)) {
-      throw ArgumentError.value(parentId, 'parentId', 'Cyclic category parent');
+      throw ArgumentError('不能将自身或后代设为父类别。');
+    }
+  }
+
+  Iterable<String> _newAccountReferences(model.LoanInstallmentFields entry,
+      {String? originalSource, String? originalTarget}) sync* {
+    if (entry.accountId != originalSource) yield entry.accountId;
+    final target = entry.toAccountId;
+    if (entry.type == model.TransactionType.transfer &&
+        target != null &&
+        target != originalTarget) {
+      yield target;
+    }
+  }
+
+  Future<void> _requireActiveAccounts(Iterable<String> changed) async {
+    final ids = changed.toSet();
+    if (ids.isEmpty) return;
+    final enabled = await (selectOnly(accounts)
+          ..addColumns([accounts.id])
+          ..where(accounts.id.isIn(ids) & accounts.isActive.equals(true)))
+        .get();
+    if (enabled.length != ids.length) {
+      throw const FormatException('所选账户已停用或移除，请选择启用的账户。');
+    }
+  }
+
+  Future<void> _validateCategoryChoice(
+      String? id, Set<model.CategoryType> allowedTypes,
+      {String? originalCategoryId}) async {
+    if (id == null || id == originalCategoryId) return;
+    final row = await (select(categories)..where((c) => c.id.equals(id)))
+        .getSingleOrNull();
+    if (row == null ||
+        row.isArchived ||
+        !allowedTypes.any((t) => t.name == row.type)) {
+      throw ArgumentError('请选择当前类型下未归档的有效类别。');
     }
   }
 
@@ -952,24 +1334,52 @@ class AppDatabase extends _$AppDatabase {
   }
 
   Future<void> upsertBudget(model.Budget budget) async {
-    final existing = await (select(budgets)
-          ..where((tbl) => tbl.id.equals(budget.id)))
-        .getSingleOrNull();
-
-    if (existing == null) {
-      final sameMonthRule = await (select(budgets)
-            ..where((tbl) =>
-                tbl.categoryId.equals(budget.categoryId) &
-                tbl.monthKey.equals(budget.monthKey)))
+    await super.transaction(() async {
+      final existing = await (select(budgets)
+            ..where((tbl) => tbl.id.equals(budget.id)))
           .getSingleOrNull();
 
-      if (sameMonthRule != null) {
-        await (update(budgets)..where((tbl) => tbl.id.equals(sameMonthRule.id)))
-            .write(
-          BudgetsCompanion(
-            categoryId: Value(budget.categoryId),
-            monthKey: Value(budget.monthKey),
-            amount: Value(budget.amount),
+      await _validateCategoryChoice(
+          budget.categoryId, const {model.CategoryType.expense},
+          originalCategoryId: existing?.monthKey == budget.monthKey
+              ? existing?.categoryId
+              : null);
+      if (existing == null) {
+        final sameMonthRules = await (select(budgets)
+              ..where((tbl) =>
+                  tbl.categoryId.equals(budget.categoryId) &
+                  tbl.monthKey.equals(budget.monthKey)))
+            .get();
+
+        if (sameMonthRules.isNotEmpty) {
+          final target = sameMonthRules.first;
+          await (update(budgets)..where((tbl) => tbl.id.equals(target.id)))
+              .write(
+            BudgetsCompanion(
+              categoryId: Value(budget.categoryId),
+              monthKey: Value(budget.monthKey),
+              amount: Value(budget.amount),
+              currency: Value(budget.currency),
+              alertThreshold: Value(budget.alertThreshold),
+              rolloverEnabled: Value(budget.rolloverEnabled),
+            ),
+          );
+          if (sameMonthRules.length > 1) {
+            final extraIds =
+                sameMonthRules.skip(1).map((row) => row.id).toList();
+            await (delete(budgets)..where((tbl) => tbl.id.isIn(extraIds))).go();
+          }
+          return;
+        }
+      }
+
+      if (existing == null) {
+        await into(budgets).insert(
+          BudgetsCompanion.insert(
+            id: budget.id,
+            categoryId: budget.categoryId,
+            monthKey: budget.monthKey,
+            amount: budget.amount,
             currency: Value(budget.currency),
             alertThreshold: Value(budget.alertThreshold),
             rolloverEnabled: Value(budget.rolloverEnabled),
@@ -977,438 +1387,278 @@ class AppDatabase extends _$AppDatabase {
         );
         return;
       }
-    }
 
-    if (existing == null) {
-      await into(budgets).insert(
-        BudgetsCompanion.insert(
-          id: budget.id,
-          categoryId: budget.categoryId,
-          monthKey: budget.monthKey,
-          amount: budget.amount,
+      await (update(budgets)..where((tbl) => tbl.id.equals(existing.id))).write(
+        BudgetsCompanion(
+          categoryId: Value(budget.categoryId),
+          monthKey: Value(budget.monthKey),
+          amount: Value(budget.amount),
           currency: Value(budget.currency),
           alertThreshold: Value(budget.alertThreshold),
           rolloverEnabled: Value(budget.rolloverEnabled),
         ),
       );
-      return;
-    }
-
-    await (update(budgets)..where((tbl) => tbl.id.equals(existing.id))).write(
-      BudgetsCompanion(
-        categoryId: Value(budget.categoryId),
-        monthKey: Value(budget.monthKey),
-        amount: Value(budget.amount),
-        currency: Value(budget.currency),
-        alertThreshold: Value(budget.alertThreshold),
-        rolloverEnabled: Value(budget.rolloverEnabled),
-      ),
-    );
+    });
   }
 
   Future<void> deleteBudget(String budgetId) {
     return (delete(budgets)..where((tbl) => tbl.id.equals(budgetId))).go();
   }
 
-  Future<void> insertTransaction(model.FinanceTransaction entry) async {
-    await super.transaction(() async {
-      await into(transactions).insert(
-        TransactionsCompanion.insert(
-          id: entry.id,
-          type: entry.type.name,
-          accountId: entry.accountId,
-          amount: entry.amount,
-          currency: entry.currency,
-          toAmount: Value(entry.toAmount),
-          toCurrency: Value(entry.toCurrency),
-          recordDate: Value(entry.recordDate),
-          transactionDate: entry.transactionDate,
-          status: Value(entry.status.name),
-          recurringRuleId: Value(entry.recurringRuleId),
-          toAccountId: Value(entry.toAccountId),
-          categoryId: Value(entry.categoryId),
-          description: Value(entry.description),
-          merchant: Value(entry.merchant),
-        ),
-      );
+  Future<void> insertTransaction(model.FinanceTransaction entry) =>
+      insertTransactions([entry]);
 
-      await _applyTransactionToBalances(entry);
-    });
+  Future<void> insertTransactions(List<model.FinanceTransaction> entries) =>
+      replaceTransactions(deleteIds: const [], insertItems: entries);
+
+  TransactionsCompanion _transactionCompanion(model.FinanceTransaction entry) {
+    return TransactionsCompanion.insert(
+      id: entry.id,
+      type: entry.type.name,
+      accountId: entry.accountId,
+      amount: entry.amount,
+      currency: entry.currency,
+      toAmount: Value(entry.toAmount),
+      toCurrency: Value(entry.toCurrency),
+      recordDate: Value(entry.recordDate),
+      transactionDate: entry.transactionDate,
+      status: Value(entry.status.name),
+      recurringRuleId: Value(entry.recurringRuleId),
+      toAccountId: Value(entry.toAccountId),
+      categoryId: Value(entry.categoryId),
+      description: Value(entry.description),
+      merchant: Value(entry.merchant),
+    );
   }
 
-  Future<void> insertTransactions(
-      List<model.FinanceTransaction> entries) async {
-    await super.transaction(() async {
-      for (final entry in entries) {
-        await into(transactions).insert(
-          TransactionsCompanion.insert(
-            id: entry.id,
-            type: entry.type.name,
-            accountId: entry.accountId,
-            amount: entry.amount,
-            currency: entry.currency,
-            toAmount: Value(entry.toAmount),
-            toCurrency: Value(entry.toCurrency),
-            recordDate: Value(entry.recordDate),
-            transactionDate: entry.transactionDate,
-            status: Value(entry.status.name),
-            recurringRuleId: Value(entry.recurringRuleId),
-            toAccountId: Value(entry.toAccountId),
-            categoryId: Value(entry.categoryId),
-            description: Value(entry.description),
-            merchant: Value(entry.merchant),
-          ),
-        );
-        await _applyTransactionToBalances(entry);
-      }
-    });
+  Future<model.FinanceTransaction> _liveTransaction(
+      model.FinanceTransaction entry,
+      {model.FinanceTransaction? previous}) async {
+    await _validateCategoryChoice(
+        entry.categoryId, allowedCategoryTypes(entry.type),
+        originalCategoryId:
+            previous?.type == entry.type ? previous?.categoryId : null);
+    if (previous?.loanInstallmentNumber != null &&
+        entry.loanInstallmentNumber == null &&
+        entry.type == model.TransactionType.transfer &&
+        entry.toAccountId == previous!.toAccountId) {
+      throw const FormatException('编辑已关联的月供须保留贷款期号。');
+    }
+    if (entry.type != model.TransactionType.transfer ||
+        entry.toAmount != 0 ||
+        entry.amount == 0 ||
+        entry.toAccountId == null ||
+        entry.loanFields.isNotEmpty ||
+        entry.currency.trim().toUpperCase() !=
+            entry.transferInCurrency.trim().toUpperCase() ||
+        (previous?.toAmount == 0 &&
+            previous?.toAccountId == entry.toAccountId)) {
+      return entry;
+    }
+    final target = await (select(accounts)
+          ..where((a) => a.id.equals(entry.toAccountId!)))
+        .getSingle();
+    return target.accountType == 'loan'
+        ? entry
+        : entry.canonicalOrdinaryTransfer();
   }
 
-  Future<void> updateTransaction(model.FinanceTransaction entry) async {
-    await super.transaction(() async {
-      final existing = await (select(transactions)
-            ..where((tbl) => tbl.id.equals(entry.id)))
-          .getSingle();
-      final previous = model.FinanceTransaction(
-        id: existing.id,
-        type: enumByName(model.TransactionType.values, existing.type),
-        accountId: existing.accountId,
-        toAccountId: existing.toAccountId,
-        categoryId: existing.categoryId,
-        amount: existing.amount,
-        currency: existing.currency,
-        toAmount: existing.toAmount,
-        toCurrency: existing.toCurrency,
-        recordDate: existing.recordDate ?? existing.transactionDate,
-        transactionDate: existing.transactionDate,
-        status: existing.status == null
-            ? model.TransactionStatus.actual
-            : enumByName(model.TransactionStatus.values, existing.status!),
-        recurringRuleId: existing.recurringRuleId,
-        description: existing.description,
-        merchant: existing.merchant,
-      );
-
-      await _reverseTransactionFromBalances(previous);
-      await (update(transactions)..where((tbl) => tbl.id.equals(entry.id)))
-          .write(
-        TransactionsCompanion(
-          type: Value(entry.type.name),
-          accountId: Value(entry.accountId),
-          amount: Value(entry.amount),
-          currency: Value(entry.currency),
-          toAmount: Value(entry.toAmount),
-          toCurrency: Value(entry.toCurrency),
-          recordDate: Value(entry.recordDate),
-          transactionDate: Value(entry.transactionDate),
-          status: Value(entry.status.name),
-          recurringRuleId: Value(entry.recurringRuleId),
-          toAccountId: Value(entry.toAccountId),
-          categoryId: Value(entry.categoryId),
-          description: Value(entry.description),
-          merchant: Value(entry.merchant),
-        ),
-      );
-      await _applyTransactionToBalances(entry);
-    });
+  Future<void> _rememberRecurringMonth(Transaction row) async {
+    final ruleId = row.recurringRuleId;
+    if (ruleId == null) return;
+    final key = occurrenceKey(ruleId, row.id);
+    if (await getMetaValue(key) == null) {
+      await setMetaValue(key,
+          nominalOccurrenceMonth(ruleId, row.id, row.transactionDate, null));
+    }
   }
+
+  Future<void> updateTransaction(model.FinanceTransaction entry) =>
+      super.transaction(() async {
+        final row = await (select(transactions)
+              ..where((t) => t.id.equals(entry.id)))
+            .getSingle();
+        await _rememberRecurringMonth(row);
+        final changes = <String, double>{};
+        final links = await _readLoanLinks(_loanTransactions);
+        final previous = _transactionModel(row, links[row.id]);
+        await _requireActiveAccounts(_newAccountReferences(entry,
+            originalSource: previous.accountId,
+            originalTarget: previous.toAccountId));
+        entry = await _liveTransaction(entry, previous: previous);
+        _collectBalanceChanges(changes, previous, reversing: true);
+        await (update(transactions)..where((t) => t.id.equals(entry.id)))
+            .write(_transactionCompanion(entry));
+        _collectBalanceChanges(changes, entry);
+        await _patchLoanLinks(_loanTransactions, links, [entry], [entry.id]);
+        await _updateBalanceCaches(changes);
+      });
 
   Future<void> deleteTransaction(String transactionId) =>
       deleteTransactionsByIds([transactionId]);
 
-  Future<void> deleteTransactionsByIds(Iterable<String> transactionIds) async {
-    final ids = transactionIds.toSet().toList(growable: false);
-    if (ids.isEmpty) return;
-    await super.transaction(() async {
-      final existing =
-          await (select(transactions)..where((tbl) => tbl.id.isIn(ids))).get();
-      if (existing.length != ids.length) {
-        throw StateError('One or more selected transactions no longer exist.');
-      }
-      for (final row in existing) {
-        final previous = model.FinanceTransaction(
-          id: row.id,
-          type: enumByName(model.TransactionType.values, row.type),
-          accountId: row.accountId,
-          toAccountId: row.toAccountId,
-          categoryId: row.categoryId,
-          amount: row.amount,
-          currency: row.currency,
-          toAmount: row.toAmount,
-          toCurrency: row.toCurrency,
-          recordDate: row.recordDate ?? row.transactionDate,
-          transactionDate: row.transactionDate,
-          status: row.status == null
-              ? model.TransactionStatus.actual
-              : enumByName(model.TransactionStatus.values, row.status!),
-          recurringRuleId: row.recurringRuleId,
-          description: row.description,
-          merchant: row.merchant,
-        );
-        await _reverseTransactionFromBalances(previous);
-      }
-      await (delete(transactions)..where((tbl) => tbl.id.isIn(ids))).go();
-    });
-  }
+  Future<void> deleteTransactionsByIds(Iterable<String> transactionIds) =>
+      replaceTransactions(deleteIds: transactionIds, insertItems: const []);
 
-  /// Inserts a snapshot and keeps `current_balance` consistent with it.
-  ///
-  /// A snapshot that becomes the latest one is a fresh observation at its
-  /// date, so actual transfers/adjustments already recorded after that date
-  /// are folded into its stored market value (the same rule
-  /// [_syncInvestmentFlowIntoSnapshot] applies to later records), and
-  /// `current_balance` becomes that value plus actual income/expense after
-  /// the date. A backdated (non-latest) snapshot leaves the balance alone.
-  Future<void> insertAssetSnapshot(model.AssetSnapshot snapshot) async {
+  /// The selected rows, both sides of their transfers and all replacements
+  /// become visible together. Refresh each affected account only once.
+  Future<void> replaceTransactions({
+    required Iterable<String> deleteIds,
+    required List<model.FinanceTransaction> insertItems,
+  }) async {
+    final ids = deleteIds.toSet();
+    if (ids.isEmpty && insertItems.isEmpty) return;
     await super.transaction(() async {
-      final others = await _snapshotRowsForAccount(snapshot.accountId);
-      final becomesLatest = _isLatestAmong(snapshot.snapshotDate, others);
-      var marketValue = snapshot.marketValue;
-      var cashBalance = snapshot.cashBalance;
-      var unrealizedPnl = snapshot.unrealizedPnl;
-      List<_AccountFlow> flows = const [];
-      if (becomesLatest) {
-        flows = await _actualFlowsForAccount(snapshot.accountId);
-        final folded = flows
-            .where((flow) =>
-                flow.foldsIntoSnapshot &&
-                flow.date.isAfter(snapshot.snapshotDate))
-            .fold(0.0, (sum, flow) => sum + flow.delta);
-        if (folded != 0) {
-          marketValue += folded;
-          cashBalance =
-              (cashBalance + folded).clamp(0, double.infinity).toDouble();
-          unrealizedPnl = marketValue - snapshot.costBasis;
+      final changes = <String, double>{};
+      final previousById = <String, model.FinanceTransaction>{};
+      final links = await _readLoanLinks(_loanTransactions);
+      if (ids.isNotEmpty) {
+        final existing =
+            await (select(transactions)..where((t) => t.id.isIn(ids))).get();
+        if (existing.length != ids.length) {
+          throw StateError(
+              'One or more selected transactions no longer exist.');
         }
+        for (final row in existing) {
+          await _rememberRecurringMonth(row);
+          final previous = _transactionModel(row, links[row.id]);
+          previousById[row.id] = previous;
+          _collectBalanceChanges(changes, previous, reversing: true);
+        }
+        await (delete(transactions)..where((t) => t.id.isIn(ids))).go();
       }
-
-      await into(assetSnapshots).insert(
-        AssetSnapshotsCompanion.insert(
-          id: snapshot.id,
-          accountId: snapshot.accountId,
-          snapshotDate: snapshot.snapshotDate,
-          marketValue: marketValue,
-          costBasis: Value(snapshot.costBasis),
-          cashBalance: Value(cashBalance),
-          unrealizedPnl: Value(unrealizedPnl),
-        ),
-      );
-
-      if (becomesLatest) {
-        await _writeCurrentBalance(
-          snapshot.accountId,
-          marketValue + _incomeExpenseAfter(flows, snapshot.snapshotDate),
-        );
+      await _requireActiveAccounts(insertItems.expand((item) =>
+          _newAccountReferences(item,
+              originalSource: previousById[item.id]?.accountId,
+              originalTarget: previousById[item.id]?.toAccountId)));
+      for (final item in insertItems) {
+        final entry =
+            await _liveTransaction(item, previous: previousById[item.id]);
+        await into(transactions).insert(_transactionCompanion(entry));
+        _collectBalanceChanges(changes, entry);
       }
+      await _patchLoanLinks(_loanTransactions, links, insertItems, ids);
+      await _updateBalanceCaches(changes);
     });
   }
 
-  /// Updates a snapshot in place.
-  ///
-  /// Editing the latest snapshot (it stays latest) shifts `current_balance`
-  /// by the market value change and by actual income/expense that moved
-  /// across the old/new date. Editing a non-latest snapshot that stays
-  /// non-latest leaves the balance alone. Changing *which* snapshot is latest
-  /// is refused with [SnapshotBalanceAmbiguityException] when the account has
-  /// actual transfers/adjustments, because the database does not record which
-  /// snapshot absorbed them. Moving a snapshot to another account is not
-  /// supported.
-  Future<void> updateAssetSnapshot(model.AssetSnapshot snapshot) async {
-    await super.transaction(() async {
-      final existing = await (select(assetSnapshots)
-            ..where((tbl) => tbl.id.equals(snapshot.id)))
-          .getSingleOrNull();
-      if (existing == null) {
-        return;
-      }
-      if (existing.accountId != snapshot.accountId) {
-        throw ArgumentError.value(
-          snapshot.accountId,
-          'snapshot.accountId',
-          '资产快照不能改换账户，请删除后在目标账户重新录入。',
-        );
-      }
-      final others = (await _snapshotRowsForAccount(snapshot.accountId))
-          .where((row) => row.id != snapshot.id)
-          .toList();
-      final wasLatest = _isLatestAmong(existing.snapshotDate, others);
-      final isLatest = _isLatestAmong(snapshot.snapshotDate, others);
-      final flows = await _actualFlowsForAccount(snapshot.accountId);
-      if (wasLatest != isLatest &&
-          flows.any((flow) => flow.foldsIntoSnapshot)) {
-        throw const SnapshotBalanceAmbiguityException(
-          '该账户已有实际转账或调整，改变“最新快照”会让余额无法可靠重建（系统没有记录这些资金流已并入哪一张快照）。'
-          '请保持该快照相对其他快照的先后顺序，只修改市值或在同一区间内调整日期。',
-        );
-      }
-
-      await (update(assetSnapshots)..where((tbl) => tbl.id.equals(snapshot.id)))
-          .write(
-        AssetSnapshotsCompanion(
-          snapshotDate: Value(snapshot.snapshotDate),
-          marketValue: Value(snapshot.marketValue),
-          costBasis: Value(snapshot.costBasis),
-          cashBalance: Value(snapshot.cashBalance),
-          unrealizedPnl: Value(snapshot.unrealizedPnl),
-        ),
-      );
-
-      if (wasLatest && isLatest) {
-        final account = await (select(accounts)
-              ..where((tbl) => tbl.id.equals(snapshot.accountId)))
-            .getSingle();
-        await _writeCurrentBalance(
-          snapshot.accountId,
-          account.currentBalance +
-              (snapshot.marketValue - existing.marketValue) +
-              _incomeExpenseAfter(flows, snapshot.snapshotDate) -
-              _incomeExpenseAfter(flows, existing.snapshotDate),
-        );
-      } else if (wasLatest != isLatest) {
-        // Only reachable without transfers/adjustments, so no snapshot holds
-        // folded flows and the new latest value is a plain observation.
-        final anchorValue =
-            isLatest ? snapshot.marketValue : _latestRow(others).marketValue;
-        final anchorDate =
-            isLatest ? snapshot.snapshotDate : _latestRow(others).snapshotDate;
-        await _writeCurrentBalance(
-          snapshot.accountId,
-          anchorValue + _incomeExpenseAfter(flows, anchorDate),
-        );
-      }
-    });
+  void _collectBalanceChanges(
+      Map<String, double> changes, model.FinanceTransaction entry,
+      {bool reversing = false}) {
+    if (!entry.affectsBalance) return;
+    final affected = {
+      entry.accountId,
+      if (entry.type == model.TransactionType.transfer &&
+          entry.toAccountId != null)
+        entry.toAccountId!,
+    };
+    for (final id in affected) {
+      final delta = accountTransactionDelta(id, entry);
+      changes[id] = (changes[id] ?? 0) + (reversing ? -delta : delta);
+    }
   }
 
-  /// Deletes a snapshot and rebuilds `current_balance` where that is lossless.
-  ///
-  /// Deleting a non-latest snapshot leaves the balance alone. Deleting the
-  /// only snapshot rebuilds the ledger from `initial_balance` plus every
-  /// actual transaction. Deleting the latest snapshot while older ones
-  /// remain is refused with [SnapshotBalanceAmbiguityException] when the
-  /// account has actual transfers/adjustments (see [updateAssetSnapshot]);
-  /// otherwise the previous snapshot becomes the anchor.
-  Future<void> deleteAssetSnapshot(String snapshotId) async {
-    await super.transaction(() async {
-      final existing = await (select(assetSnapshots)
-            ..where((tbl) => tbl.id.equals(snapshotId)))
-          .getSingleOrNull();
-      if (existing == null) {
-        return;
-      }
-      final accountId = existing.accountId;
-      final others = (await _snapshotRowsForAccount(accountId))
-          .where((row) => row.id != snapshotId)
-          .toList();
-      final wasLatest = _isLatestAmong(existing.snapshotDate, others);
-      final flows = await _actualFlowsForAccount(accountId);
-      if (others.isNotEmpty &&
-          wasLatest &&
-          flows.any((flow) => flow.foldsIntoSnapshot)) {
-        throw const SnapshotBalanceAmbiguityException(
-          '该账户已有实际转账或调整，删除最新快照后无法确定较早快照是否已包含这些资金流，为避免错账已阻止删除。'
-          '请改为编辑这张快照的市值。',
-        );
-      }
-
-      await (delete(assetSnapshots)..where((tbl) => tbl.id.equals(snapshotId)))
-          .go();
-
-      if (others.isEmpty) {
-        final account = await (select(accounts)
-              ..where((tbl) => tbl.id.equals(accountId)))
-            .getSingle();
-        await _writeCurrentBalance(
-          accountId,
-          flows.fold(
-            account.initialBalance,
-            (sum, flow) => sum + flow.delta,
-          ),
-        );
-      } else if (wasLatest) {
-        final anchor = _latestRow(others);
-        await _writeCurrentBalance(
-          accountId,
-          anchor.marketValue + _incomeExpenseAfter(flows, anchor.snapshotDate),
-        );
-      }
-    });
-  }
-
-  Future<List<AssetSnapshot>> _snapshotRowsForAccount(String accountId) {
-    return (select(assetSnapshots)
-          ..where((tbl) => tbl.accountId.equals(accountId)))
-        .get();
-  }
-
-  /// Whether a snapshot dated [date] is (or ties) the latest among [others].
-  bool _isLatestAmong(DateTime date, List<AssetSnapshot> others) {
-    return others.every((row) => !date.isBefore(row.snapshotDate));
-  }
-
-  AssetSnapshot _latestRow(List<AssetSnapshot> rows) {
-    return rows.reduce(
-      (latest, row) =>
-          row.snapshotDate.isAfter(latest.snapshotDate) ? row : latest,
+  AssetSnapshotsCompanion _snapshotCompanion(model.AssetSnapshot snapshot) {
+    return AssetSnapshotsCompanion.insert(
+      id: snapshot.id,
+      accountId: snapshot.accountId,
+      snapshotDate: snapshot.snapshotDate,
+      marketValue: snapshot.marketValue,
+      costBasis: Value(snapshot.costBasis),
+      cashBalance: Value(snapshot.cashBalance),
+      unrealizedPnl: Value(snapshot.unrealizedPnl),
     );
   }
 
-  /// Signed balance effect of every actual (non-planned) transaction on
-  /// [accountId].
-  Future<List<_AccountFlow>> _actualFlowsForAccount(String accountId) async {
-    final rows = await (select(transactions)
-          ..where((tbl) =>
-              tbl.accountId.equals(accountId) |
-              tbl.toAccountId.equals(accountId)))
-        .get();
-    final flows = <_AccountFlow>[];
-    for (final row in rows) {
-      if (row.status == model.TransactionStatus.planned.name) {
-        continue;
-      }
-      final type = enumByName(model.TransactionType.values, row.type);
-      var delta = 0.0;
-      switch (type) {
-        case model.TransactionType.income:
-        case model.TransactionType.adjustment:
-          delta = row.accountId == accountId ? row.amount : 0;
-        case model.TransactionType.expense:
-          delta = row.accountId == accountId ? -row.amount : 0;
-        case model.TransactionType.transfer:
-          if (row.accountId == accountId) {
-            delta -= row.amount;
-          }
-          if (row.toAccountId == accountId) {
-            delta += model.FinanceTransaction(
-              id: row.id,
-              type: type,
-              accountId: row.accountId,
-              toAccountId: row.toAccountId,
-              amount: row.amount,
-              currency: row.currency,
-              toAmount: row.toAmount,
-              toCurrency: row.toCurrency,
-              transactionDate: row.transactionDate,
-            ).transferInAmount;
-          }
-      }
-      if (delta != 0) {
-        flows.add(_AccountFlow(
-          date: row.transactionDate,
-          delta: delta,
-          foldsIntoSnapshot: type == model.TransactionType.transfer ||
-              type == model.TransactionType.adjustment,
-        ));
+  Future<void> insertAssetSnapshot(model.AssetSnapshot snapshot) =>
+      super.transaction(() async {
+        await into(assetSnapshots).insert(_snapshotCompanion(snapshot));
+        await _rebuildSnapshotAccount(snapshot.accountId);
+      });
+
+  Future<void> updateAssetSnapshot(model.AssetSnapshot snapshot) =>
+      super.transaction(() async {
+        final row = await (select(assetSnapshots)
+              ..where((t) => t.id.equals(snapshot.id)))
+            .getSingleOrNull();
+        if (row == null) return;
+        if (row.accountId != snapshot.accountId) {
+          throw ArgumentError.value(snapshot.accountId, 'snapshot.accountId',
+              '资产快照不能改换账户，请删除后在目标账户重新录入。');
+        }
+        await (update(assetSnapshots)..where((t) => t.id.equals(snapshot.id)))
+            .write(_snapshotCompanion(snapshot));
+        await _rebuildSnapshotAccount(row.accountId);
+      });
+
+  Future<void> deleteAssetSnapshot(String snapshotId) =>
+      super.transaction(() async {
+        final row = await (select(assetSnapshots)
+              ..where((t) => t.id.equals(snapshotId)))
+            .getSingleOrNull();
+        if (row == null) return;
+        await (delete(assetSnapshots)..where((t) => t.id.equals(snapshotId)))
+            .go();
+        await _rebuildSnapshotAccount(row.accountId);
+      });
+
+  Future<AssetSnapshot?> _latestBalanceAnchor(String accountId) =>
+      (select(assetSnapshots)
+            ..where((t) => t.accountId.equals(accountId))
+            ..orderBy([
+              (t) => OrderingTerm.desc(t.snapshotDate),
+              (t) => OrderingTerm.desc(t.id)
+            ])
+            ..limit(1))
+          .getSingleOrNull();
+
+  model.ReportGroup _effectiveGroup(Account account) =>
+      model.effectiveReportGroupFor(
+          enumByName(model.AccountType.values, account.accountType),
+          enumByName(model.ReportGroup.values, account.reportGroup));
+
+  Future<void> _updateBalanceCaches(Map<String, double> changes) async {
+    for (final change in changes.entries) {
+      final account = await (select(accounts)
+            ..where((t) => t.id.equals(change.key)))
+          .getSingle();
+      final anchor = await _latestBalanceAnchor(account.id);
+      if (anchor != null || _investmentGroup(_effectiveGroup(account).name)) {
+        await _replayBalance(account, anchor);
+      } else {
+        // Ordinary legacy accounts may have a reconciled balance offset.
+        // Preserve it while applying the net movement of this operation.
+        await _writeCurrentBalance(
+            account.id, account.currentBalance + change.value);
       }
     }
-    return flows;
   }
 
-  /// Actual income/expense dated after [date]; these are never folded into a
-  /// snapshot's market value.
-  double _incomeExpenseAfter(List<_AccountFlow> flows, DateTime date) {
-    return flows
-        .where((flow) => !flow.foldsIntoSnapshot && flow.date.isAfter(date))
-        .fold(0.0, (sum, flow) => sum + flow.delta);
+  Future<void> _rebuildSnapshotAccount(String id) async {
+    final account =
+        await (select(accounts)..where((t) => t.id.equals(id))).getSingle();
+    await _replayBalance(account, await _latestBalanceAnchor(id));
+  }
+
+  Future<void> _replayBalance(Account account, AssetSnapshot? anchor) async {
+    final query = select(transactions)
+      ..where((t) =>
+          t.accountId.equals(account.id) | t.toAccountId.equals(account.id))
+      ..orderBy([
+        (t) => OrderingTerm.asc(t.transactionDate),
+        (t) => OrderingTerm.asc(t.id)
+      ]);
+    if (anchor != null) {
+      query.where(
+          (t) => t.transactionDate.isBiggerThanValue(anchor.snapshotDate));
+    }
+    final links = await _readLoanLinks(_loanTransactions);
+    var balance = anchor?.marketValue ?? account.initialBalance;
+    for (final row in await query.get()) {
+      balance += accountTransactionDelta(
+          account.id, _transactionModel(row, links[row.id]));
+    }
+    await _writeCurrentBalance(account.id, balance);
   }
 
   Future<void> _writeCurrentBalance(String accountId, double balance) {
@@ -1419,6 +1669,22 @@ class AppDatabase extends _$AppDatabase {
 
   Future<void> clearAllUserData() async {
     await super.transaction(() async {
+      // Account-specific reconciliation, goals, FX, notifications and preset
+      // ownership belong to the cleared ledger; the device appearance and local
+      // profile still apply. Keep completed representation markers for new rows.
+      await (delete(appMeta)
+            ..where((m) => m.key.isNotIn(const [
+                  'local_profile_id',
+                  'theme_style',
+                  'ui_redesign_v2_applied',
+                  'account_report_groups_v1',
+                  presetTablesMarker,
+                  _loanSemanticsKey,
+                  _investmentSemanticsKey,
+                  _zeroSameCurrencyTransferRepairKey,
+                  'credit_card_account_billing_dates_v1',
+                ])))
+          .go();
       await delete(recurringTransactionRules).go();
       await delete(transactionTemplates).go();
       await delete(assetSnapshots).go();
@@ -1434,212 +1700,4 @@ class AppDatabase extends _$AppDatabase {
       );
     });
   }
-
-  Future<void> _applyTransactionToBalances(
-      model.FinanceTransaction transaction) async {
-    if (!transaction.affectsBalance) {
-      return;
-    }
-    switch (transaction.type) {
-      case model.TransactionType.income:
-        await _incrementAccountBalance(
-            transaction.accountId, transaction.amount);
-        return;
-      case model.TransactionType.adjustment:
-        await _incrementAccountBalance(
-            transaction.accountId, transaction.amount);
-        await _syncInvestmentFlowIntoSnapshot(
-          accountId: transaction.accountId,
-          delta: transaction.amount,
-          transactionDate: transaction.transactionDate,
-        );
-        return;
-      case model.TransactionType.expense:
-        await _incrementAccountBalance(
-            transaction.accountId, -transaction.amount);
-        return;
-      case model.TransactionType.transfer:
-        await _incrementAccountBalance(
-            transaction.accountId, -transaction.amount);
-        await _syncInvestmentFlowIntoSnapshot(
-          accountId: transaction.accountId,
-          delta: -transaction.amount,
-          transactionDate: transaction.transactionDate,
-        );
-        if (transaction.toAccountId != null) {
-          final incomingAmount = transaction.transferInAmount;
-          await _incrementAccountBalance(
-              transaction.toAccountId!, incomingAmount);
-          await _syncInvestmentFlowIntoSnapshot(
-            accountId: transaction.toAccountId!,
-            delta: incomingAmount,
-            transactionDate: transaction.transactionDate,
-          );
-        }
-        return;
-    }
-  }
-
-  Future<void> _reverseTransactionFromBalances(
-      model.FinanceTransaction transaction) async {
-    if (!transaction.affectsBalance) {
-      return;
-    }
-    switch (transaction.type) {
-      case model.TransactionType.income:
-        await _incrementAccountBalance(
-            transaction.accountId, -transaction.amount);
-        return;
-      case model.TransactionType.adjustment:
-        await _incrementAccountBalance(
-            transaction.accountId, -transaction.amount);
-        await _syncInvestmentFlowIntoSnapshot(
-          accountId: transaction.accountId,
-          delta: -transaction.amount,
-          transactionDate: transaction.transactionDate,
-        );
-        return;
-      case model.TransactionType.expense:
-        await _incrementAccountBalance(
-            transaction.accountId, transaction.amount);
-        return;
-      case model.TransactionType.transfer:
-        await _incrementAccountBalance(
-            transaction.accountId, transaction.amount);
-        await _syncInvestmentFlowIntoSnapshot(
-          accountId: transaction.accountId,
-          delta: transaction.amount,
-          transactionDate: transaction.transactionDate,
-        );
-        if (transaction.toAccountId != null) {
-          final incomingAmount = transaction.transferInAmount;
-          await _incrementAccountBalance(
-              transaction.toAccountId!, -incomingAmount);
-          await _syncInvestmentFlowIntoSnapshot(
-            accountId: transaction.toAccountId!,
-            delta: -incomingAmount,
-            transactionDate: transaction.transactionDate,
-          );
-        }
-        return;
-    }
-  }
-
-  Future<void> _incrementAccountBalance(String accountId, double delta) async {
-    final row = await (select(accounts)
-          ..where((tbl) => tbl.id.equals(accountId)))
-        .getSingle();
-    await (update(accounts)..where((tbl) => tbl.id.equals(accountId))).write(
-      AccountsCompanion(
-        currentBalance: Value(row.currentBalance + delta),
-      ),
-    );
-  }
-
-  Future<void> _syncInvestmentFlowIntoSnapshot({
-    required String accountId,
-    required double delta,
-    required DateTime transactionDate,
-  }) async {
-    if (delta == 0) {
-      return;
-    }
-    final account = await (select(accounts)
-          ..where((tbl) => tbl.id.equals(accountId)))
-        .getSingle();
-    final reportGroup =
-        enumByName(model.ReportGroup.values, account.reportGroup);
-    if (reportGroup != model.ReportGroup.investment &&
-        reportGroup != model.ReportGroup.retirement) {
-      return;
-    }
-
-    final latest = await (select(assetSnapshots)
-          ..where((tbl) => tbl.accountId.equals(accountId))
-          ..orderBy([(tbl) => OrderingTerm.desc(tbl.snapshotDate)])
-          ..limit(1))
-        .getSingleOrNull();
-    final first = await (select(assetSnapshots)
-          ..where((tbl) => tbl.accountId.equals(accountId))
-          ..orderBy([(tbl) => OrderingTerm.asc(tbl.snapshotDate)])
-          ..limit(1))
-        .getSingleOrNull();
-
-    if (latest == null) {
-      final seededCost = delta.clamp(0, double.infinity).toDouble();
-      final seededMarketValue = account.currentBalance;
-      final seededCashBalance =
-          account.currentBalance.clamp(0, double.infinity).toDouble();
-      await into(assetSnapshots).insert(
-        AssetSnapshotsCompanion.insert(
-          id: 'snap_${DateTime.now().microsecondsSinceEpoch}',
-          accountId: accountId,
-          snapshotDate: transactionDate,
-          marketValue: seededMarketValue,
-          costBasis: Value(seededCost),
-          cashBalance: Value(seededCashBalance),
-          unrealizedPnl: Value(seededMarketValue - seededCost),
-        ),
-      );
-      return;
-    }
-
-    final nextMarketValue = latest.marketValue + delta;
-    final nextCashBalance =
-        (latest.cashBalance + delta).clamp(0, double.infinity).toDouble();
-    final shouldAdjustBaselineCost =
-        first != null && !transactionDate.isAfter(first.snapshotDate);
-    final nextLatestCostBasis =
-        shouldAdjustBaselineCost && first.id == latest.id
-            ? (latest.costBasis + delta).clamp(0, double.infinity).toDouble()
-            : latest.costBasis;
-    await (update(assetSnapshots)..where((tbl) => tbl.id.equals(latest.id)))
-        .write(
-      AssetSnapshotsCompanion(
-        marketValue: Value(nextMarketValue),
-        costBasis: Value(nextLatestCostBasis),
-        cashBalance: Value(nextCashBalance),
-        unrealizedPnl: Value(nextMarketValue - nextLatestCostBasis),
-      ),
-    );
-
-    if (shouldAdjustBaselineCost && first.id != latest.id) {
-      final nextFirstCostBasis =
-          (first.costBasis + delta).clamp(0, double.infinity).toDouble();
-      await (update(assetSnapshots)..where((tbl) => tbl.id.equals(first.id)))
-          .write(
-        AssetSnapshotsCompanion(
-          costBasis: Value(nextFirstCostBasis),
-          unrealizedPnl: Value(first.marketValue - nextFirstCostBasis),
-        ),
-      );
-    }
-  }
-}
-
-/// Raised when a snapshot write would need to know which snapshot absorbed
-/// earlier transfers/adjustments, which the schema does not record. The write
-/// is rolled back; [toString] is the user-facing message.
-class SnapshotBalanceAmbiguityException implements Exception {
-  const SnapshotBalanceAmbiguityException(this.message);
-
-  final String message;
-
-  @override
-  String toString() => message;
-}
-
-class _AccountFlow {
-  const _AccountFlow({
-    required this.date,
-    required this.delta,
-    required this.foldsIntoSnapshot,
-  });
-
-  final DateTime date;
-  final double delta;
-
-  /// Transfers and adjustments are folded into the latest snapshot's market
-  /// value by `_syncInvestmentFlowIntoSnapshot`; income/expense are not.
-  final bool foldsIntoSnapshot;
 }

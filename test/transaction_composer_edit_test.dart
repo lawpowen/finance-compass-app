@@ -16,6 +16,73 @@ import 'package:flutter_test/flutter_test.dart';
 import 'support/amount_entry.dart';
 
 void main() {
+  testWidgets(
+      'account chooser quotes month-end balances for both transfer legs',
+      (tester) async {
+    final database = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(database.close);
+    var repo = await FinanceRepository.load(database);
+    repo = await repo.addAccount(const Account(
+      id: 'payer',
+      name: 'Payer',
+      accountType: AccountType.cash,
+      reportGroup: ReportGroup.cash,
+      currency: 'MYR',
+      initialBalance: 100,
+      currentBalance: 100,
+    ));
+    repo = await repo.addAccount(const Account(
+      id: 'receiver',
+      name: 'Card',
+      accountType: AccountType.creditCard,
+      reportGroup: ReportGroup.credit,
+      currency: 'MYR',
+      initialBalance: -50,
+      currentBalance: -50,
+    ));
+    final now = DateTime.now();
+    repo = await repo.addTransaction(FinanceTransaction(
+      id: 'future',
+      type: TransactionType.transfer,
+      accountId: 'payer',
+      toAccountId: 'receiver',
+      currency: 'MYR',
+      amount: 30,
+      transactionDate: DateTime(now.year, now.month + 1, 1),
+    ));
+    await tester.pumpWidget(MaterialApp(
+        home: TransactionComposerPage(
+      repository: repo,
+      draft: FinanceTransaction(
+          id: 'draft',
+          type: TransactionType.transfer,
+          accountId: 'payer',
+          toAccountId: 'receiver',
+          currency: 'MYR',
+          amount: 1,
+          transactionDate: now),
+    )));
+    final source = find.text('转出账户');
+    await tester.ensureVisible(source);
+    await tester.tap(source);
+    await tester.pumpAndSettle();
+    expect(
+        find.textContaining('本月末余额').evaluate().single.widget,
+        isA<Text>()
+            .having((w) => w.data, 'month-end cash', contains('100.00')));
+    await tester.tap(find.text('Payer · MYR'));
+    await tester.pumpAndSettle();
+    final target = find.text('转入账户');
+    await tester.ensureVisible(target);
+    await tester.tap(target);
+    await tester.pumpAndSettle();
+    expect(
+        find.textContaining('本月末欠款').evaluate().single.widget,
+        isA<Text>()
+            .having((w) => w.data, 'month-end debt', contains('50.00'))
+            .having((w) => w.data, 'later commitments', contains('20.00')));
+  });
+
   testWidgets('empty-account forms show the ledger base currency',
       (tester) async {
     final database = AppDatabase.forTesting(NativeDatabase.memory());
@@ -365,6 +432,7 @@ void main() {
       toAccountId: 'loan-payment-target',
       amount: 1316,
       toAmount: 1191.58,
+      loanInstallmentNumber: 1,
       currency: 'MYR',
       toCurrency: 'MYR',
       transactionDate: DateTime(2026, 7, 23),

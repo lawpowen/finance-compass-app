@@ -1,0 +1,119 @@
+{
+  "format_version": 3,
+  "schema_version": 9,
+  "transaction_date_semantics": "occurrence_date",
+  "meta": {
+    "loan_installment_semantics": "explicit_v1",
+    "investment_snapshot_semantics": "immutable_v1"
+  },
+  "accounts": [
+    {
+      "id": "usd",
+      "name": "USD bank",
+      "account_type": "bankSaving",
+      "report_group": "cash",
+      "currency": "USD",
+      "initial_balance": 1000,
+      "current_balance": 980
+    },
+    {
+      "id": "myr",
+      "name": "MYR bank",
+      "account_type": "bankSaving",
+      "report_group": "cash",
+      "currency": "MYR",
+      "initial_balance": 100,
+      "current_balance": 78
+    },
+    {
+      "id": "loan",
+      "name": "Installment loan",
+      "account_type": "loan",
+      "report_group": "credit",
+      "currency": "MYR",
+      "initial_balance": -200,
+      "current_balance": -100,
+      "loan_principal": 200,
+      "loan_annual_interest_rate": 12,
+      "loan_term_months": 2,
+      "loan_start_date": "2026-10-01",
+      "loan_payment_day": 23,
+      "loan_repayment_method": "equalPrincipal"
+    }
+  ],
+  "categories": [],
+  "budgets": [],
+  "transactions": [
+    {
+      "id": "first",
+      "type": "transfer",
+      "account_id": "usd",
+      "to_account_id": "loan",
+      "currency": "USD",
+      "to_currency": "MYR",
+      "amount": 20,
+      "loan_payment_amount": 80,
+      "to_amount": 78,
+      "loan_installment_number": 1,
+      "transaction_date": "2026-11-18",
+      "description": "Edited memo",
+      "status": "actual"
+    },
+    {
+      "id": "second",
+      "type": "transfer",
+      "account_id": "usd",
+      "to_account_id": "loan",
+      "currency": "USD",
+      "to_currency": "MYR",
+      "amount": 5.5,
+      "loan_payment_amount": 22,
+      "to_amount": 22,
+      "loan_installment_number": 1,
+      "transaction_date": "2026-11-20",
+      "description": "Edited memo",
+      "status": "settled"
+    },
+    {
+      "id": "undo",
+      "type": "transfer",
+      "account_id": "usd",
+      "to_account_id": "loan",
+      "currency": "USD",
+      "to_currency": "MYR",
+      "amount": -5.5,
+      "loan_payment_amount": -22,
+      "to_amount": -22,
+      "loan_installment_number": 1,
+      "transaction_date": "2026-11-22",
+      "description": "Edited memo",
+      "status": "actual"
+    },
+    {
+      "id": "ordinary",
+      "type": "transfer",
+      "account_id": "myr",
+      "to_account_id": "loan",
+      "currency": "MYR",
+      "amount": 22,
+      "description": "贷款月供 #1",
+      "transaction_date": "2026-11-22",
+      "status": "actual"
+    },
+    {
+      "id": "planned",
+      "type": "transfer",
+      "account_id": "myr",
+      "to_account_id": "loan",
+      "currency": "MYR",
+      "amount": 22,
+      "to_amount": 22,
+      "loan_installment_number": 1,
+      "transaction_date": "2026-11-23",
+      "status": "planned"
+    }
+  ],
+  "asset_snapshots": [],
+  "transaction_templates": [],
+  "recurring_transaction_rules": []
+}

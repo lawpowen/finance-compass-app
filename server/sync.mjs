@@ -191,8 +191,10 @@ export function createSyncServer({ store, origin, push, allowLoopbackOrigin = fa
     },
     [`GET ${api}/push/config`]: pushRoute(() => ({ body: { publicKey: push.publicKey } })),
     [`PUT ${api}/push/subscription`]: pushRoute((accountId, payload) => push.subscribe(accountId, payload)),
+    [`PATCH ${api}/push/subscription`]: pushRoute((accountId, payload) => push.updateTimezone(accountId, payload)),
     [`DELETE ${api}/push/subscription`]: pushRoute((accountId, payload) => push.unsubscribe(accountId, payload?.endpoint)),
     [`POST ${api}/push/test`]: pushRoute((accountId, payload) => push.test(accountId, payload?.endpoint)),
+    [`POST ${api}/push/verify-delivery`]: pushRoute((accountId, payload) => push.verifyDelivery(accountId, payload?.endpoint)),
   };
 
   return createServer({ requestTimeout: 30_000, headersTimeout: 10_000 }, async (request, response) => {

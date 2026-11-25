@@ -195,6 +195,7 @@ if ('serviceWorker' in navigator) {
 (() => {
   const storageKey = 'finance-compass-push-device';
   let readyRegistration;
+  let timezoneTail = Promise.resolve();
   const supported = () => window.isSecureContext && 'Notification' in window &&
     'PushManager' in window && 'serviceWorker' in navigator;
 
@@ -208,18 +209,84 @@ if ('serviceWorker' in navigator) {
     }
   }
 
+  async function closeReminders(registration, shouldClose) {
+    if (typeof registration?.getNotifications !== 'function') return;
+    try {
+      for (const item of await registration.getNotifications()) {
+        if (shouldClose(item.data?.accountId)) item.close();
+      }
+    } catch (_) {
+      // Notification-centre access and PushManager permissions are independent.
+    }
+  }
+
   async function remove(registration, subscription) {
     if (subscription && !await subscription.unsubscribe() &&
         (await registration.pushManager.getSubscription())?.endpoint === subscription.endpoint) {
       throw new Error('Unable to unsubscribe from browser push');
     }
-    if (typeof registration?.getNotifications === 'function') {
-      try {
-        for (const notification of await registration.getNotifications()) notification.close();
-      } catch (_) {
-        // The provider has already stopped delivering to this subscription.
+  }
+
+  const timezone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  const matches = (record, accountId, endpoint) =>
+    record?.accountId === accountId && record.endpoint === endpoint;
+
+  async function changeRegistration(method, accountId, payload) {
+    const response = await fetch('/api/sync/v1/push/subscription', {
+      method, credentials: 'same-origin', cache: 'no-store', redirect: 'error',
+      headers: { 'Content-Type': 'application/json', 'X-Finance-Account': accountId },
+      body: JSON.stringify(payload), signal: AbortSignal.timeout(8000),
+    });
+    if (response.status !== 204) throw new Error('Push registration was not updated');
+  }
+
+  function refreshTimezone(accountId) {
+    const update = timezoneTail.then(async () => {
+      const record = device();
+      const currentZone = timezone();
+      if (!record?.confirmed || record.accountId !== accountId || record.timezone === currentZone) return;
+      const registration = await navigator.serviceWorker.getRegistration();
+      const subscription = await registration?.pushManager?.getSubscription();
+      if (subscription?.endpoint !== record.endpoint) return;
+      await changeRegistration('PATCH', accountId, { endpoint: record.endpoint, timezone: currentZone });
+      const current = device();
+      if (current?.confirmed && matches(current, accountId, record.endpoint)) {
+        localStorage.setItem(storageKey, JSON.stringify({ ...current, timezone: currentZone }));
       }
+    });
+    timezoneTail = update.catch(() => {});
+    return update;
+  }
+
+  async function unsubscribe(accountId) {
+    const record = device();
+    const closeOwned = async (registration) => {
+      registration?.active?.postMessage({ type: 'finance-compass-push-transition' });
+      await closeReminders(registration, owner => !owner || owner === accountId);
+    };
+    if (!record || record.accountId !== accountId) {
+      if ('serviceWorker' in navigator) await closeOwned(await navigator.serviceWorker.getRegistration());
+      return '';
     }
+    let marked = false;
+    try {
+      localStorage.setItem(storageKey, JSON.stringify({ ...record, confirmed: false, revoking: true }));
+      marked = true;
+    } catch (_) {
+      // Still revoke on the server and at the provider if storage is full.
+    }
+    const stopRemote = changeRegistration('DELETE', accountId, { endpoint: record.endpoint });
+    const stopLocal = (async () => {
+      const registration = await navigator.serviceWorker.getRegistration();
+      await closeOwned(registration);
+      const sub = await registration?.pushManager?.getSubscription();
+      if (!matches(device(), accountId, record.endpoint) || (marked && !device()?.revoking)) return;
+      if (sub?.endpoint === record.endpoint) await remove(registration, sub);
+      if (matches(device(), accountId, record.endpoint) && device()?.revoking) localStorage.removeItem(storageKey);
+    })();
+    const [remote, local] = await Promise.allSettled([stopRemote, stopLocal]);
+    if (remote.status === 'rejected' && local.status === 'rejected') throw local.reason;
+    return record.endpoint;
   }
 
   window.FinanceCompassPush = Object.freeze({
@@ -229,9 +296,13 @@ if ('serviceWorker' in navigator) {
         return JSON.stringify({ supported: true, permission: 'denied' });
       }
       readyRegistration = await navigator.serviceWorker.ready;
+      if (device()?.accountId !== accountId) await reconcile(accountId).catch(() => {});
       const subscription = await readyRegistration.pushManager.getSubscription();
       const record = device();
       const endpoint = record?.accountId === accountId ? record.endpoint : null;
+      if (record?.confirmed && endpoint && subscription?.endpoint === endpoint) {
+        void refreshTimezone(accountId).catch(() => {});
+      }
       return JSON.stringify({
         supported: true,
         permission: Notification.permission,
@@ -266,44 +337,59 @@ if ('serviceWorker' in navigator) {
         }
         return JSON.stringify({
           subscription: subscription.toJSON(),
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+          timezone: timezone(),
         });
       });
     },
 
-    confirm(accountId, endpoint) {
+    confirm(accountId, endpoint, acknowledgedZone) {
       const record = device();
-      if (record?.accountId !== accountId || record.endpoint !== endpoint) {
+      if (!matches(record, accountId, endpoint) || record.revoking) {
         throw new Error('Browser push ownership changed');
       }
-      localStorage.setItem(storageKey, JSON.stringify({ accountId, endpoint, confirmed: true }));
+      localStorage.setItem(storageKey, JSON.stringify({ accountId, endpoint, timezone: acknowledgedZone, confirmed: true }));
     },
 
-    async unsubscribe(accountId) {
-      const record = device();
-      if (!record || record.accountId !== accountId) return '';
-      if ('serviceWorker' in navigator) {
-        const registration = await navigator.serviceWorker.getRegistration();
-        const subscription = await registration?.pushManager?.getSubscription();
-        if (subscription?.endpoint === record.endpoint) await remove(registration, subscription);
-      }
-      const current = device();
-      if (current?.accountId === accountId && current.endpoint === record.endpoint) {
+    unsubscribe,
+    refreshTimezone,
+
+    reconcile,
+  });
+
+  async function reconcile(accountId, verifiedTransition = false) {
+    if (!('serviceWorker' in navigator)) return;
+    const registration = await navigator.serviceWorker.getRegistration();
+    if (verifiedTransition) {
+      registration?.active?.postMessage({ type: 'finance-compass-push-transition' });
+      await closeReminders(registration, owner => owner !== accountId);
+    }
+    const record = device();
+    const subscription = await registration?.pushManager?.getSubscription();
+    if (device()?.accountId !== record?.accountId || device()?.endpoint !== record?.endpoint) return;
+    if (record?.accountId === accountId && subscription?.endpoint === record.endpoint) {
+      if (record.revoking) await unsubscribe(accountId);
+      else await refreshTimezone(accountId);
+      return;
+    }
+    // A tab can resume after a different tab changed the cookie. Never
+    // detach that other account's working subscription on a stale tab's word.
+    if (record || subscription) {
+      const response = await fetch('/api/sync/v1/ledger/revision', {
+        credentials: 'same-origin', cache: 'no-store', redirect: 'error',
+        headers: { 'X-Finance-Account': accountId }, signal: AbortSignal.timeout(8000),
+      });
+      if (!response.ok || (await response.json()).accountId !== accountId) return;
+      if (device()?.accountId !== record?.accountId || device()?.endpoint !== record?.endpoint) return;
+    }
+    if (!verifiedTransition && (record || subscription)) {
+      registration?.active?.postMessage({ type: 'finance-compass-push-transition' });
+      await closeReminders(registration, owner => owner !== accountId);
+    }
+    if (subscription || record) {
+      await remove(registration, subscription);
+      if (device()?.accountId === record?.accountId && device()?.endpoint === record?.endpoint) {
         localStorage.removeItem(storageKey);
       }
-      return record.endpoint;
-    },
-
-    async reconcile(accountId) {
-      if (!('serviceWorker' in navigator)) return;
-      const registration = await navigator.serviceWorker.getRegistration();
-      const subscription = await registration?.pushManager?.getSubscription();
-      const record = device();
-      if (record?.accountId === accountId && subscription?.endpoint === record.endpoint) return;
-      if (subscription || record && record.accountId !== accountId) {
-        await remove(registration, subscription);
-        if (device()?.endpoint === record?.endpoint) localStorage.removeItem(storageKey);
-      }
-    },
-  });
+    }
+  }
 })();

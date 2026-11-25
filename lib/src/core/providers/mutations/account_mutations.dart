@@ -26,8 +26,13 @@ class AccountMutations extends Notifier<void> {
 
   /// Updates an existing account.
   Future<void> updateAccount(Account account) async {
+    await _repoNotifier.mutate((repository) =>
+        repository.updateExistingAccount(account, preserveActivity: true));
+  }
+
+  Future<void> setActive(String accountId, bool active) async {
     await _repoNotifier
-        .mutate((repository) => repository.updateExistingAccount(account));
+        .mutate((repository) => repository.setAccountActive(accountId, active));
   }
 
   /// Deletes an account only if it has no linked transactions or snapshots.
@@ -49,10 +54,12 @@ class AccountMutations extends Notifier<void> {
   Future<void> addAssetGoal({
     required String name,
     required double amount,
+    String? currency,
   }) async {
     await _repoNotifier.mutate((repository) => repository.addAssetGoal(
           name: name,
           amount: amount,
+          currency: currency,
         ));
   }
 
@@ -93,5 +100,6 @@ class AccountMutations extends Notifier<void> {
 }
 
 /// Provider for account CRUD mutations.
-final accountMutationsProvider =
-    NotifierProvider<AccountMutations, void>(AccountMutations.new);
+final accountMutationsProvider = NotifierProvider<AccountMutations, void>(
+    AccountMutations.new,
+    dependencies: [financeRepositoryProvider]);

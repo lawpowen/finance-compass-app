@@ -1,6 +1,17 @@
+import '../utils/anchored_month.dart';
 import 'transaction.dart';
 
-class TransactionTemplate {
+void _validatePresetLoanFields(Map<String, dynamic> json) {
+  if (json['legacy_loan_id'] != null ||
+      json['legacy_loan_part_number'] != null) {
+    throw const FormatException('旧贷款分录配对仅适用于原始交易。');
+  }
+}
+
+/// A present choice may explicitly select the uncategorized option.
+typedef PresetCategoryChoice = ({String? categoryId});
+
+class TransactionTemplate with LoanInstallmentFields {
   const TransactionTemplate({
     required this.id,
     required this.name,
@@ -11,6 +22,8 @@ class TransactionTemplate {
     this.status = TransactionStatus.actual,
     this.toAccountId,
     this.toAmount,
+    this.loanInstallmentNumber,
+    this.loanPaymentAmount,
     this.toCurrency,
     this.categoryId,
     this.description,
@@ -18,25 +31,58 @@ class TransactionTemplate {
     this.sortOrder = 0,
   });
 
+  @override
   final String id;
   final String name;
+  @override
   final TransactionType type;
+  @override
   final String accountId;
+  @override
   final String? toAccountId;
   final String? categoryId;
+  @override
   final double amount;
+  @override
   final String currency;
+  @override
   final double? toAmount;
+  @override
+  final int? loanInstallmentNumber;
+  @override
+  final double? loanPaymentAmount;
+  @override
   final String? toCurrency;
   final TransactionStatus status;
+  @override
   final String? description;
   final String? merchant;
   final int sortOrder;
+
+  FinanceTransaction toTransaction(
+          {required String id, required DateTime date}) =>
+      FinanceTransaction(
+          id: id,
+          type: type,
+          accountId: accountId,
+          toAccountId: toAccountId,
+          categoryId: categoryId,
+          amount: amount,
+          currency: currency,
+          toAmount: toAmount,
+          toCurrency: toCurrency,
+          loanInstallmentNumber: loanInstallmentNumber,
+          loanPaymentAmount: loanPaymentAmount,
+          status: status,
+          description: description,
+          merchant: merchant,
+          transactionDate: date);
 
   factory TransactionTemplate.fromTransaction({
     required String id,
     required String name,
     required FinanceTransaction transaction,
+    PresetCategoryChoice? categoryChoice,
   }) {
     return TransactionTemplate(
       id: id,
@@ -44,10 +90,14 @@ class TransactionTemplate {
       type: transaction.type,
       accountId: transaction.accountId,
       toAccountId: transaction.toAccountId,
-      categoryId: transaction.categoryId,
+      categoryId: categoryChoice == null
+          ? transaction.categoryId
+          : categoryChoice.categoryId,
       amount: transaction.amount,
       currency: transaction.currency,
       toAmount: transaction.toAmount,
+      loanInstallmentNumber: transaction.loanInstallmentNumber,
+      loanPaymentAmount: transaction.loanPaymentAmount,
       toCurrency: transaction.toCurrency,
       status: transaction.status,
       description: transaction.description,
@@ -65,6 +115,7 @@ class TransactionTemplate {
         'amount': amount,
         'currency': currency,
         'to_amount': toAmount,
+        ...loanFields,
         'to_currency': toCurrency,
         'status': status.name,
         'description': description,
@@ -73,6 +124,7 @@ class TransactionTemplate {
       };
 
   factory TransactionTemplate.fromJson(Map<String, dynamic> json) {
+    _validatePresetLoanFields(json);
     return TransactionTemplate(
       id: json['id'] as String,
       name: json['name'] as String? ?? '未命名模板',
@@ -86,6 +138,9 @@ class TransactionTemplate {
       amount: (json['amount'] as num).toDouble(),
       currency: json['currency'] as String? ?? 'MYR',
       toAmount: (json['to_amount'] as num?)?.toDouble(),
+      loanInstallmentNumber:
+          parseLoanInstallmentNumber(json['loan_installment_number']),
+      loanPaymentAmount: (json['loan_payment_amount'] as num?)?.toDouble(),
       toCurrency: json['to_currency'] as String?,
       status: json['status'] == null
           ? TransactionStatus.actual
@@ -97,7 +152,7 @@ class TransactionTemplate {
   }
 }
 
-class RecurringTransactionRule {
+class RecurringTransactionRule with LoanInstallmentFields {
   const RecurringTransactionRule({
     required this.id,
     required this.name,
@@ -110,6 +165,8 @@ class RecurringTransactionRule {
     this.status = TransactionStatus.actual,
     this.toAccountId,
     this.toAmount,
+    this.loanInstallmentNumber,
+    this.loanPaymentAmount,
     this.toCurrency,
     this.categoryId,
     this.description,
@@ -119,19 +176,32 @@ class RecurringTransactionRule {
     this.isActive = true,
   });
 
+  @override
   final String id;
   final String name;
+  @override
   final TransactionType type;
+  @override
   final String accountId;
+  @override
   final String? toAccountId;
   final String? categoryId;
+  @override
   final double amount;
+  @override
   final String currency;
+  @override
   final double? toAmount;
+  @override
+  final int? loanInstallmentNumber;
+  @override
+  final double? loanPaymentAmount;
+  @override
   final String? toCurrency;
   final DateTime startDate;
   final int intervalMonths;
   final TransactionStatus status;
+  @override
   final String? description;
   final String? merchant;
   final DateTime? endDate;
@@ -142,6 +212,7 @@ class RecurringTransactionRule {
     required String id,
     required String name,
     required FinanceTransaction transaction,
+    PresetCategoryChoice? categoryChoice,
     int intervalMonths = 1,
   }) {
     return RecurringTransactionRule(
@@ -150,10 +221,14 @@ class RecurringTransactionRule {
       type: transaction.type,
       accountId: transaction.accountId,
       toAccountId: transaction.toAccountId,
-      categoryId: transaction.categoryId,
+      categoryId: categoryChoice == null
+          ? transaction.categoryId
+          : categoryChoice.categoryId,
       amount: transaction.amount,
       currency: transaction.currency,
       toAmount: transaction.toAmount,
+      loanInstallmentNumber: transaction.loanInstallmentNumber,
+      loanPaymentAmount: transaction.loanPaymentAmount,
       toCurrency: transaction.toCurrency,
       startDate: transaction.transactionDate,
       intervalMonths: intervalMonths,
@@ -177,6 +252,8 @@ class RecurringTransactionRule {
       amount: amount,
       currency: currency,
       toAmount: toAmount,
+      loanInstallmentNumber: loanInstallmentNumber,
+      loanPaymentAmount: loanPaymentAmount,
       toCurrency: toCurrency,
       recordDate: date,
       transactionDate: date,
@@ -201,6 +278,8 @@ class RecurringTransactionRule {
       amount: amount,
       currency: currency,
       toAmount: toAmount,
+      loanInstallmentNumber: loanInstallmentNumber,
+      loanPaymentAmount: loanPaymentAmount,
       toCurrency: toCurrency,
       startDate: startDate,
       intervalMonths: intervalMonths,
@@ -223,6 +302,7 @@ class RecurringTransactionRule {
         'amount': amount,
         'currency': currency,
         'to_amount': toAmount,
+        ...loanFields,
         'to_currency': toCurrency,
         'start_date': startDate.toIso8601String(),
         'interval_months': intervalMonths,
@@ -235,6 +315,7 @@ class RecurringTransactionRule {
       };
 
   factory RecurringTransactionRule.fromJson(Map<String, dynamic> json) {
+    _validatePresetLoanFields(json);
     return RecurringTransactionRule(
       id: json['id'] as String,
       name: json['name'] as String? ?? '周期交易',
@@ -245,9 +326,22 @@ class RecurringTransactionRule {
       amount: (json['amount'] as num).toDouble(),
       currency: json['currency'] as String? ?? 'MYR',
       toAmount: (json['to_amount'] as num?)?.toDouble(),
+      loanInstallmentNumber:
+          parseLoanInstallmentNumber(json['loan_installment_number']),
+      loanPaymentAmount: (json['loan_payment_amount'] as num?)?.toDouble(),
       toCurrency: json['to_currency'] as String?,
       startDate: DateTime.parse(json['start_date'] as String),
-      intervalMonths: (json['interval_months'] as num?)?.toInt() ?? 1,
+      intervalMonths: () {
+        final raw = json['interval_months'] ?? 1;
+        if (raw is! num ||
+            !raw.isFinite ||
+            raw < 1 ||
+            raw > 9007199254740991 ||
+            raw != raw.truncate()) {
+          throw FormatException('周期规则间隔月数必须是正整数：$raw');
+        }
+        return raw.toInt();
+      }(),
       status: json['status'] == null
           ? TransactionStatus.actual
           : TransactionStatus.values.byName(json['status'] as String),
@@ -256,10 +350,14 @@ class RecurringTransactionRule {
       endDate: json['end_date'] == null
           ? null
           : DateTime.tryParse(json['end_date'] as String),
-      generatedMonthKeys:
-          (json['generated_month_keys'] as List<dynamic>? ?? const [])
-              .map((item) => '$item')
-              .toList(),
+      generatedMonthKeys: () {
+        final raw = json['generated_month_keys'];
+        if (raw == null) return <String>[];
+        if (raw is! List || !raw.every(isRecurringMonthKey)) {
+          throw const FormatException('周期规则生成月份必须是 YYYY-MM。');
+        }
+        return List<String>.from(raw);
+      }(),
       isActive: json['is_active'] as bool? ?? true,
     );
   }

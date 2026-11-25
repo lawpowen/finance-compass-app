@@ -18,6 +18,7 @@ import '../shared/simple_charts.dart';
 import '../transactions/transaction_composer_page.dart';
 import '../transactions/transaction_form_dialog.dart';
 import 'account_form_dialog.dart';
+import 'unavailable_account_page.dart';
 import 'asset_snapshot_form_dialog.dart';
 
 class AccountDetailScreen extends ConsumerStatefulWidget {
@@ -49,55 +50,27 @@ class _AccountDetailScreenState extends ConsumerState<AccountDetailScreen> {
   }
 
   FinanceRepository get _repository {
-    final async = ref.watch(financeRepositoryProvider);
+    final async = ref.read(financeRepositoryProvider);
     return async.valueOrNull ?? widget.repository;
   }
 
   @override
   Widget build(BuildContext context) {
-    final repository = _repository;
-    final liveAccount = repository.accounts.firstWhere(
-      (item) => item.id == widget.account.id,
-      orElse: () => widget.account,
-    );
+    final repository =
+        ref.watch(financeRepositoryProvider).valueOrNull ?? widget.repository;
+    final liveAccount = repository.accounts
+        .where((item) => item.id == widget.account.id)
+        .firstOrNull;
+    if (!identical(repository.database, widget.repository.database) ||
+        liveAccount == null) {
+      return const UnavailableAccountPage();
+    }
     final palette = financePaletteOf(context);
     final supportsMarketValue =
         liveAccount.reportGroup == ReportGroup.investment ||
             liveAccount.reportGroup == ReportGroup.retirement;
     final cutoffDate = _historicalCutoff ?? repository.currentMonthCutoffDate();
     final isHistorical = _historicalCutoff != null;
-    final visibleSnapshots =
-        repository.snapshotsForAccountUpTo(liveAccount.id, cutoffDate);
-    final latestSnapshot =
-        visibleSnapshots.isEmpty ? null : visibleSnapshots.last;
-    final displayedMarketValue = latestSnapshot == null
-        ? 0.0
-        : repository.accountBalanceAt(liveAccount.id, cutoffDate);
-    final displayedCostBasis = latestSnapshot == null
-        ? 0.0
-        : repository.costBasisForAccount(
-            liveAccount.id,
-            upToDate: cutoffDate,
-          );
-    final displayedCashBalance = latestSnapshot == null
-        ? 0.0
-        : repository.cashBalanceForAccount(
-            liveAccount.id,
-            upToDate: cutoffDate,
-          );
-    final displayedRemainingCostBasis = latestSnapshot == null
-        ? 0.0
-        : repository.remainingCostBasisForAccount(
-            liveAccount.id,
-            upToDate: cutoffDate,
-          );
-    final latestFlow = latestSnapshot == null
-        ? const InvestmentFlowSummary(contribution: 0, withdrawal: 0)
-        : repository.investmentFlowSummaryForAccount(
-            liveAccount.id,
-            upToDate: cutoffDate,
-          );
-
     final subtitleParts = [
       _groupLabel(liveAccount.reportGroup),
       liveAccount.currency,
@@ -153,14 +126,6 @@ class _AccountDetailScreenState extends ConsumerState<AccountDetailScreen> {
                           palette: palette,
                           cutoffDate: cutoffDate,
                           isHistorical: isHistorical,
-                          visibleSnapshots: visibleSnapshots,
-                          latestSnapshot: latestSnapshot,
-                          displayedMarketValue: displayedMarketValue,
-                          displayedCostBasis: displayedCostBasis,
-                          displayedCashBalance: displayedCashBalance,
-                          displayedRemainingCostBasis:
-                              displayedRemainingCostBasis,
-                          latestFlow: latestFlow,
                         )
                       else
                         ..._buildCashAccountSections(
@@ -202,15 +167,16 @@ class _AccountDetailScreenState extends ConsumerState<AccountDetailScreen> {
     final baseCurrency = repository.baseCurrency;
     final foreignCurrency = account.currency.trim().toUpperCase() !=
         baseCurrency.trim().toUpperCase();
+    final equivalent = repository.tryConvertAmount(
+      amount: balance,
+      fromCurrency: account.currency,
+      toCurrency: baseCurrency,
+    );
     final cutoffMonth = monthKeyFromDate(cutoffDate);
     final reconciledMonth = repository.reconciledMonthForAccount(account.id);
     final isReconciledForCutoff = reconciledMonth == cutoffMonth;
-    final accountTransactions = repository.transactions
-        .where((item) =>
-            (item.accountId == account.id || item.toAccountId == account.id) &&
-            !item.transactionDate.isAfter(cutoffDate))
-        .toList()
-      ..sort((a, b) => b.transactionDate.compareTo(a.transactionDate));
+    final accountTransactions =
+        _transactionsAt(repository, account.id, cutoffDate);
     var monthInflow = 0.0;
     var monthOutflow = 0.0;
     for (final item in accountTransactions) {
@@ -226,9 +192,6 @@ class _AccountDetailScreenState extends ConsumerState<AccountDetailScreen> {
       }
     }
     final monthNet = monthInflow - monthOutflow;
-    final visibleTransactions = _showAllTransactions
-        ? accountTransactions
-        : accountTransactions.take(15).toList();
     final trace = repository.accountBalanceTrace(account.id, cutoffDate);
 
     return [
@@ -273,14 +236,17 @@ class _AccountDetailScreenState extends ConsumerState<AccountDetailScreen> {
               const SizedBox(height: 4),
               CompassHelpHeading(
                 title: Text(
-                  '≈ ${compassMoney(repository.convertToBase(balance, account.currency), currency: baseCurrency)}',
+                  equivalent == null
+                      ? '未估值'
+                      : '≈ ${compassMoney(equivalent, currency: baseCurrency)}',
                   style: textTheme.bodySmall?.copyWith(
                     fontFeatures: compassTabularFigures,
                   ),
                 ),
                 label: '外币折合',
-                message:
-                    '按账本设置的汇率将 ${account.currency} 余额折合为 $baseCurrency。原币余额用于记账及对账。',
+                message: equivalent == null
+                    ? '在货币设置中填写 ${account.currency} 汇率后，可查看折合金额。'
+                    : '按账本设置的汇率将 ${account.currency} 余额折合为 $baseCurrency。原币余额用于记账及对账。',
               ),
             ],
             if (account.note != null && account.note!.trim().isNotEmpty) ...[
@@ -346,66 +312,14 @@ class _AccountDetailScreenState extends ConsumerState<AccountDetailScreen> {
         ),
       ),
       const SizedBox(height: 14),
-      CompassCard(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            CompassSectionTitle(
-              '账户流水明细',
-              trailing: Text(
-                '${accountTransactions.length} 笔',
-                style: textTheme.bodySmall?.copyWith(
-                  fontFeatures: compassTabularFigures,
-                ),
-              ),
-            ),
-            const SizedBox(height: 8),
-            if (visibleTransactions.isEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                child: Text(
-                  '暂无账户流水记录。',
-                  style: textTheme.bodySmall,
-                ),
-              )
-            else ...[
-              for (var i = 0; i < visibleTransactions.length; i++) ...[
-                if (i > 0) compassHairline,
-                _AccountTransactionRow(
-                  transaction: visibleTransactions[i],
-                  account: account,
-                  repository: repository,
-                  onTap: isHistorical
-                      ? null
-                      : () => _editTransaction(
-                            repository,
-                            visibleTransactions[i],
-                          ),
-                ),
-              ],
-              if (accountTransactions.length > 15) ...[
-                const SizedBox(height: 8),
-                TextButton(
-                  onPressed: () => setState(
-                    () => _showAllTransactions = !_showAllTransactions,
-                  ),
-                  child: Text(
-                    _showAllTransactions
-                        ? '收起至最近 15 笔'
-                        : '展开全部 ${accountTransactions.length} 笔流水',
-                  ),
-                ),
-              ],
-            ],
-          ],
-        ),
-      ),
+      _transactionList(
+          context, repository, account, accountTransactions, isHistorical),
       const SizedBox(height: 14),
       CompassCard(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            CompassSectionTitle('余额追溯'),
+            const CompassSectionTitle('余额追溯'),
             const SizedBox(height: 10),
             _TraceSummaryLine(
               label: trace.sourceLabel,
@@ -448,6 +362,82 @@ class _AccountDetailScreenState extends ConsumerState<AccountDetailScreen> {
     ];
   }
 
+  List<FinanceTransaction> _transactionsAt(
+      FinanceRepository repository, String accountId, DateTime cutoff) {
+    return repository.transactions
+        .where((item) =>
+            (item.accountId == accountId || item.toAccountId == accountId) &&
+            !item.transactionDate.isAfter(cutoff))
+        .toList()
+      ..sort((a, b) => b.transactionDate.compareTo(a.transactionDate));
+  }
+
+  Widget _transactionList(
+      BuildContext context,
+      FinanceRepository repository,
+      Account account,
+      List<FinanceTransaction> accountTransactions,
+      bool isHistorical) {
+    final textTheme = Theme.of(context).textTheme;
+    final visibleTransactions = _showAllTransactions
+        ? accountTransactions
+        : accountTransactions.take(15).toList();
+    return CompassCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          CompassSectionTitle(
+            '账户流水明细',
+            trailing: Text(
+              '${accountTransactions.length} 笔',
+              style: textTheme.bodySmall?.copyWith(
+                fontFeatures: compassTabularFigures,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          if (visibleTransactions.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              child: Text(
+                '暂无账户流水记录。',
+                style: textTheme.bodySmall,
+              ),
+            )
+          else ...[
+            for (var i = 0; i < visibleTransactions.length; i++) ...[
+              if (i > 0) compassHairline,
+              _AccountTransactionRow(
+                transaction: visibleTransactions[i],
+                account: account,
+                repository: repository,
+                onTap: isHistorical
+                    ? null
+                    : () => _editTransaction(
+                          repository,
+                          visibleTransactions[i],
+                        ),
+              ),
+            ],
+            if (accountTransactions.length > 15) ...[
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: () => setState(
+                  () => _showAllTransactions = !_showAllTransactions,
+                ),
+                child: Text(
+                  _showAllTransactions
+                      ? '收起至最近 15 笔'
+                      : '展开全部 ${accountTransactions.length} 笔流水',
+                ),
+              ),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+
   List<Widget> _buildInvestmentSections(
     BuildContext context, {
     required FinanceRepository repository,
@@ -455,19 +445,13 @@ class _AccountDetailScreenState extends ConsumerState<AccountDetailScreen> {
     required FinanceThemePalette palette,
     required DateTime cutoffDate,
     required bool isHistorical,
-    required List<AssetSnapshot> visibleSnapshots,
-    required AssetSnapshot? latestSnapshot,
-    required double displayedMarketValue,
-    required double displayedCostBasis,
-    required double displayedCashBalance,
-    required double displayedRemainingCostBasis,
-    required InvestmentFlowSummary latestFlow,
   }) {
     final textTheme = Theme.of(context).textTheme;
-    final unrealized = displayedMarketValue - displayedRemainingCostBasis;
-    final unrealizedRatio = displayedRemainingCostBasis == 0
-        ? 0.0
-        : (unrealized / displayedRemainingCostBasis) * 100;
+    final visibleSnapshots =
+        repository.snapshotsForAccountUpTo(account.id, cutoffDate);
+    final valuation = repository.investmentValuationAt(account.id, cutoffDate);
+    String money(double amount) =>
+        compassMoney(amount, currency: account.currency);
     return [
       CompassCard(
         child: Column(
@@ -479,7 +463,7 @@ class _AccountDetailScreenState extends ConsumerState<AccountDetailScreen> {
               label: isHistorical ? '历史资产' : '当前资产',
               message: isHistorical
                   ? '资产数据计算到所选月份末。历史记录为只读。'
-                  : '投入与取出根据交易记录计算。录入市值后可查看走势及未实现盈亏。',
+                  : '累计投入成本从期初或首张快照的本金基准起算。扣除后续取出得到净投入，市值减净投入得到资金净收益。',
             ),
             const SizedBox(height: 14),
             if (!isHistorical) ...[
@@ -488,75 +472,39 @@ class _AccountDetailScreenState extends ConsumerState<AccountDetailScreen> {
                 child: FilledButton.icon(
                   onPressed: _isSaving ? null : () => _addSnapshot(account.id),
                   icon: const Icon(Icons.show_chart_rounded),
-                  label: Text(latestSnapshot == null ? '录入当前市值' : '更新当前市值'),
+                  label: Text(visibleSnapshots.isEmpty ? '录入当前市值' : '更新当前市值'),
                 ),
               ),
               const SizedBox(height: 14),
             ],
-            if (latestSnapshot == null)
-              Text(
-                '暂无市值记录',
-                style: textTheme.bodySmall,
-              )
-            else ...[
-              Wrap(
-                spacing: 10,
-                runSpacing: 10,
-                children: [
-                  _MetricPill(
-                    label: '总市值',
-                    value: compassMoney(
-                      displayedMarketValue,
-                      currency: account.currency,
-                    ),
-                  ),
-                  _MetricPill(
-                    label: '累计投入',
-                    value: compassMoney(
-                      latestFlow.contribution,
-                      currency: account.currency,
-                    ),
-                  ),
-                  _MetricPill(
-                    label: '累计取出',
-                    value: compassMoney(
-                      latestFlow.withdrawal,
-                      currency: account.currency,
-                    ),
-                  ),
-                  _MetricPill(
-                    label: '累计成本',
-                    value: compassMoney(
-                      displayedCostBasis,
-                      currency: account.currency,
-                    ),
-                  ),
-                  _MetricPill(
-                    label: '现金余额',
-                    value: compassMoney(
-                      displayedCashBalance,
-                      currency: account.currency,
-                    ),
-                  ),
-                  _MetricPill(
-                    label: '未实现盈亏',
-                    value:
-                        '${unrealized > 0 ? '+ ' : ''}${compassMoney(unrealized, currency: account.currency)} '
-                        '(${unrealizedRatio.toStringAsFixed(1)}%)',
-                    accent: unrealized >= 0 ? palette.income : palette.expense,
-                  ),
-                ],
-              ),
-              if (visibleSnapshots.length > 1) ...[
-                const SizedBox(height: 16),
-                MultiLineChart(
-                  series: _buildFlowSeries(visibleSnapshots, repository),
-                  amountBuilder: (value) => compassMoney(
-                    value,
-                    currency: account.currency,
-                  ),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                _MetricPill(label: '总市值', value: money(valuation.marketValue)),
+                _MetricPill(
+                    label: '累计投入成本', value: money(valuation.cumulativeCost)),
+                _MetricPill(
+                    label: '净投入', value: money(valuation.netInvestment)),
+                _MetricPill(label: '现金余额', value: money(valuation.cashBalance)),
+                _MetricPill(
+                  label: '资金净收益',
+                  value:
+                      '${money(valuation.gain)} (${_returnLabel(valuation.returnRatio)})',
+                  accent:
+                      valuation.gain >= 0 ? palette.income : palette.expense,
                 ),
               ],
+            ),
+            if (visibleSnapshots.length > 1) ...[
+              const SizedBox(height: 16),
+              MultiLineChart(
+                series: _buildFlowSeries(visibleSnapshots, repository),
+                amountBuilder: (value) => compassMoney(
+                  value,
+                  currency: account.currency,
+                ),
+              ),
             ],
           ],
         ),
@@ -579,6 +527,7 @@ class _AccountDetailScreenState extends ConsumerState<AccountDetailScreen> {
             else
               for (final snapshot in visibleSnapshots.reversed)
                 _SnapshotRow(
+                  key: ValueKey('investment-snapshot-${snapshot.id}'),
                   snapshot: snapshot,
                   repository: repository,
                   currency: account.currency,
@@ -589,13 +538,16 @@ class _AccountDetailScreenState extends ConsumerState<AccountDetailScreen> {
           ],
         ),
       ),
+      const SizedBox(height: 16),
+      _transactionList(context, repository, account,
+          _transactionsAt(repository, account.id, cutoffDate), isHistorical),
     ];
   }
 
   Future<void> _editAccount(Account current) async {
     final updated = await showDialog<Account>(
       context: context,
-      builder: (_) => AccountFormDialog(initialAccount: current),
+      builder: (_) => AccountFormDialog.edit(current, _repository),
     );
     if (!mounted || updated == null) return;
     await ref.read(accountMutationsProvider.notifier).updateAccount(updated);
@@ -687,7 +639,9 @@ class _AccountDetailScreenState extends ConsumerState<AccountDetailScreen> {
 
     setState(() => _isSaving = true);
     try {
-      await ref.read(assetMutationsProvider.notifier).updateSnapshot(result);
+      await ref
+          .read(assetMutationsProvider.notifier)
+          .updateSnapshot(result, expected: snapshot);
       if (!mounted) {
         return;
       }
@@ -735,7 +689,7 @@ class _AccountDetailScreenState extends ConsumerState<AccountDetailScreen> {
     try {
       await ref
           .read(assetMutationsProvider.notifier)
-          .deleteSnapshot(snapshot.id);
+          .deleteSnapshot(snapshot.id, expected: snapshot);
       if (!mounted) {
         return;
       }
@@ -758,28 +712,24 @@ class _AccountDetailScreenState extends ConsumerState<AccountDetailScreen> {
 
   List<ChartSeries> _buildFlowSeries(
       List<AssetSnapshot> snapshots, FinanceRepository repository) {
-    final contributionPoints = <ChartPoint>[];
-    final withdrawalPoints = <ChartPoint>[];
+    final cumulativeCostPoints = <ChartPoint>[];
+    final netInvestmentPoints = <ChartPoint>[];
     final marketValuePoints = <ChartPoint>[];
 
     for (final snapshot in snapshots) {
-      final summary = repository.investmentFlowSummaryForAccount(
-        snapshot.accountId,
-        upToDate: snapshot.snapshotDate,
-      );
+      final valuation = repository.snapshotValuation(snapshot);
       final label =
           '${snapshot.snapshotDate.month}/${snapshot.snapshotDate.day}';
-      contributionPoints.add(
-        ChartPoint(label: label, value: summary.contribution),
+      cumulativeCostPoints.add(
+        ChartPoint(label: label, value: valuation.cumulativeCost),
       );
-      withdrawalPoints.add(
-        ChartPoint(label: label, value: summary.withdrawal),
+      netInvestmentPoints.add(
+        ChartPoint(label: label, value: valuation.netInvestment),
       );
       marketValuePoints.add(
         ChartPoint(
           label: label,
-          value: repository.accountBalanceAt(
-              snapshot.accountId, snapshot.snapshotDate),
+          value: valuation.marketValue,
         ),
       );
     }
@@ -794,14 +744,14 @@ class _AccountDetailScreenState extends ConsumerState<AccountDetailScreen> {
       switch (index) {
         case 0:
           return ChartSeries(
-            label: '累计投入',
-            points: contributionPoints,
+            label: '累计投入成本',
+            points: cumulativeCostPoints,
             color: color,
           );
         case 1:
           return ChartSeries(
-            label: '累计取出',
-            points: withdrawalPoints,
+            label: '净投入',
+            points: netInvestmentPoints,
             color: color,
           );
         default:
@@ -1006,8 +956,12 @@ class _TraceSummaryLine extends StatelessWidget {
   }
 }
 
+String _returnLabel(double? ratio) =>
+    ratio == null ? '—' : '${(ratio * 100).toStringAsFixed(1)}%';
+
 class _SnapshotRow extends StatelessWidget {
   const _SnapshotRow({
+    super.key,
     required this.snapshot,
     required this.repository,
     required this.currency,
@@ -1024,17 +978,8 @@ class _SnapshotRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = financePaletteOf(context);
-    final flow = repository.investmentFlowSummaryForAccount(
-      snapshot.accountId,
-      upToDate: snapshot.snapshotDate,
-    );
-    final displayedMarketValue = repository.accountBalanceAt(
-      snapshot.accountId,
-      snapshot.snapshotDate,
-    );
-    final pnl =
-        displayedMarketValue - repository.snapshotRemainingCostBasis(snapshot);
-    final ratio = repository.snapshotPnlRatio(snapshot);
+    final valuation = repository.snapshotValuation(snapshot);
+    String money(double value) => compassMoney(value, currency: currency);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -1074,19 +1019,14 @@ class _SnapshotRow extends StatelessWidget {
             spacing: 12,
             runSpacing: 8,
             children: [
+              Text('总市值 ${money(valuation.marketValue)}'),
+              Text('累计投入成本 ${money(valuation.cumulativeCost)}'),
+              Text('净投入 ${money(valuation.netInvestment)}'),
+              Text('现金余额 ${money(valuation.cashBalance)}'),
               Text(
-                  '总市值 ${compassMoney(displayedMarketValue, currency: currency)}'),
-              Text(
-                  '累计投入 ${compassMoney(flow.contribution, currency: currency)}'),
-              Text('累计取出 ${compassMoney(flow.withdrawal, currency: currency)}'),
-              Text(
-                  '累计成本 ${compassMoney(repository.snapshotCostBasis(snapshot), currency: currency)}'),
-              Text(
-                  '现金余额 ${compassMoney(snapshot.cashBalance, currency: currency)}'),
-              Text(
-                '未实现盈亏 ${compassMoney(pnl, currency: currency)} (${(ratio * 100).toStringAsFixed(1)}%)',
+                '资金净收益 ${money(valuation.gain)} (${_returnLabel(valuation.returnRatio)})',
                 style: TextStyle(
-                  color: pnl >= 0 ? palette.income : palette.expense,
+                  color: valuation.gain >= 0 ? palette.income : palette.expense,
                   fontWeight: FontWeight.w700,
                   fontFeatures: compassTabularFigures,
                 ),

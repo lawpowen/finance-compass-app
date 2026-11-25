@@ -1,7 +1,7 @@
 import 'package:drift/native.dart';
 import 'package:finance_app/src/core/data/finance_repository.dart';
 import 'package:finance_app/src/core/database/app_database.dart'
-    show AppDatabase, SnapshotBalanceAmbiguityException;
+    show AppDatabase;
 import 'package:finance_app/src/core/models/account.dart';
 import 'package:finance_app/src/core/models/asset_snapshot.dart';
 import 'package:finance_app/src/core/models/transaction.dart';
@@ -115,6 +115,150 @@ void _expectReadMatchesMaterialized(FinanceRepository repository) {
 }
 
 void main() {
+  group('immutable observations', () {
+    test(
+        'order of snapshots and actual transactions does not affect any cutoff',
+        () async {
+      final jan = DateTime(2026, 1, 1);
+      final feb = DateTime(2026, 2, 1);
+      final mar = DateTime(2026, 3, 1);
+      for (final order in ['abcd', 'dcba', 'cabd', 'adbc']) {
+        final (db, _) = await _openRepository();
+        for (final operation in order.split('')) {
+          switch (operation) {
+            case 'a':
+              await db.insertAssetSnapshot(
+                  _snapshot('jan', jan, 1100, costBasis: 980));
+            case 'b':
+              await db.insertAssetSnapshot(
+                  _snapshot('feb', feb, 1200, costBasis: 990));
+            case 'c':
+              await db.insertTransaction(_transferIn('mar', mar, 30));
+            case 'd':
+              await db.insertTransaction(
+                  _income('backfill', DateTime(2026, 1, 20), 50));
+          }
+        }
+        final repository = await _reload(db);
+        expect(
+            repository.accountBalanceAt(_investmentId, DateTime(2026, 1, 31)),
+            1150);
+        expect(repository.accountBalanceAt(_investmentId, feb), 1200);
+        expect(_currentBalance(repository), 1230);
+        _expectReadMatchesMaterialized(repository);
+        final observations = repository.snapshotsForAccount(_investmentId);
+        expect(observations.map((s) => s.marketValue), [1100, 1200]);
+        expect(observations.map((s) => s.costBasis), [980, 990]);
+        expect(observations.map((s) => s.cashBalance), [0, 0]);
+      }
+    });
+
+    test(
+        'timestamp ties use the greatest ID independent of insertion and editing order',
+        () async {
+      final closing = DateTime(2026, 1, 31, 23, 59, 59);
+      final (db, _) = await _openRepository();
+      await db
+          .insertTransaction(_income('noon', DateTime(2026, 1, 31, 12), 50));
+      await db.insertAssetSnapshot(_snapshot('b', closing, 1050));
+      await db.insertAssetSnapshot(_snapshot('a', closing, 1100));
+      await db.insertTransaction(_income('same-second', closing, 25));
+      await db.updateAssetSnapshot(_snapshot('a', closing, 1200));
+      final repository = await _reload(db);
+      expect(_currentBalance(repository), 1050);
+      expect(repository.accountBalanceAt(_investmentId, closing), 1050);
+      expect(repository.latestSnapshotForAccount(_investmentId)!.id, 'b');
+      await db.deleteAssetSnapshot('b');
+      expect(await _persistedBalance(db), 1200);
+      await db.deleteAssetSnapshot('a');
+      expect(await _persistedBalance(db), 1075);
+    });
+
+    test('backdated, planned, settled and self-transfer edits are reversible',
+        () async {
+      final (db, _) = await _openRepository();
+      final anchor = DateTime(2026, 2, 1);
+      await db
+          .insertAssetSnapshot(_snapshot('snap', anchor, 100, costBasis: 10));
+      final earlier = _income('change', DateTime(2026, 1, 20), 50);
+      final later = DateTime(2026, 2, 2);
+      await db.insertTransaction(earlier);
+      expect(await _persistedBalance(db), 100);
+      await db.updateTransaction(_transferIn('change', later, 90));
+      expect(await _persistedBalance(db), 190);
+      await db.updateTransaction(
+          _transferIn('change', later, 90, status: TransactionStatus.planned));
+      expect(await _persistedBalance(db), 100);
+      await db.updateTransaction(FinanceTransaction(
+        id: 'change',
+        type: TransactionType.transfer,
+        status: TransactionStatus.settled,
+        accountId: _investmentId,
+        toAccountId: _investmentId,
+        currency: 'MYR',
+        amount: 50,
+        toAmount: 48,
+        transactionDate: later,
+      ));
+      final self = await _reload(db);
+      expect(_currentBalance(self), 98);
+      expect(self.accountBalanceAt(_investmentId, later), 98);
+      await db.deleteTransaction('change');
+      final undone = await _reload(db);
+      expect(_currentBalance(undone), 100);
+      expect(
+          undone.accounts.singleWhere((a) => a.id == 'cash').currentBalance, 0);
+      final observation = undone.snapshots.single;
+      expect([
+        observation.marketValue,
+        observation.costBasis,
+        observation.cashBalance
+      ], [
+        100,
+        10,
+        0
+      ]);
+    });
+
+    test(
+        'first transfer keeps opening principal and does not create a snapshot',
+        () async {
+      final (db, _) = await _openRepository();
+      await db.insertTransaction(_income('later', DateTime(2026, 3, 1), 50));
+      await db
+          .insertTransaction(_transferIn('earlier', DateTime(2026, 1, 1), 100));
+      final repository = await _reload(db);
+      expect(repository.snapshots, isEmpty);
+      expect(repository.accountBalanceAt(_investmentId, DateTime(2026, 1, 31)),
+          1100);
+      expect(
+          repository.costBasisForAccount(_investmentId, upToDate: _farFuture),
+          1100);
+      expect(_currentBalance(repository), 1150);
+      await db.deleteTransactionsByIds(['later', 'earlier']);
+      expect(await _persistedBalance(db), 1000);
+    });
+
+    test('database protects used account denomination and cached balance',
+        () async {
+      final (db, _) = await _openRepository();
+      await db.insertTransaction(_income('dividend', DateTime(2026, 1, 2), 50));
+      Account edited(String currency, double balance) => Account(
+            id: _investmentId,
+            name: '投资',
+            accountType: AccountType.trading,
+            reportGroup: ReportGroup.investment,
+            currency: currency,
+            initialBalance: 1000,
+            currentBalance: balance,
+          );
+      await expectLater(
+          db.updateAccount(edited('USD', 1050)), throwsStateError);
+      await expectLater(db.updateAccount(edited('MYR', 0)), throwsStateError);
+      expect(await _persistedBalance(db), 1050);
+    });
+  });
+
   group('deleteAssetSnapshot', () {
     test('deleting the only snapshot restores the ledger balance, not 0',
         () async {
@@ -194,8 +338,8 @@ void main() {
     });
 
     test(
-        'deleting latest snapshot after a backfilled transfer is refused '
-        'and leaves the database unchanged', () async {
+        'deleting latest snapshot replays backfilled transfers from the previous observation',
+        () async {
       final (database, initialRepository) = await _openRepository();
       var repository = await initialRepository.addAssetSnapshot(
         _snapshot('jan', DateTime(2026, 1, 10), 1000),
@@ -203,28 +347,18 @@ void main() {
       repository = await repository.addAssetSnapshot(
         _snapshot('mar', DateTime(2026, 3, 1), 1200),
       );
-      // Backfilled Feb transfer is folded into the then-latest Mar snapshot
-      // only; nothing records that Jan does not contain it.
       repository = await repository
           .addTransaction(_transferIn('feb-in', DateTime(2026, 2, 1), 100));
-      expect(_currentBalance(repository), 1300);
+      expect(_currentBalance(repository), 1200);
 
-      await expectLater(
-        repository.deleteExistingAssetSnapshot('mar'),
-        throwsA(isA<SnapshotBalanceAmbiguityException>()),
-      );
+      repository = await repository.deleteExistingAssetSnapshot('mar');
+      expect(_currentBalance(repository), 1100);
+      expect(repository.latestSnapshotForAccount(_investmentId)!.marketValue,
+          1000);
+      _expectReadMatchesMaterialized(await _reload(database));
 
-      final reloaded = await _reload(database);
-      expect(reloaded.snapshotsForAccount(_investmentId).map((s) => s.id),
-          ['jan', 'mar']);
-      expect(
-          reloaded.latestSnapshotForAccount(_investmentId)!.marketValue, 1300);
-      expect(_currentBalance(reloaded), 1300);
-      _expectReadMatchesMaterialized(reloaded);
-
-      // Deleting the non-latest snapshot is still lossless.
-      final afterHistory = await reloaded.deleteExistingAssetSnapshot('jan');
-      expect(_currentBalance(afterHistory), 1300);
+      repository = await repository.deleteExistingAssetSnapshot('jan');
+      expect(_currentBalance(repository), 1100);
     });
 
     test('planned transfers do not block deleting the latest snapshot',
@@ -286,14 +420,14 @@ void main() {
           .addTransaction(_income('dividend', DateTime(2026, 2, 20), 50));
       expect(_currentBalance(repository), 1150);
       expect(repository.latestSnapshotForAccount(_investmentId)!.marketValue,
-          1100);
+          1000);
 
       repository = await repository.updateExistingAssetSnapshot(
         _snapshot('snap', DateTime(2026, 1, 10), 1120),
       );
 
-      expect(_currentBalance(repository), 1170);
-      expect(await _persistedBalance(database), 1170);
+      expect(_currentBalance(repository), 1270);
+      expect(await _persistedBalance(database), 1270);
       _expectReadMatchesMaterialized(await _reload(database));
     });
 
@@ -315,7 +449,7 @@ void main() {
       _expectReadMatchesMaterialized(await _reload(database));
     });
 
-    test('changing which snapshot is latest is refused when transfers exist',
+    test('changing the latest anchor replays only subsequent transfers',
         () async {
       final (database, initialRepository) = await _openRepository();
       var repository = await initialRepository.addAssetSnapshot(
@@ -326,21 +460,15 @@ void main() {
       );
       repository = await repository
           .addTransaction(_transferIn('feb-in', DateTime(2026, 2, 1), 100));
-
-      await expectLater(
-        repository.updateExistingAssetSnapshot(
-          _snapshot('mar', DateTime(2026, 1, 1), 1300),
-        ),
-        throwsA(isA<SnapshotBalanceAmbiguityException>()),
+      repository = await repository.updateExistingAssetSnapshot(
+        _snapshot('mar', DateTime(2026, 1, 1), 1300),
       );
-
-      final reloaded = await _reload(database);
-      final mar = reloaded
-          .snapshotsForAccount(_investmentId)
-          .firstWhere((s) => s.id == 'mar');
-      expect(mar.snapshotDate, DateTime(2026, 3, 1));
-      expect(mar.marketValue, 1300);
-      expect(_currentBalance(reloaded), 1300);
+      expect(_currentBalance(repository), 1100);
+      expect(await _persistedBalance(database), 1100);
+      repository = await repository.updateExistingAssetSnapshot(
+        _snapshot('mar', DateTime(2026, 3, 1), 1200),
+      );
+      expect(_currentBalance(repository), 1200);
     });
 
     test('moving a snapshot to another account is rejected', () async {
@@ -377,7 +505,7 @@ void main() {
     });
 
     test(
-        'new latest snapshot dated before an existing transfer folds it in '
+        'new latest snapshot keeps its observation before an existing transfer '
         'and keeps later income', () async {
       final (database, initialRepository) = await _openRepository();
       var repository = await initialRepository.addAssetSnapshot(
@@ -402,8 +530,8 @@ void main() {
       final reloaded = await _reload(database);
       final feb = reloaded.latestSnapshotForAccount(_investmentId)!;
       expect(feb.id, 'feb');
-      // Observed 1050 + Mar transfer 100; the planned transfer is excluded.
-      expect(feb.marketValue, 1150);
+      // The observation stays 1050; only its derived balance includes the transfer.
+      expect(feb.marketValue, 1050);
       expect(_currentBalance(repository), 1180);
       expect(_currentBalance(reloaded), 1180);
       expect(reloaded.accountBalanceAt(_investmentId, DateTime(2026, 2, 28)),
@@ -533,12 +661,12 @@ void main() {
       expect(repository.accountBalanceAt(_investmentId, DateTime(2026, 1, 10)),
           1000);
       expect(repository.accountBalanceAt(_investmentId, janEnd), 1050);
-      expect(
-          repository.costBasisForAccount(_investmentId, upToDate: janEnd), 0);
+      expect(repository.costBasisForAccount(_investmentId, upToDate: janEnd),
+          1000);
       expect(
           repository.remainingCostBasisForAccount(_investmentId,
               upToDate: janEnd),
-          0);
+          1000);
       expect(
           repository.accountBalanceTrace(_investmentId, janEnd).endingBalance,
           1050);
@@ -571,8 +699,8 @@ void main() {
         database: database,
       );
 
-      expect(
-          assetService.costBasisForAccount(_investmentId, upToDate: janEnd), 0);
+      expect(assetService.costBasisForAccount(_investmentId, upToDate: janEnd),
+          1000);
       expect(accountService.accountBalanceAt(_investmentId, janEnd), 1050);
       expect(
           accountService

@@ -1,5 +1,6 @@
 import 'package:drift/drift.dart' show driftRuntimeOptions;
 import 'package:drift/native.dart';
+import 'package:finance_app/src/core/app_version.dart';
 import 'package:finance_app/src/core/data/finance_repository.dart';
 import 'package:finance_app/src/core/database/app_database.dart'
     show AppDatabase;
@@ -11,7 +12,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-const _version = kIsWeb ? '0.10.1+45 · Web 21' : '0.10.1+45';
+const _version = kIsWeb ? '$appVersion · $webReleaseLabel' : appVersion;
 
 void main() {
   testWidgets('mobile settings display the loaded version and open About',

@@ -71,6 +71,38 @@ void main() {
     });
   }
 
+  for (final invalidGraph in ['cross-type', 'self-parent', 'cycle']) {
+    test(
+        'preview, import and sync reject a complete invalid graph: $invalidGraph',
+        () async {
+      final repo = await _repository();
+      final snapshot = _legacy();
+      snapshot['meta'] = <String, String>{};
+      snapshot['asset_snapshots'] = [];
+      snapshot['transaction_templates'] = [];
+      snapshot['recurring_transaction_rules'] = [];
+      final categories = snapshot['categories'] as List<Map<String, String>>;
+      categories.last['parent_id'] = _parent;
+      switch (invalidGraph) {
+        case 'cross-type':
+          categories.first['type'] = 'income';
+        case 'self-parent':
+          categories.last['parent_id'] = _child;
+        case 'cycle':
+          categories.first['parent_id'] = _child;
+      }
+      final bytes = _bytes(snapshot);
+      await expectLater(repo.previewImportBytes(bytes), throwsFormatException);
+      await expectLater(
+          repo.importJsonSnapshotBytes(bytes,
+              detachUnresolvedCategoryParents: true),
+          throwsFormatException);
+      await expectLater(
+          repo.restoreSyncedSnapshot(snapshot), throwsFormatException);
+      expect((await repo.refresh()).categories, isEmpty);
+    });
+  }
+
   test('the sync protocol still expects category IDs', () async {
     final repository = await _repository();
     await expectLater(

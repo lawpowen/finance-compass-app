@@ -55,7 +55,6 @@ void main() {
       final categories = payload['categories'] as List<dynamic>;
       final budgets = payload['budgets'] as List<dynamic>;
       final meta = payload['meta'] as Map<String, dynamic>? ?? {};
-      final snapshots = payload['asset_snapshots'] as List<dynamic>? ?? [];
 
       print('   账户: ${accounts.length}');
       print('   交易: ${transactions.length}');

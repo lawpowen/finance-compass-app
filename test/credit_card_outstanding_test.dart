@@ -230,7 +230,8 @@ void main() {
     );
   });
 
-  testWidgets('accounts credit tab shows committed, non-negative current debt',
+  testWidgets(
+      'accounts credit tab separates month-end debt from future commitments',
       (tester) async {
     // Tall enough that every credit row is built, so absent text is real.
     tester.view.physicalSize = const Size(390, 2400);
@@ -311,17 +312,24 @@ void main() {
     await tester.tap(find.text('信用'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Overpaid · 1234'), findsOneWidget);
-    expect(find.text('负债总额  MYR 470.00'), findsOneWidget);
+    expect(find.text('Overpaid'), findsOneWidget);
+    expect(find.textContaining(' · 1234'), findsNothing);
+    expect(find.text('负债总额  MYR 50.00'), findsOneWidget);
     expect(
-      find.text('- MYR 390.00'),
+      find.byKey(const Key('accounts-net-worth')),
       findsOneWidget,
-      reason: 'Net assets keep the MYR 80 overpayment: 0 - 470 + 80.',
     );
-    expect(find.text('MYR 350.00'), findsOneWidget);
-    expect(find.text('MYR 120.00'), findsOneWidget);
+    expect(
+        tester.widget<Text>(find.byKey(const Key('accounts-net-worth'))).data,
+        'MYR 30.00');
+    expect(find.textContaining('含未来承诺余额 - MYR 350.00'), findsOneWidget);
+    expect(find.textContaining('含未来承诺余额 - MYR 120.00'), findsOneWidget);
     expect(find.text('信用卡溢缴款'), findsOneWidget);
-    expect(find.text('MYR 80.00'), findsOneWidget);
+    expect(
+        find.descendant(
+            of: find.byKey(const Key('accounts-card-credit')),
+            matching: find.text('MYR 80.00')),
+        findsOneWidget);
     expect(find.text('暂无欠款'), findsOneWidget);
     expect(find.text('账期待设置'), findsOneWidget);
     expect(find.text('当前为估算提醒'), findsOneWidget);
@@ -379,7 +387,11 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('- MYR 440.00'), findsOneWidget);
-    expect(find.text('MYR 30.00'), findsOneWidget);
+    expect(
+        find.descendant(
+            of: find.byKey(const Key('accounts-card-credit')),
+            matching: find.text('MYR 30.00')),
+        findsOneWidget);
 
     await tester.tap(find.byKey(const Key('account-cutoff-selector')));
     await tester.pumpAndSettle();
@@ -400,13 +412,19 @@ void main() {
       reason: 'Historical net assets: 0 - 470 + 80 at the cutoff.',
     );
     expect(find.text('MYR 470.00'), findsWidgets);
-    expect(find.text('MYR 80.00'), findsOneWidget);
+    expect(
+        find.descendant(
+            of: find.byKey(const Key('accounts-card-credit')),
+            matching: find.text('MYR 80.00')),
+        findsOneWidget);
     expect(find.text('MYR 30.00'), findsNothing);
 
     tester.view.physicalSize = const Size(960, 844);
     await tester.pumpAndSettle();
     final creditLabel = find.text('信用卡溢缴款');
-    final creditAmount = find.text('MYR 80.00');
+    final creditAmount = find.descendant(
+        of: find.byKey(const Key('accounts-card-credit')),
+        matching: find.text('MYR 80.00'));
     expect(creditLabel, findsOneWidget);
     expect(creditAmount, findsOneWidget);
     expect(tester.getTopLeft(creditAmount).dx,

@@ -21,12 +21,13 @@ class AiAnalysisState {
     bool? loading,
     String? summary,
     String? error,
+    bool clearError = false,
     bool? completed,
   }) {
     return AiAnalysisState(
       loading: loading ?? this.loading,
       summary: summary ?? this.summary,
-      error: error ?? this.error,
+      error: clearError ? null : error ?? this.error,
       completed: completed ?? this.completed,
     );
   }
@@ -34,21 +35,29 @@ class AiAnalysisState {
 
 /// 全局 AI 分析 Provider，后台运行不受页面切换影响
 class AiAnalysisNotifier extends Notifier<AiAnalysisState> {
+  Object? _ledgerScope;
+
   @override
-  AiAnalysisState build() => const AiAnalysisState();
+  AiAnalysisState build() {
+    ref.watch(ledgerSyncSessionProvider);
+    _ledgerScope = Object();
+    ref.onDispose(() => _ledgerScope = null);
+    return const AiAnalysisState();
+  }
 
   Future<void> runAnalysis({
     bool includePlanned = false,
     int monthCount = 6,
     int futureMonthCount = AiAnalysisService.defaultFutureMonthCount,
   }) async {
+    final scope = _ledgerScope;
     final repoAsync = ref.read(financeRepositoryProvider);
     final repo = repoAsync.value;
     if (repo == null) return;
 
     final gatewayUrl = repo.aiGatewayUrl;
     if (gatewayUrl.isEmpty) {
-      state = state.copyWith(error: '请先在设置中配置 AI 网关地址');
+      state = const AiAnalysisState(error: '请先在设置中配置 AI 网关地址');
       return;
     }
 
@@ -65,10 +74,12 @@ class AiAnalysisNotifier extends Notifier<AiAnalysisState> {
         monthCount: monthCount,
         futureMonthCount: futureMonthCount,
       );
-      state = AiAnalysisState(summary: summary, completed: true);
+      if (identical(_ledgerScope, scope)) {
+        state = AiAnalysisState(summary: summary, completed: true);
+      }
     } catch (e) {
       final msg = e is AiNetworkException ? e.message : 'AI 分析失败：$e';
-      state = AiAnalysisState(error: msg);
+      if (identical(_ledgerScope, scope)) state = AiAnalysisState(error: msg);
     }
   }
 
@@ -77,11 +88,12 @@ class AiAnalysisNotifier extends Notifier<AiAnalysisState> {
   }
 
   void clearError() {
-    state = state.copyWith(error: null);
+    state = state.copyWith(clearError: true);
   }
 }
 
 final aiAnalysisProvider =
     NotifierProvider<AiAnalysisNotifier, AiAnalysisState>(
   AiAnalysisNotifier.new,
+  dependencies: [financeRepositoryProvider, ledgerSyncSessionProvider],
 );

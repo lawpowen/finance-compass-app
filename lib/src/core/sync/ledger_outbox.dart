@@ -12,10 +12,15 @@ typedef LedgerPendingWrite = ({
 /// The head stays unchanged until acknowledged. The latest snapshot can be
 /// replaced while the head is being sent.
 final class LedgerOutboxState {
-  const LedgerOutboxState({required this.head, this.latest});
+  const LedgerOutboxState(
+      {required this.head, this.latest, this.rejectedBytes});
 
   final LedgerPendingWrite head;
   final LedgerPendingWrite? latest;
+
+  /// A definitive HTTP 413 for this head. A proxy may enforce a lower
+  /// limit than the application, so don't resend this size after reopening.
+  final int? rejectedBytes;
 
   Map<String, dynamic> get snapshot => latest?.snapshot ?? head.snapshot;
 }
@@ -140,16 +145,19 @@ String? _identity(LedgerOutboxState? state) {
     state.head.operationId,
     state.latest?.baseRevision,
     state.latest?.operationId,
+    if (state.rejectedBytes != null) state.rejectedBytes,
   ]);
 }
 
 String _encodeState(LedgerOutboxState state) => jsonEncode({
       'version': 1,
-      'head': _encodeWrite(state.head),
-      if (state.latest case final latest?) 'latest': _encodeWrite(latest),
+      'head': ledgerWriteEnvelope(state.head),
+      if (state.latest case final latest?)
+        'latest': ledgerWriteEnvelope(latest),
+      if (state.rejectedBytes != null) 'rejectedBytes': state.rejectedBytes,
     });
 
-Map<String, dynamic> _encodeWrite(LedgerPendingWrite write) => {
+Map<String, dynamic> ledgerWriteEnvelope(LedgerPendingWrite write) => {
       'baseRevision': write.baseRevision,
       'operationId': write.operationId,
       'snapshot': write.snapshot,
@@ -163,9 +171,14 @@ LedgerOutboxState _decodeState(String raw, String? identity) {
       throw invalidState;
     }
     final latest = json['latest'];
+    final rejected = json['rejectedBytes'];
+    if (rejected != null && (rejected is! int || rejected < 1)) {
+      throw invalidState;
+    }
     final state = LedgerOutboxState(
       head: _decodeWrite(json['head']),
       latest: latest == null ? null : _decodeWrite(latest),
+      rejectedBytes: rejected as int?,
     );
     if (_identity(state) != identity ||
         state.head.operationId == state.latest?.operationId) {

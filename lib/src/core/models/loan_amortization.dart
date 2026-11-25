@@ -93,12 +93,14 @@ LoanAmortizationSchedule calculateLoanAmortization({
 
   switch (method) {
     case LoanRepaymentMethod.equalInstallment:
+      final discount = math.pow(1 + monthlyRate, -termMonths).toDouble();
+      final denominator = 1 - discount;
       final calculatedPayment = monthlyRate == 0
           ? principal / termMonths
-          : principal *
-              monthlyRate *
-              math.pow(1 + monthlyRate, termMonths) /
-              (math.pow(1 + monthlyRate, termMonths) - 1);
+          : principal * monthlyRate / denominator;
+      if (!calculatedPayment.isFinite) {
+        throw ArgumentError('Loan payment calculation overflowed.');
+      }
       final regularPayment = _money(quotedMonthlyPayment ?? calculatedPayment);
       final firstInterest = _money(balance * monthlyRate);
       if (regularPayment <= firstInterest) {
@@ -168,77 +170,68 @@ LoanAmortizationSchedule calculateLoanAmortization({
         );
       }
     case LoanRepaymentMethod.flatRate:
-      final totalFlatInterest =
-          _money(principal * annualInterestRatePercent / 100 * termMonths / 12);
-      final regularPrincipal = _money(principal / termMonths);
-      final regularInterest = _money(totalFlatInterest / termMonths);
-      final regularPayment = quotedMonthlyPayment == null
-          ? _money(regularPrincipal + regularInterest)
-          : _money(quotedMonthlyPayment);
-      if (regularPayment <= regularInterest) {
+      final contractCents = _moneyCents(principal);
+      final interestCents = _moneyCents(
+          principal * annualInterestRatePercent / 100 * termMonths / 12);
+      var remainingCents = _moneyCents(openingPrincipal ?? principal);
+      final quoteCents = quotedMonthlyPayment == null
+          ? null
+          : _moneyCents(quotedMonthlyPayment);
+      if (remainingCents == 0) {
+        throw ArgumentError('Opening principal must be at least one cent.');
+      }
+      if (quoteCents != null && quoteCents <= interestCents ~/ termMonths) {
         throw ArgumentError.value(
           quotedMonthlyPayment,
           'quotedMonthlyPayment',
           'Payment must be above the monthly flat interest.',
         );
       }
-      var assignedInterest = 0.0;
-      for (var index = 0; index < termMonths && balance > 0; index++) {
-        final nextRegularPrincipal = quotedMonthlyPayment == null
-            ? regularPrincipal
-            : _money(regularPayment - regularInterest);
-        final isFinal = index == termMonths - 1 ||
-            (isMidstream && nextRegularPrincipal >= balance);
-        final interest = isFinal
-            ? (isMidstream
-                ? regularInterest
-                : _money(totalFlatInterest - assignedInterest))
-            : regularInterest;
-        final principalPart = isFinal
-            ? balance
-            : quotedMonthlyPayment == null
-                ? regularPrincipal
-                : _money(regularPayment - interest);
+      for (var number = 1;
+          number <= termMonths && remainingCents > 0;
+          number++) {
+        final interest = _installmentCents(interestCents, termMonths, number);
+        final scheduledPrincipal = quoteCents == null
+            ? _installmentCents(contractCents, termMonths, number)
+            : quoteCents - interest;
+        final isFinal = number == termMonths;
         if (!isMidstream &&
-            quotedMonthlyPayment != null &&
+            quoteCents != null &&
             !isFinal &&
-            principalPart >= balance) {
+            scheduledPrincipal >= remainingCents) {
           throw ArgumentError.value(
             quotedMonthlyPayment,
             'quotedMonthlyPayment',
             'Payment would clear the loan before the configured term.',
           );
         }
-        assignedInterest = _money(assignedInterest + interest);
-        final payment = isFinal
-            ? _money(principalPart + interest)
-            : quotedMonthlyPayment == null
-                ? _money(principalPart + interest)
-                : regularPayment;
-        balance = _money(math.max(0, balance - principalPart));
+        final principalPart = isFinal
+            ? remainingCents
+            : math.min(remainingCents, scheduledPrincipal);
+        remainingCents -= principalPart;
         installments.add(
           LoanInstallment(
-            number: index + 1,
+            number: number,
             dueDate: _clampedMonthDate(
               firstDueMonth.year,
-              firstDueMonth.month + index,
+              firstDueMonth.month + number - 1,
               paymentDay,
             ),
-            payment: payment,
-            principal: principalPart,
-            interest: interest,
-            remainingPrincipal: balance,
+            payment: (principalPart + interest) / 100,
+            principal: principalPart / 100,
+            interest: interest / 100,
+            remainingPrincipal: remainingCents / 100,
           ),
         );
       }
   }
 
-  final totalPayment = _money(
-    installments.fold<double>(0, (sum, item) => sum + item.payment),
-  );
-  final totalInterest = _money(
-    installments.fold<double>(0, (sum, item) => sum + item.interest),
-  );
+  final totalPayment = installments.fold<int>(
+          0, (sum, item) => sum + _moneyCents(item.payment)) /
+      100;
+  final totalInterest = installments.fold<int>(
+          0, (sum, item) => sum + _moneyCents(item.interest)) /
+      100;
   return LoanAmortizationSchedule(
     installments: List.unmodifiable(installments),
     regularPayment: installments.isEmpty ? 0 : installments.first.payment,
@@ -253,4 +246,47 @@ DateTime _clampedMonthDate(int year, int month, int day) {
   return DateTime(first.year, first.month, day.clamp(1, lastDay));
 }
 
-double _money(num value) => (value * 100).round() / 100;
+// Each period receives the difference between two cumulative integer shares.
+// Splitting only the remainder keeps intermediate products small on Web.
+int _installmentCents(int total, int periods, int number) {
+  final extra = total % periods;
+  return total ~/ periods +
+      (number * extra ~/ periods) -
+      ((number - 1) * extra ~/ periods);
+}
+
+int _moneyCents(num value) {
+  final scaled = value * 100;
+  if (!scaled.isFinite || scaled.abs() > 9007199254740991) {
+    throw ArgumentError('Money exceeds the supported cent precision.');
+  }
+  return scaled.round();
+}
+
+double _money(num value) => _moneyCents(value) / 100;
+
+/// Attempts to build the amortization schedule for [account], returning `null`
+/// when required terms are missing or mathematically invalid.
+LoanAmortizationSchedule? tryCalculateLoanScheduleForAccount(Account account) {
+  if (!account.hasCompleteLoanProfile) {
+    return null;
+  }
+  final openingPrincipal = account.initialBalance.abs();
+  if (!openingPrincipal.isFinite || openingPrincipal <= 0) {
+    return null;
+  }
+  try {
+    return calculateLoanAmortization(
+      principal: account.loanPrincipal!,
+      annualInterestRatePercent: account.loanAnnualInterestRate!,
+      termMonths: account.loanTermMonths!,
+      startDate: account.loanTrackingStartDate ?? account.loanStartDate!,
+      paymentDay: account.loanPaymentDay!,
+      method: account.loanRepaymentMethod!,
+      quotedMonthlyPayment: account.loanQuotedMonthlyPayment,
+      openingPrincipal: openingPrincipal,
+    );
+  } on ArgumentError {
+    return null;
+  }
+}

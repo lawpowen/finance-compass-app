@@ -184,6 +184,7 @@ function createPushService({ db, publicKey, reminderEvents, clock, sendPush, onE
   `);
   const count = db.prepare('SELECT count(*) AS count FROM push_subscriptions WHERE account_id = ?');
   const remove = db.prepare('DELETE FROM push_subscriptions WHERE account_id = ? AND endpoint = ?');
+  const updateTimezone = db.prepare('UPDATE push_subscriptions SET timezone = ? WHERE endpoint = ? AND account_id = ?');
   const removeExpired = db.prepare(`
     DELETE FROM push_subscriptions WHERE endpoint = ? AND account_id = ? AND p256dh = ? AND auth = ?
   `);
@@ -233,7 +234,9 @@ function createPushService({ db, publicKey, reminderEvents, clock, sendPush, onE
     if (!claimed) return;
     const topic = topicFor(key);
     try {
-      await sendPush(subscriptionFrom(row), { title, body, tag: topic }, {
+      await sendPush(subscriptionFrom(row), {
+        accountId: String(row.account_id), notification: { title, body, tag: topic },
+      }, {
         ttl: Math.min(6 * 60 * 60, (24 * 60 - currentTime.minutes) * 60), topic,
       });
       completeDelivery.run(null, row.endpoint, key);
@@ -297,6 +300,24 @@ function createPushService({ db, publicKey, reminderEvents, clock, sendPush, onE
 
   return {
     publicKey,
+    verifyDelivery(accountId, endpoint) {
+      if (!validPushEndpoint(endpoint)) return { error: 'invalid_push_endpoint', status: 400 };
+      const row = find.get(endpoint);
+      return row && String(row.account_id) === accountId
+        ? {} : { error: 'push_subscription_not_found', status: 404 };
+    },
+    updateTimezone(accountId, payload) {
+      const endpoint = payload?.endpoint;
+      if (!validPushEndpoint(endpoint)) return { error: 'invalid_push_endpoint', status: 400 };
+      const timezone = normalizeTimezone(payload?.timezone);
+      if (!timezone) return { error: 'invalid_timezone', status: 400 };
+      const row = find.get(endpoint);
+      if (!row || String(row.account_id) !== accountId) {
+        return { error: 'push_subscription_not_found', status: 404 };
+      }
+      if (row.timezone !== timezone) updateTimezone.run(timezone, endpoint, accountId);
+      return {};
+    },
     subscribe(accountId, payload) {
       const subscription = normalizeSubscription(payload?.subscription);
       if (!subscription) return { error: 'invalid_push_subscription', status: 400 };
@@ -331,11 +352,11 @@ function createPushService({ db, publicKey, reminderEvents, clock, sendPush, onE
         return { error: 'push_test_rate_limit', status: 429 };
       }
       try {
-        await sendPush(subscriptionFrom(row), {
+        await sendPush(subscriptionFrom(row), { accountId, notification: {
           title: 'Finance Compass',
           body: '财务提醒测试。此设备已能接收系统通知。',
           tag: 'finance-compass-test',
-        }, { ttl: 60, topic: 'finance-compass-test' });
+        } }, { ttl: 60, topic: 'finance-compass-test' });
         return {};
       } catch (error) {
         if (removeIfExpired(row, error)) return { error: 'push_subscription_expired', status: 410 };

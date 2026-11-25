@@ -396,3 +396,100 @@ test('unclaimed legacy store can register its first user and a failed migration 
     unchanged.close();
   }
 });
+
+test('snapshot validation rejects invalid budget months, duplicate budget pairs, and non-positive intervals', async () => {
+  const { validSnapshot } = await import('./snapshot.mjs');
+  assert.equal(validSnapshot(fixture), true);
+
+  assert.equal(validSnapshot({
+    ...fixture,
+    budgets: [{ id: 'bad-month', category_id: 'groceries', month_key: '2026-13', amount: 90 }],
+  }), false);
+
+  assert.equal(validSnapshot({
+    ...fixture,
+    budgets: [
+      { id: 'b1', category_id: 'groceries', month_key: '2026-11', amount: 90 },
+      { id: 'b2', category_id: 'groceries', month_key: '2026-11', amount: 120 },
+    ],
+  }), false);
+
+  assert.equal(validSnapshot({
+    ...fixture,
+    recurring_transaction_rules: [{
+      ...fixture.recurring_transaction_rules[0],
+      interval_months: 0,
+    }],
+  }), false);
+});
+
+test('snapshot requires a same-type acyclic category forest, including archived branches', async () => {
+  const { validSnapshot } = await import('./snapshot.mjs');
+  const parent = { id: 'p', type: 'expense', name: 'Parent', is_archived: true };
+  const child = { id: 'c', type: 'expense', name: 'Child', parent_id: 'p' };
+  const valid = (rows) => validSnapshot({ ...fixture, categories: [...fixture.categories, ...rows] });
+  assert.equal(valid([child, parent]), true);
+  assert.equal(valid([{ ...child, type: 'income' }, parent]), false);
+  assert.equal(valid([{ ...parent, parent_id: 'c' }, child]), false);
+  assert.equal(valid([{ ...parent, parent_id: 'p' }]), false);
+});
+
+test('v3 validates loan identities, explicit zero principal and both monetary units on rows and presets', async () => {
+  const { validSnapshot } = await import('./snapshot.mjs');
+  const loan = { ...account, id: 'loan', account_type: 'loan', report_group: 'credit' };
+  const foreign = { ...account, id: 'usd', currency: 'USD' };
+  const row = { id: 'payment', type: 'transfer', account_id: account.id, to_account_id: loan.id,
+    amount: 110, currency: 'MYR', to_currency: 'MYR', to_amount: 100, loan_installment_number: 1,
+    transaction_date: '2026-11-23', start_date: '2026-11-23', description: 'new memo' };
+  const ledger = { ...fixture, meta: { loan_installment_semantics: 'explicit_v1' }, accounts: [account, foreign, loan] };
+  assert.equal(validSnapshot({ ...ledger, meta: { loan_installment_semantics: 'unrecognized' } }), false);
+  for (const section of ['transactions', 'transaction_templates', 'recurring_transaction_rules']) {
+    const accepts = (change) => validSnapshot({ ...ledger, [section]: [{ ...row, ...change }] });
+    for (const change of [
+      {}, { to_amount: 0 }, { amount: -110, to_amount: -100 }, { amount: -.01, to_amount: 0 },
+      { account_id: foreign.id, amount: 25, currency: 'USD', loan_payment_amount: 110 },
+      { loan_installment_number: null, to_amount: null },
+    ]) assert.equal(accepts(change), true, section + JSON.stringify(change));
+    for (const change of [
+      { amount: 0 }, { to_amount: -10 }, { to_amount: 111 }, { amount: -110, to_amount: 100 },
+      { amount: .004, to_amount: 0 }, { amount: 1e307 }, { to_amount: .004 },
+      { account_id: foreign.id, currency: 'USD', loan_payment_amount: 111.004 },
+      { loan_installment_number: 0 }, { loan_installment_number: 1.5 },
+      { to_account_id: foreign.id }, { type: 'income' }, { account_id: loan.id }, { to_amount: null },
+      { loan_payment_amount: 120 }, { loan_installment_number: null, loan_payment_amount: 110 },
+      { account_id: foreign.id, currency: 'USD' }, { account_id: foreign.id, currency: 'MYR' },
+      { account_id: foreign.id, currency: 'USD', loan_payment_amount: -110 },
+    ]) assert.equal(accepts(change), false, section + JSON.stringify(change));
+  }
+  const legacyPart = { ...row, to_amount: 110, loan_installment_number: null, legacy_loan_id: loan.id, legacy_loan_part_number: 1 };
+  assert.equal(validSnapshot({ ...ledger, transactions: [legacyPart] }), true);
+  assert.equal(validSnapshot({ ...ledger, transactions: [{ ...legacyPart, legacy_loan_id: foreign.id }] }), false);
+  assert.equal(validSnapshot({ ...ledger, transactions: [{ ...legacyPart, account_id: foreign.id }] }), false);
+  assert.equal(validSnapshot({ ...ledger, transactions: [{ ...legacyPart, to_amount: 100 }] }), false);
+  assert.equal(validSnapshot({ ...ledger, transactions: [{ ...legacyPart, amount: .004, to_amount: null }] }), false);
+  assert.equal(validSnapshot({ ...ledger, transaction_templates: [legacyPart] }), false);
+  assert.equal(validSnapshot({ ...ledger, accounts: [account, { ...loan, loan_start_date: '2026-04-25',
+    loan_tracking_start_date: '2026-04-24' }] }), false);
+});
+
+test('currency quotes use finite positive rates and preserve historical units', async () => {
+  const { validSnapshot } = await import('./snapshot.mjs');
+  const withRates = (rates) => ({ ...fixture, meta: { exchange_rates_to_base_json: JSON.stringify(rates) } });
+  assert.equal(validSnapshot(withRates({ EUR: '1.075', MYR: .25 })), true);
+  for (const invalid of [0, -1, 'Infinity', 'NaN', '', null, false, {}]) {
+    assert.equal(validSnapshot(withRates({ EUR: invalid })), false);
+  }
+  assert.equal(validSnapshot(withRates({ EUR: 1.1, eur: 1.2 })), false);
+});
+
+test('retained recurrence identity metadata survives a v3 sync round trip', async () => {
+  const { validSnapshot } = await import('./snapshot.mjs');
+  const valid = (history) => validSnapshot({ ...fixture,
+    meta: { 'retired-recurring-rule/Rent': history } });
+  assert.equal(valid(JSON.stringify({ id: 'r', months: ['2026-05'] })), true);
+  assert.equal(validSnapshot({ ...fixture, meta: { 'recurring-occurrence/r/x': '2026-05' } }), true);
+  assert.equal(validSnapshot({ ...fixture, meta: { 'recurring-occurrence/r/x': '2026-15' } }), false);
+  for (const raw of ['{', 'null', '{"id":"r","months":[42]}', '{"id":"r","months":["2026-15"]}']) {
+    assert.equal(valid(raw), false);
+  }
+});

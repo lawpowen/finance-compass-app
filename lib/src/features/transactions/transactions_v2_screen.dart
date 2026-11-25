@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/data/finance_repository.dart';
 import '../../core/models/account.dart';
 import '../../core/models/category.dart';
+import '../../core/models/category_hierarchy.dart';
 import '../../core/models/transaction.dart';
 import '../../core/providers/mutations/transaction_mutations.dart';
 import '../../core/providers/repository_provider.dart';
@@ -62,6 +63,7 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
     }
 
     final month = DateTime(now.year, now.month + monthOffset);
+    final monthEnd = DateTime(month.year, month.month + 1, 0, 23, 59, 59, 999);
     final monthKey = '${month.year}-${month.month.toString().padLeft(2, '0')}';
     final accountsById = {
       for (final account in currentRepo.accounts) account.id: account,
@@ -72,7 +74,13 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
             item.transactionDate.month == month.month)
         .toList()
       ..sort((a, b) => b.transactionDate.compareTo(a.transactionDate));
-    final filteredForMonth = realForMonth.where(filters.matches).toList();
+    final matchedCategories = <String>{
+      for (final id in filters.categoryIds)
+        ...currentRepo.categoryHierarchy.descendantsOf(id),
+    };
+    final filteredForMonth = realForMonth
+        .where((item) => filters.matches(item, matchedCategories))
+        .toList();
     final visible = filteredForMonth
         .where((item) =>
             includePlanned || item.status != TransactionStatus.planned)
@@ -88,7 +96,7 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
         basis: _summaryFor(
           basis,
           visible,
-          filteredForMonth,
+          monthEnd: monthEnd,
           currentRepo: currentRepo,
           accountsById: accountsById,
           fundingNeed: fundingNeed,
@@ -115,8 +123,12 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
 
   @override
   Widget build(BuildContext context) {
-    ref.watch(financeRepositoryProvider);
-    final data = _monthDataFor(repository);
+    final current =
+        ref.watch(financeRepositoryProvider).valueOrNull ?? widget.repository;
+    if (!identical(_cachedMonthData?.repository, current) && filters.isActive) {
+      filters = filters.normalized(current);
+    }
+    final data = _monthDataFor(current);
     final selectedSummary = data.basisSummaries[selectedBasis]!;
 
     return LayoutBuilder(
@@ -196,9 +208,7 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
         includePlanned = value;
       }),
     );
-    final hasActiveFilters = filters.accountIds.isNotEmpty ||
-        filters.types.isNotEmpty ||
-        filters.categoryIds.isNotEmpty;
+    final hasActiveFilters = filters.isActive;
     final filterPills = [
       _QuickFilterPill(
         key: const Key('transaction-filter-account'),
@@ -207,7 +217,7 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
           filters.accountIds,
           allLabel: '全部账户',
           unit: '个账户',
-          nameOf: repository.accountName,
+          nameOf: (id) => data.accountsById[id]?.name ?? '账户已移除',
         ),
         selected: filters.accountIds.isNotEmpty,
         onTap: () => _openFilterSheet({_FilterDimension.account}),
@@ -231,7 +241,8 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
           filters.categoryIds,
           allLabel: '全部类别',
           unit: '个类别',
-          nameOf: repository.categoryName,
+          nameOf: (id) =>
+              data.repository.categoryHierarchy.byId[id]?.name ?? '类别已移除',
         ),
         selected: filters.categoryIds.isNotEmpty,
         onTap: () => _openFilterSheet({_FilterDimension.category}),
@@ -255,8 +266,12 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
     final (primaryDotColor, secondaryDotColor) = switch (selectedBasis) {
       _TransactionBasis.consumption => (palette.income, palette.expense),
       _TransactionBasis.cash => (
-          fundingNeed != null ? palette.textPrimary : palette.income,
-          fundingNeed != null ? palette.warning : palette.expense,
+          fundingNeed != null && !hasActiveFilters
+              ? palette.textPrimary
+              : palette.income,
+          fundingNeed != null && !hasActiveFilters
+              ? palette.warning
+              : palette.expense,
         ),
       _TransactionBasis.committed => (palette.warning, palette.income),
     };
@@ -281,11 +296,13 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
       message: switch (selectedBasis) {
         _TransactionBasis.consumption =>
           '按交易发生日统计收入和消费。账户间转账不计入消费。「包含预计」会计入本期预计交易。',
-        _TransactionBasis.cash => fundingNeed == null
-            ? '统计历史月份现金账户的流入和流出。信用卡与贷款还款按现金支付金额计入。「包含预计」会计入本期预计交易。'
-            : '需准备现金包括本月已知现金流出，以及尚未安排的到期信用卡和贷款还款。已安排的还款不会重复计入。这个总额不会随下方筛选变化。',
+        _TransactionBasis.cash => hasActiveFilters
+            ? '流入和流出按所选月份及筛选条件统计。筛选账户时，只计算所选现金账户的变动。全月需准备现金独立统计。'
+            : fundingNeed == null
+                ? '统计历史月份现金账户的流入和流出。信用卡与贷款还款按现金支付金额计入。「包含预计」会计入本期预计交易。'
+                : '需准备现金包括本月已知现金流出，以及尚未安排的到期信用卡和贷款还款。已安排的还款不会重复计入。这个总额不会随下方筛选变化。',
         _TransactionBasis.committed =>
-          '显示当前信用卡与贷款的欠款，包含已经承诺的分期。启用「包含预计」后，也计入本月预计交易对余额的影响。',
+          '按所选月末逐户统计欠款。选择类型或类别时，显示筛选流水在本月增加或减少的欠款。「包含预计」加入所选月份的预计交易。',
       },
     );
     final desktopActionStyle = TextButton.styleFrom(
@@ -367,6 +384,7 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
         ),
         if (selectedBasis == _TransactionBasis.cash && fundingNeed != null) ...[
           Text(
+            '${hasActiveFilters ? '全月需准备现金 ${compassMoney(fundingNeed.totalCashRequired, currency: baseCurrency, decimals: 0)} · ' : ''}'
             '到期信用 ${compassMoney(fundingNeed.creditDue, currency: baseCurrency, decimals: 0)} · '
             '到期贷款 ${compassMoney(fundingNeed.loanDue, currency: baseCurrency, decimals: 0)} · '
             '已安排 ${compassMoney(fundingNeed.coveredDebtPayments, currency: baseCurrency, decimals: 0)}',
@@ -528,6 +546,7 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
             child: Column(
               children: [
                 CompassActionBubble(
+                  key: const Key('transactions_v2_quick'),
                   heroTag: 'transactions_v2_quick',
                   icon: Icons.bolt_rounded,
                   color: palette.surface,
@@ -552,8 +571,8 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
 
   _BasisSummary _summaryFor(
     _TransactionBasis basis,
-    List<FinanceTransaction> scopedTransactions,
-    List<FinanceTransaction> allForMonth, {
+    List<FinanceTransaction> scopedTransactions, {
+    required DateTime monthEnd,
     required FinanceRepository currentRepo,
     required Map<String, Account> accountsById,
     MonthlyFundingNeed? fundingNeed,
@@ -593,7 +612,7 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
             outflow += -delta;
           }
         }
-        if (fundingNeed != null) {
+        if (fundingNeed != null && !filters.isActive) {
           return _BasisSummary(
             title: '实际现金',
             subtitle: '需准备现金',
@@ -608,7 +627,11 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
         }
         return _BasisSummary(
           title: '实际现金',
-          subtitle: includePlanned ? '历史流出含预计' : '历史实际流出',
+          subtitle: filters.isActive
+              ? '筛选现金流出'
+              : includePlanned
+                  ? '历史流出含预计'
+                  : '历史实际流出',
           value: outflow,
           primaryLabel: '流入',
           primary: inflow,
@@ -618,46 +641,59 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
           valueIsOutflow: true,
         );
       case _TransactionBasis.committed:
-        var additions = 0.0;
-        var reductions = 0.0;
-        for (final item in scopedTransactions) {
-          final delta = _creditDebtDelta(item, currentRepo, accountsById);
-          if (delta >= 0) {
-            additions += delta;
-          } else {
-            reductions += -delta;
-          }
-        }
-        final cutoff = currentRepo.currentMonthCutoffDate();
-        final currentCommitted = currentRepo.accounts
-            .where((account) =>
-                account.reportGroup == ReportGroup.credit &&
+        final creditAccounts = {
+          for (final account in accountsById.values)
+            if (account.effectiveReportGroup == ReportGroup.credit &&
                 (filters.accountIds.isEmpty ||
                     filters.accountIds.contains(account.id)))
-            .fold<double>(0, (sum, account) {
-          final balance = account.accountType == AccountType.creditCard
-              ? currentRepo.convertToBase(
-                  account.currentBalance,
-                  account.currency,
-                )
-              : currentRepo.accountBalanceAtBase(account.id, cutoff);
-          return sum + (-balance).clamp(0.0, double.infinity).toDouble();
-        });
-        final plannedDelta = includePlanned
-            ? allForMonth
-                .where((item) => item.status == TransactionStatus.planned)
-                .fold<double>(
-                  0,
-                  (sum, item) =>
-                      sum + _creditDebtDelta(item, currentRepo, accountsById),
-                )
-            : 0.0;
+              account.id: account,
+        };
+        final plannedDeltas = <String, double>{};
+        var additions = 0.0;
+        var reductions = 0.0;
+        void applyMovement(String accountId, FinanceTransaction item) {
+          final account = creditAccounts[accountId];
+          if (account == null) return;
+          final delta = currentRepo.valuationBook
+              .deltaFor(accountId, item, includePlanned: true);
+          if (item.status == TransactionStatus.planned) {
+            plannedDeltas[accountId] = (plannedDeltas[accountId] ?? 0) + delta;
+          }
+          final amount = currentRepo.convertToBase(delta, account.currency);
+          if (amount < 0) {
+            additions -= amount;
+          } else {
+            reductions += amount;
+          }
+        }
+        for (final item in scopedTransactions) {
+          applyMovement(item.accountId, item);
+          final target = item.toAccountId;
+          if (item.type == TransactionType.transfer &&
+              target != null &&
+              target != item.accountId) {
+            applyMovement(target, item);
+          }
+        }
+        final value = filters.hasTransactionCriteria
+            ? additions - reductions
+            : creditAccounts.values.fold<double>(0, (sum, account) {
+                final balance =
+                    currentRepo.accountBalanceAt(account.id, monthEnd) +
+                        (plannedDeltas[account.id] ?? 0);
+                return balance < 0
+                    ? sum +
+                        currentRepo.convertToBase(-balance, account.currency)
+                    : sum;
+              });
         return _BasisSummary(
           title: '信用/贷款',
-          subtitle: includePlanned ? '含本月预计' : '承诺余额',
-          value: (currentCommitted + plannedDelta)
-              .clamp(0.0, double.infinity)
-              .toDouble(),
+          subtitle: filters.hasTransactionCriteria
+              ? '筛选欠款净变动'
+              : includePlanned
+                  ? '月末含预计'
+                  : '月末欠款',
+          value: value,
           primaryLabel: '新增承诺',
           primary: additions,
           secondaryLabel: '偿还抵扣',
@@ -672,54 +708,28 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
     FinanceRepository currentRepo,
     Map<String, Account> accountsById,
   ) {
-    final source = accountsById[transaction.accountId];
-    final target = transaction.toAccountId == null
-        ? null
-        : accountsById[transaction.toAccountId!];
+    bool isSelectedCash(String? id) =>
+        id != null &&
+        (filters.accountIds.isEmpty || filters.accountIds.contains(id)) &&
+        accountsById[id]?.effectiveReportGroup == ReportGroup.cash;
+    final sourceIsCash = isSelectedCash(transaction.accountId);
+    final targetIsCash = isSelectedCash(transaction.toAccountId);
     final amount = currentRepo.transactionAmountInBase(transaction);
     switch (transaction.type) {
       case TransactionType.income:
-        return source?.reportGroup == ReportGroup.cash ? amount : 0;
+        return sourceIsCash ? amount : 0;
       case TransactionType.expense:
-        return source?.reportGroup == ReportGroup.cash ? -amount : 0;
+        return sourceIsCash ? -amount : 0;
       case TransactionType.adjustment:
-        return source?.reportGroup == ReportGroup.cash ? amount : 0;
+        return sourceIsCash ? amount : 0;
       case TransactionType.transfer:
         var delta = 0.0;
-        if (source?.reportGroup == ReportGroup.cash) delta -= amount;
-        if (target?.reportGroup == ReportGroup.cash) {
+        if (sourceIsCash) delta -= amount;
+        if (targetIsCash) {
           delta += currentRepo.transferIncomingAmountInBase(transaction);
         }
         return delta;
     }
-  }
-
-  double _creditDebtDelta(
-    FinanceTransaction transaction,
-    FinanceRepository currentRepo,
-    Map<String, Account> accountsById,
-  ) {
-    final source = accountsById[transaction.accountId];
-    final target = transaction.toAccountId == null
-        ? null
-        : accountsById[transaction.toAccountId!];
-    final amount = currentRepo.transactionAmountInBase(transaction);
-    var delta = 0.0;
-    if (source?.reportGroup == ReportGroup.credit) {
-      switch (transaction.type) {
-        case TransactionType.income:
-        case TransactionType.adjustment:
-          delta -= amount;
-        case TransactionType.expense:
-        case TransactionType.transfer:
-          delta += amount;
-      }
-    }
-    if (transaction.type == TransactionType.transfer &&
-        target?.reportGroup == ReportGroup.credit) {
-      delta -= currentRepo.transferIncomingAmountInBase(transaction);
-    }
-    return delta;
   }
 
   List<_MobileLedgerEntry> _buildMobileEntries(
@@ -747,10 +757,10 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
       }
       final dayCount = probe - index;
       final summaryParts = <String>[
-        if (dayIncome > 0)
-          '收 +${compassMoney(dayIncome, currency: baseCurrency, decimals: 0)}',
-        if (dayExpense > 0)
-          '支 ${compassMoney(dayExpense, currency: baseCurrency, decimals: 0)}',
+        if (dayIncome != 0)
+          '收 ${dayIncome > 0 ? '+' : ''}${compassMoney(dayIncome, currency: baseCurrency)}',
+        if (dayExpense != 0)
+          '支 ${compassMoney(dayExpense, currency: baseCurrency)}',
       ];
       entries.add(
         _MobileLedgerEntry.dayHeader(
@@ -789,13 +799,16 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
                     color: palette.textPrimary,
                   ),
             ),
-            const Spacer(),
-            Text(
-              daySummary,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    fontSize: 11,
-                    fontFeatures: compassTabularFigures,
-                  ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                daySummary,
+                textAlign: TextAlign.end,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      fontSize: 11,
+                      fontFeatures: compassTabularFigures,
+                    ),
+              ),
             ),
           ],
         ),
@@ -994,9 +1007,13 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
       ),
     );
     if (!mounted || name == null || name.isEmpty) return;
-    await ref
-        .read(transactionMutationsProvider.notifier)
-        .addTransactionTemplate(name: name, transaction: transaction);
+    if (!context.mounted ||
+        !await saveTransactionPreset(context, ref,
+            name: name,
+            transaction: transaction,
+            fromStoredTransaction: true)) {
+      return;
+    }
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('模板「$name」已保存')),
@@ -1066,14 +1083,16 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
         ),
       ),
     );
-    if (!mounted || result == null || result.name.isEmpty) return;
-    await ref
-        .read(transactionMutationsProvider.notifier)
-        .addRecurringTransactionRule(
-          name: result.name,
-          transaction: transaction,
-          intervalMonths: result.intervalMonths,
-        );
+    if (!mounted || !context.mounted || result == null || result.name.isEmpty) {
+      return;
+    }
+    if (!await saveTransactionPreset(context, ref,
+        name: result.name,
+        transaction: transaction,
+        intervalMonths: result.intervalMonths,
+        fromStoredTransaction: true)) {
+      return;
+    }
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -1088,7 +1107,8 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
         : transaction.merchant?.trim();
     if (direct != null && direct.isNotEmpty) return direct;
     if (transaction.categoryId != null) {
-      return repository.categoryName(transaction.categoryId!);
+      return repository.categoryHierarchy.byId[transaction.categoryId]?.name ??
+          _typeName(transaction.type);
     }
     return _typeName(transaction.type);
   }
@@ -1120,27 +1140,34 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
             _FilterDimension.category => '筛选类别',
           }
         : '筛选交易';
+    final ledgerScope = ProviderScope.containerOf(context, listen: false);
+    final openingRepository = repository;
     final result = await showModalBottomSheet<_TransactionFilters>(
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
-      builder: (_) => _TransactionFilterSheet(
-        title: title,
-        dimensions: dimensions,
-        initial: filters,
-        accounts: {
-          for (final account in repository.accounts) account.id: account.name,
-        },
-        categories: {
-          for (final category in repository.categories)
-            category.id: category.name,
-        },
-      ),
+      builder: (_) => UncontrolledProviderScope(
+          container: ledgerScope,
+          child: Consumer(builder: (context, sheetRef, _) {
+            final current =
+                sheetRef.watch(financeRepositoryProvider).valueOrNull ??
+                    openingRepository;
+            return _TransactionFilterSheet(
+              title: title,
+              dimensions: dimensions,
+              initial: filters,
+              accounts: {
+                for (final account in current.accounts) account.id: account.name
+              },
+              categories: current.sortedCategories(),
+              categoryPath: current.categoryHierarchy.pathOf,
+            );
+          })),
     );
     if (!mounted || result == null) return;
     setState(() {
       selectedTransactionIds.clear();
-      filters = result;
+      filters = result.normalized(repository);
     });
   }
 
@@ -1262,7 +1289,7 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
   }
 
   Future<void> _showQuickTemplates(BuildContext context) async {
-    final drafts = _quickDrafts(repository);
+    final templates = repository.transactionTemplates;
     final draft = await showGeneralDialog<FinanceTransaction>(
       context: context,
       barrierDismissible: true,
@@ -1300,7 +1327,7 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
                       ],
                     ),
                     const SizedBox(height: 8),
-                    if (drafts.isEmpty)
+                    if (templates.isEmpty)
                       Padding(
                         padding: const EdgeInsets.symmetric(vertical: 18),
                         child: Text(
@@ -1309,9 +1336,13 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                       ),
-                    ...drafts.take(5).map(
+                    ...templates.take(5).map(
                           (item) => InkWell(
-                            onTap: () => Navigator.pop(dialogContext, item),
+                            onTap: () => Navigator.pop(
+                                dialogContext,
+                                item.toTransaction(
+                                    id: 'draft_${item.id}',
+                                    date: DateTime.now())),
                             child: Container(
                               padding: const EdgeInsets.symmetric(vertical: 9),
                               decoration: BoxDecoration(
@@ -1332,7 +1363,7 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
                                   ),
                                   const SizedBox(width: 10),
                                   Expanded(
-                                    child: Text(item.merchant ?? '快速交易'),
+                                    child: Text(item.name),
                                   ),
                                   Text(
                                     compassMoney(
@@ -1486,13 +1517,31 @@ class _TransactionFilters {
   final Set<TransactionType> types;
   final Set<String> categoryIds;
 
-  bool matches(FinanceTransaction item) {
+  bool get hasTransactionCriteria => types.isNotEmpty || categoryIds.isNotEmpty;
+  bool get isActive => accountIds.isNotEmpty || hasTransactionCriteria;
+
+  _TransactionFilters normalized(FinanceRepository current) {
+    final accountKeys = current.accounts.map((a) => a.id).toSet();
+    final tree = current.categoryHierarchy;
+    return _TransactionFilters(
+      accountIds: accountIds.intersection(accountKeys),
+      types: types,
+      categoryIds: categoryIds.where((id) {
+        final category = tree.byId[id];
+        return category != null && _allowsCategory(types, category);
+      }).toSet(),
+    );
+  }
+
+  bool matches(FinanceTransaction item, Set<String> matchedCategories) {
     final matchesAccount = accountIds.isEmpty ||
         accountIds.contains(item.accountId) ||
-        (item.toAccountId != null && accountIds.contains(item.toAccountId));
+        (item.type == TransactionType.transfer &&
+            accountIds.contains(item.toAccountId));
     final matchesType = types.isEmpty || types.contains(item.type);
     final matchesCategory = categoryIds.isEmpty ||
-        (item.categoryId != null && categoryIds.contains(item.categoryId));
+        (item.categoryId != null &&
+            matchedCategories.contains(item.categoryId));
     return matchesAccount && matchesType && matchesCategory;
   }
 
@@ -1512,6 +1561,10 @@ class _TransactionFilters {
       );
 }
 
+bool _allowsCategory(Set<TransactionType> types, Category category) =>
+    types.isEmpty ||
+    types.any((type) => allowedCategoryTypes(type).contains(category.type));
+
 class _TransactionFilterSheet extends StatefulWidget {
   const _TransactionFilterSheet({
     required this.title,
@@ -1519,13 +1572,15 @@ class _TransactionFilterSheet extends StatefulWidget {
     required this.initial,
     required this.accounts,
     required this.categories,
+    required this.categoryPath,
   });
 
   final String title;
   final Set<_FilterDimension> dimensions;
   final _TransactionFilters initial;
   final Map<String, String> accounts;
-  final Map<String, String> categories;
+  final List<Category> categories;
+  final List<Category> Function(String) categoryPath;
 
   @override
   State<_TransactionFilterSheet> createState() =>
@@ -1536,6 +1591,21 @@ class _TransactionFilterSheetState extends State<_TransactionFilterSheet> {
   late final Set<String> accountIds = {...widget.initial.accountIds};
   late final Set<TransactionType> types = {...widget.initial.types};
   late final Set<String> categoryIds = {...widget.initial.categoryIds};
+
+  @override
+  void didUpdateWidget(_TransactionFilterSheet oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    accountIds.retainWhere(widget.accounts.containsKey);
+    _pruneCategories();
+  }
+
+  void _pruneCategories() {
+    final allowed = widget.categories
+        .where((c) => _allowsCategory(types, c))
+        .map((c) => c.id)
+        .toSet();
+    categoryIds.retainWhere(allowed.contains);
+  }
 
   void _clearVisibleDimensions() {
     setState(() {
@@ -1579,7 +1649,7 @@ class _TransactionFilterSheetState extends State<_TransactionFilterSheet> {
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
               child: Text(
-                '同一项内满足任一选项即可，不同项需同时满足；未勾选表示全部。',
+                '同一项内满足任一选项即可，不同项需同时满足。未勾选表示全部。父类别包含下级类别。',
                 style: textTheme.bodySmall,
               ),
             ),
@@ -1606,12 +1676,23 @@ class _TransactionFilterSheetState extends State<_TransactionFilterSheet> {
                       },
                       selected: types,
                       keyOf: (type) => type.name,
+                      afterChange: _pruneCategories,
                     ),
                   if (widget.dimensions.contains(_FilterDimension.category))
                     ..._section(
                       title: '类别',
                       keyPrefix: 'category',
-                      options: widget.categories,
+                      options: {
+                        for (final category in widget.categories
+                            .where((c) => _allowsCategory(types, c)))
+                          category.id: [
+                            widget
+                                .categoryPath(category.id)
+                                .map((c) => c.name)
+                                .join(' › '),
+                            if (category.isArchived) '已归档',
+                          ].join(' · '),
+                      },
                       selected: categoryIds,
                       keyOf: (id) => id,
                     ),
@@ -1655,6 +1736,7 @@ class _TransactionFilterSheetState extends State<_TransactionFilterSheet> {
     required Map<T, String> options,
     required Set<T> selected,
     required String Function(T value) keyOf,
+    VoidCallback? afterChange,
   }) {
     return [
       Padding(
@@ -1682,6 +1764,7 @@ class _TransactionFilterSheetState extends State<_TransactionFilterSheet> {
             } else {
               selected.remove(entry.key);
             }
+            afterChange?.call();
           }),
         ),
     ];
@@ -2231,18 +2314,12 @@ class _TransactionRow extends StatelessWidget {
             ? palette.income
             : palette.textPrimary;
     final categoryId = item.categoryId;
-    final storedCategory = categoryId == null
+    final category = categoryId == null
         ? _typeName(item.type)
         : repository.categoryName(categoryId);
-    final category = desktop || categoryId == null
-        ? storedCategory
-        : _translatedCategory(storedCategory);
     final title =
         item.merchant ?? item.description ?? (isTransfer ? '账户转账' : category);
-    final storedAccountName = repository.accountName(item.accountId);
-    final accountName = desktop
-        ? storedAccountName
-        : _translatedAccount(storedAccountName, item.accountId);
+    final accountName = repository.accountName(item.accountId);
     final toAccountId = item.toAccountId;
     final mobileAccountLabel = toAccountId == null
         ? accountName
@@ -2526,213 +2603,3 @@ IconData _typeIcon(TransactionType type) => switch (type) {
       TransactionType.transfer => Icons.swap_horiz_rounded,
       TransactionType.adjustment => Icons.tune_rounded,
     };
-
-List<FinanceTransaction> _referenceTransactions(
-  DateTime month,
-  FinanceRepository repository,
-) {
-  String accountId(AccountType type, String fallback) {
-    for (final account in repository.accounts) {
-      if (account.accountType == type) return account.id;
-    }
-    return repository.accounts.isEmpty
-        ? fallback
-        : repository.accounts.first.id;
-  }
-
-  String? categoryId(CategoryType type, String fallback) {
-    final categories = repository.categoriesByType(type);
-    return categories.isEmpty ? fallback : categories.first.id;
-  }
-
-  final cash = accountId(AccountType.cash, 'acc_cash_wallet');
-  final saving = accountId(AccountType.bankSaving, 'acc_maybank');
-  final card = accountId(AccountType.creditCard, 'acc_card');
-  final investment = accountId(AccountType.trading, 'acc_trading');
-  final food = categoryId(CategoryType.expense, 'cat_food');
-  final income = categoryId(CategoryType.income, 'cat_salary');
-  final transfer = categoryId(CategoryType.transfer, 'cat_transfer');
-  final expense = categoryId(CategoryType.expense, 'cat_shopping');
-  DateTime day(int value) => DateTime(month.year, month.month, value);
-
-  return [
-    FinanceTransaction(
-      id: 'reference_salary_1',
-      type: TransactionType.income,
-      accountId: cash,
-      categoryId: income,
-      amount: 8800,
-      currency: 'MYR',
-      transactionDate: day(16),
-      merchant: '薪资收入',
-    ),
-    FinanceTransaction(
-      id: 'reference_grocery',
-      type: TransactionType.expense,
-      accountId: card,
-      categoryId: expense,
-      amount: 156.80,
-      currency: 'MYR',
-      transactionDate: day(16),
-      merchant: '超市购物',
-    ),
-    FinanceTransaction(
-      id: 'reference_lunch',
-      type: TransactionType.expense,
-      accountId: cash,
-      categoryId: food,
-      amount: 18,
-      currency: 'MYR',
-      transactionDate: day(16),
-      merchant: '午餐',
-    ),
-    FinanceTransaction(
-      id: 'reference_fuel',
-      type: TransactionType.expense,
-      accountId: card,
-      categoryId: expense,
-      amount: 120,
-      currency: 'MYR',
-      transactionDate: day(16),
-      merchant: '加油',
-    ),
-    FinanceTransaction(
-      id: 'reference_transfer',
-      type: TransactionType.transfer,
-      accountId: saving,
-      toAccountId: investment,
-      categoryId: transfer,
-      amount: 1000,
-      currency: 'MYR',
-      transactionDate: day(16),
-      merchant: '储蓄账户 → 投资账户',
-    ),
-    FinanceTransaction(
-      id: 'reference_lazada',
-      type: TransactionType.expense,
-      accountId: card,
-      categoryId: expense,
-      amount: 268,
-      currency: 'MYR',
-      transactionDate: day(14),
-      merchant: 'Lazada',
-    ),
-    FinanceTransaction(
-      id: 'reference_mcd',
-      type: TransactionType.expense,
-      accountId: cash,
-      categoryId: food,
-      amount: 18.50,
-      currency: 'MYR',
-      transactionDate: day(14),
-      merchant: '麦当劳',
-    ),
-    FinanceTransaction(
-      id: 'reference_rapid',
-      type: TransactionType.expense,
-      accountId: cash,
-      categoryId: expense,
-      amount: 6.20,
-      currency: 'MYR',
-      transactionDate: day(13),
-      merchant: 'Rapid KL',
-    ),
-    FinanceTransaction(
-      id: 'reference_salary_2',
-      type: TransactionType.income,
-      accountId: saving,
-      categoryId: income,
-      amount: 3660,
-      currency: 'MYR',
-      transactionDate: day(13),
-      merchant: '薪资收入',
-    ),
-    FinanceTransaction(
-      id: 'reference_online',
-      type: TransactionType.expense,
-      accountId: card,
-      categoryId: expense,
-      amount: 289.90,
-      currency: 'MYR',
-      transactionDate: day(12),
-      merchant: '线上购物',
-    ),
-    FinanceTransaction(
-      id: 'reference_fund',
-      type: TransactionType.expense,
-      accountId: investment,
-      categoryId: expense,
-      amount: 500,
-      currency: 'MYR',
-      transactionDate: day(12),
-      merchant: '基金定投',
-    ),
-    FinanceTransaction(
-      id: 'reference_installment',
-      type: TransactionType.expense,
-      accountId: card,
-      categoryId: expense,
-      amount: 120,
-      currency: 'MYR',
-      transactionDate: day(12),
-      merchant: '手机分期（第2期）',
-    ),
-    FinanceTransaction(
-      id: 'reference_housing',
-      type: TransactionType.expense,
-      accountId: saving,
-      categoryId: expense,
-      amount: 4582.60,
-      currency: 'MYR',
-      transactionDate: day(10),
-      merchant: '房租与固定支出',
-    ),
-  ];
-}
-
-String _translatedAccount(String name, String id) {
-  final lower = '$name $id'.toLowerCase();
-  if (lower.contains('card') || lower.contains('credit')) return '主力信用卡 · 1234';
-  if (lower.contains('saving') || lower.contains('maybank')) return '储蓄账户';
-  if (lower.contains('trading') || lower.contains('invest')) return '投资账户';
-  if (lower.contains('wallet') || lower.contains('cash')) return '现金账户';
-  return name;
-}
-
-String _translatedCategory(String name) {
-  final lower = name.toLowerCase();
-  if (lower.contains('food')) return '餐饮';
-  if (lower.contains('transport')) return '交通';
-  if (lower.contains('shopping')) return '购物';
-  if (lower.contains('salary')) return '工资';
-  if (lower.contains('transfer')) return '转账';
-  if (lower.contains('invest')) return '投资';
-  if (lower.contains('housing')) return '住房';
-  return name;
-}
-
-List<FinanceTransaction> _quickDrafts(FinanceRepository repository) {
-  if (repository.transactionTemplates.isNotEmpty) {
-    final now = DateTime.now();
-    return repository.transactionTemplates
-        .map(
-          (item) => FinanceTransaction(
-            id: 'draft_${item.id}',
-            type: item.type,
-            accountId: item.accountId,
-            toAccountId: item.toAccountId,
-            categoryId: item.categoryId,
-            amount: item.amount,
-            currency: item.currency,
-            toAmount: item.toAmount,
-            toCurrency: item.toCurrency,
-            transactionDate: now,
-            status: item.status,
-            merchant: item.name,
-            description: item.description,
-          ),
-        )
-        .toList();
-  }
-  return const [];
-}

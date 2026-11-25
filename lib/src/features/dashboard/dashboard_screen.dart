@@ -12,6 +12,7 @@ import '../../core/utils/month_range.dart';
 import '../shared/screen_header.dart';
 import '../shared/section_card.dart';
 
+/// Legacy layout retained for compatibility; the active UI uses DashboardV2Screen.
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key, required this.repository});
 
@@ -197,7 +198,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final futureExpenseReserve = repository.totalFutureExpense(monthsAhead: 3);
     final futureMonthlySummaries = repository.futureExpenseSummaries(months: 3);
     final upcomingExpenses = repository.upcomingExpenseTransactions();
-    final forecast = _forecastFromSummaries(monthlySummaries, repository);
+    final forecast = repository.forecastSummary(asOf: now);
     final cashFlowProjection = repository.futureCashFlowProjection(months: 6);
     final creditReminders = repository.creditCardPaymentReminders();
     final activeQuickRange = _activeQuickRangeLabel(now);
@@ -339,6 +340,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 },
               ),
               const SizedBox(height: 12),
+              if (!repository.budgetMonthIsValued(activeBudgetMonth))
+                const Text('部分预算或支出缺少汇率，以下合计仅含已估值金额。'),
               Text(
                 '总支出 / 总预算: ${formatMoney(totalBudgetExpense)} / ${formatMoney(totalBudget)}',
               ),
@@ -357,14 +360,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   budget,
                   activeBudgetMonth,
                 );
-                final spent = repository.expenseTotalForCategory(
-                  budget.categoryId,
-                  activeBudgetMonth,
-                );
-                final planned = repository.plannedExpenseTotalForCategory(
-                  budget.categoryId,
-                  activeBudgetMonth,
-                );
+                final usage = repository.budgetUsageFor(
+                    budget.categoryId, activeBudgetMonth);
+                if (!repository.budgetLimitIsValued(
+                        budget.categoryId, activeBudgetMonth) ||
+                    !usage.actualValued ||
+                    !usage.plannedValued) {
+                  return Text(
+                      '${repository.categoryName(budget.categoryId)} · 预算进度未估值');
+                }
+                final spent = usage.actual;
+                final planned = usage.planned;
                 final ratio =
                     effectiveBudget == 0 ? 0.0 : spent / effectiveBudget;
                 final color = ratio > 1
@@ -573,14 +579,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
       budget,
       monthKey,
     );
-    if (effectiveBudget <= 0) {
+    final usage = repository.budgetUsageFor(budget.categoryId, monthKey);
+    if (effectiveBudget <= 0 ||
+        !usage.actualValued ||
+        !repository.budgetLimitIsValued(budget.categoryId, monthKey)) {
       return 0;
     }
-    final spent = repository.expenseTotalForCategory(
-      budget.categoryId,
-      monthKey,
-    );
-    return spent / effectiveBudget;
+    return usage.actual / effectiveBudget;
   }
 
   DateTime _resolvePeriodStart(DateTime anchorMonth) {
@@ -633,44 +638,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     DateTime endDate,
   ) {
     return repository.accountBalanceAtBase(account.id, endDate);
-  }
-
-  ForecastSummary _forecastFromSummaries(
-    List<MonthlySummary> summaries,
-    FinanceRepository repository,
-  ) {
-    final activeSummaries = summaries
-        .where((item) => item.income != 0 || item.expense != 0)
-        .toList();
-    if (activeSummaries.isEmpty) {
-      return const ForecastSummary(
-        averageMonthlyIncome: 0,
-        averageMonthlyExpense: 0,
-        averageMonthlySavings: 0,
-        projectedSavingsInThreeMonths: 0,
-        projectedSavingsInSixMonths: 0,
-      );
-    }
-
-    final averageIncome =
-        activeSummaries.fold<double>(0, (sum, item) => sum + item.income) /
-            activeSummaries.length;
-    final averageExpense =
-        activeSummaries.fold<double>(0, (sum, item) => sum + item.expense) /
-            activeSummaries.length;
-    final averageSavings = averageIncome - averageExpense;
-    final currentBase = repository.totalAssetsByGroup(ReportGroup.cash) +
-        repository.totalAssetsByGroup(ReportGroup.investment) +
-        repository.totalAssetsByGroup(ReportGroup.retirement) +
-        repository.totalAssetsByGroup(ReportGroup.credit);
-
-    return ForecastSummary(
-      averageMonthlyIncome: averageIncome,
-      averageMonthlyExpense: averageExpense,
-      averageMonthlySavings: averageSavings,
-      projectedSavingsInThreeMonths: currentBase + (averageSavings * 3),
-      projectedSavingsInSixMonths: currentBase + (averageSavings * 6),
-    );
   }
 
   String _typeLabel(TransactionType type) {
@@ -1110,7 +1077,7 @@ class _CashFlowProjectionView extends StatelessWidget {
               SizedBox(width: 64, child: Text(monthLabel(point.monthKey))),
               Expanded(
                 child: Text(
-                  '收 ${formatMoney(point.income)} · 支 ${formatMoney(point.expense)}',
+                  '收 ${formatMoney(point.income)} · 支 ${formatMoney(point.expense)} · 转账净额 ${formatMoney(point.transfers)}',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ),

@@ -23,13 +23,12 @@ const _netWorthHelp = '净资产按基础币汇总各账户的余额，包含负
 const _cashFlowHelp = '统计现金账户的实际收付。信用卡和贷款还款按全额计入，'
     '刷卡消费在还款前不算现金流出，预计交易不计入。';
 const _spendingHelp = '按交易发生日统计已分类支出，包含刷卡消费，'
-    '不含预计交易。占比以期间内全部已分类支出为分母。';
+    '按一级分类汇总后代，净退款单列为负数。占比按正净支出分类计算，不含预计交易。';
 const _assetHelp = '环形图按基础币汇总现金、投资和退休账户的正余额。'
-    '信用卡及贷款负债、信用卡溢缴款单独列示，不计入圆环。';
+    '溢付余额计入总资产，信用卡溢缴款单独列示。负债包含透支及信用卡、贷款欠款。';
 const _budgetHelp = '已用比例包含本月实际支出与预计支出。'
     '进度条的实色段代表实际支出，斜纹段代表预计支出。';
-const _investmentHelp = '市值与剩余成本按基础币汇总。'
-    '只有剩余成本大于零时，才显示未实现盈亏和收益率。';
+const _investmentHelp = '资金净收益等于月末市值减净投入。净投入大于零时按净投入计算收益率。';
 
 /// Self-contained report overview.
 ///
@@ -73,8 +72,9 @@ class _ReportsV2ScreenState extends State<ReportsV2Screen> {
     final asOfLabel = '截至 ${cutoff.month}月${cutoff.day}日（本月末）';
 
     final hasAccounts = repository.accounts.isNotEmpty;
-    final netWorth = repository.totalAssets();
-    final allHistory = repository.totalAssetHistory();
+    final sheet = repository.balanceSheetAt(cutoff);
+    final netWorth = sheet.netWorth;
+    final allHistory = repository.totalAssetHistory(cutoffDate: cutoff);
     final firstHistoryDate = allHistory.isEmpty ? now : allHistory.first.date;
     final rangeStart = switch (range) {
       _ReportOverviewRange.yearToDate => DateTime(now.year, 1, 1),
@@ -119,36 +119,38 @@ class _ReportsV2ScreenState extends State<ReportsV2Screen> {
         ? '${(cashFlow.net / cashFlow.inflow * 100).toStringAsFixed(0)}%'
         : '—';
     final averageMonthlyNet = cashFlow.net / monthKeys.length;
-    final rankedExpenses = repository
-        .categoryTotalsForMonths(
-          type: CategoryType.expense,
-          monthKeys: monthKeys,
-        )
-        .entries
-        .where((entry) => entry.value > 0)
-        .toList()
-      ..sort((a, b) {
+    final breakdown =
+        repository.categoryReports.read(CategoryType.expense, monthKeys);
+    final rankedExpenses = [
+      for (final id in breakdown.roots)
+        if (breakdown.subtree[id]!.pricedActualCount > 0)
+          MapEntry(id, breakdown.subtree[id]!.actual),
+    ]..sort((a, b) {
         final byAmount = b.value.compareTo(a.value);
-        return byAmount != 0
-            ? byAmount
-            : repository
-                .categoryName(a.key)
-                .compareTo(repository.categoryName(b.key));
+        if (byAmount != 0) return byAmount;
+        final byName = repository
+            .categoryName(a.key)
+            .compareTo(repository.categoryName(b.key));
+        return byName != 0 ? byName : a.key.compareTo(b.key);
       });
     final expenseTotal =
-        rankedExpenses.fold<double>(0, (sum, entry) => sum + entry.value);
-    final maxExpenseAmount =
-        rankedExpenses.isEmpty ? 0.0 : rankedExpenses.first.value;
+        rankedExpenses.fold(0.0, (double sum, e) => sum + e.value);
+    final positiveExpenseTotal = rankedExpenses.fold(
+        0.0, (double sum, e) => sum + math.max(0.0, e.value));
+    final maxExpenseAmount = rankedExpenses.fold(
+        0.0, (double maxAmount, e) => math.max(maxAmount, e.value.abs()));
+    final unclassified = breakdown.direct[null];
+    final unclassifiedActual =
+        unclassified != null && unclassified.pricedActualCount > 0
+            ? unclassified.actual
+            : null;
 
-    double positiveBalance(ReportGroup group) =>
-        repository.displayTotalAssetsByGroup(group, positiveOnly: true);
-    final cash = positiveBalance(ReportGroup.cash);
-    final investment = positiveBalance(ReportGroup.investment);
-    final retirement = positiveBalance(ReportGroup.retirement);
-    final liabilities = repository.accountLiabilities();
-    final debt = liabilities.credit + liabilities.loans;
-    final cardCredit = repository.totalCreditCardCredit();
-    final positiveTotal = cash + investment + retirement;
+    final cash = sheet.assetsIn(ReportGroup.cash);
+    final investment = sheet.assetsIn(ReportGroup.investment);
+    final retirement = sheet.assetsIn(ReportGroup.retirement);
+    final debt = sheet.liabilities;
+    final cardCredit = sheet.cardCredit;
+    final positiveTotal = sheet.assets;
     final hasComposition = positiveTotal > 0 || debt > 0 || cardCredit > 0;
     final budget = repository.totalEffectiveBudgetForMonth(currentMonthKey);
     final budgetActual = repository.totalBudgetExpenseForMonth(currentMonthKey);
@@ -181,6 +183,8 @@ class _ReportsV2ScreenState extends State<ReportsV2Screen> {
             ' · ${monthKeys.length} 个月';
     final shareText = [
       'Finance Compass 报表 · $rangeLabel（$periodLabel）',
+      if (repository.unpricedCurrencies.isNotEmpty)
+        '未计入缺少汇率的金额：${repository.unpricedCurrencies.join('、')}',
       '月末净资产 ${_money(netWorth)}（${cutoff.month}月${cutoff.day}日）',
       '$rangeLabel净资产变化 ${_changeAmount(growth)}',
       hasCashFlow
@@ -213,12 +217,16 @@ class _ReportsV2ScreenState extends State<ReportsV2Screen> {
       averageMonthlyNet: averageMonthlyNet,
       rankedExpenses: rankedExpenses,
       expenseTotal: expenseTotal,
+      positiveExpenseTotal: positiveExpenseTotal,
+      unclassifiedActual: unclassifiedActual,
+      unpricedExpenses: breakdown.all.unpricedActual,
       maxExpenseAmount: maxExpenseAmount,
       cash: cash,
       investment: investment,
       retirement: retirement,
       debt: debt,
       cardCredit: cardCredit,
+      loanCredit: sheet.loanCredit,
       positiveTotal: positiveTotal,
       hasComposition: hasComposition,
       budget: budget,
@@ -364,6 +372,7 @@ class _ReportsV2ScreenState extends State<ReportsV2Screen> {
               currency: repository.baseCurrency,
               decimals: 0,
             ),
+            key: const Key('reports-net-worth'),
             style: TextStyle(
               color: netWorth < 0
                   ? financePaletteOf(context).expense
@@ -538,7 +547,9 @@ class _ReportsV2ScreenState extends State<ReportsV2Screen> {
       helpLabel: '支出分类排行',
       helpMessage: _spendingHelp,
     );
-    Widget spendContent({required bool wide}) => displayedExpenses.isEmpty
+    Widget spendContent({required bool wide}) => displayedExpenses.isEmpty &&
+            data.unclassifiedActual == null &&
+            data.unpricedExpenses.isEmpty
         ? Text(
             '所选期间没有已分类支出',
             style: textTheme.bodySmall,
@@ -554,9 +565,11 @@ class _ReportsV2ScreenState extends State<ReportsV2Screen> {
                   amount: displayedExpenses[index].value,
                   currency: repository.baseCurrency,
                   maxAmount: maxExpenseAmount,
-                  share: expenseTotal <= 0
-                      ? 0.0
-                      : displayedExpenses[index].value / expenseTotal,
+                  share: displayedExpenses[index].value <= 0 ||
+                          data.positiveExpenseTotal <= 0
+                      ? null
+                      : displayedExpenses[index].value /
+                          data.positiveExpenseTotal,
                   wide: wide,
                 ),
               const SizedBox(height: 6),
@@ -567,13 +580,25 @@ class _ReportsV2ScreenState extends State<ReportsV2Screen> {
                 runSpacing: 4,
                 children: [
                   Text(
-                    '已分类支出合计 ${_money(expenseTotal)}'
-                    '${rankedExpenses.length > 5 ? ' · 共 ${rankedExpenses.length} 个分类' : ''}',
+                    data.unpricedExpenses.isNotEmpty && rankedExpenses.isEmpty
+                        ? '已分类支出暂无可折算金额'
+                        : '已分类支出合计 ${_money(expenseTotal)}'
+                            '${data.unpricedExpenses.isEmpty ? '' : '（部分折算）'}'
+                            '${rankedExpenses.length > 5 ? ' · 共 ${rankedExpenses.length} 个分类' : ''}',
                     key: const Key('reports-category-total'),
                     style: textTheme.bodySmall?.copyWith(
                       fontFeatures: compassTabularFigures,
                     ),
                   ),
+                  for (final entry in data.unpricedExpenses.entries)
+                    Text(
+                        '未折算 ${compassMoney(entry.value, currency: entry.key)}'),
+                  if (data.unclassifiedActual case final unclassified?) ...[
+                    Text('未分类支出 ${_money(unclassified)}',
+                        key: const Key('reports-unclassified-total')),
+                    Text('支出净额 ${_money(expenseTotal + unclassified)}',
+                        key: const Key('reports-all-expense-total')),
+                  ],
                   if (rankedExpenses.length > 5)
                     TextButton(
                       key: const Key('reports-toggle-all-categories'),
@@ -614,6 +639,11 @@ class _ReportsV2ScreenState extends State<ReportsV2Screen> {
                   label: '投资', value: investment, color: assetColors[2]),
               FinanceDonutSlice(
                   label: '退休', value: retirement, color: assetColors[1]),
+              if (cardCredit + data.loanCredit > 0)
+                FinanceDonutSlice(
+                    label: '溢付余额',
+                    value: cardCredit + data.loanCredit,
+                    color: financePaletteOf(context).income),
             ],
             footer: Wrap(
               alignment: WrapAlignment.spaceBetween,
@@ -661,62 +691,71 @@ class _ReportsV2ScreenState extends State<ReportsV2Screen> {
     );
     final budgetActualRatio = budget <= 0 ? 0.0 : budgetActual / budget;
     final budgetPlannedRatio = budget <= 0 ? 0.0 : budgetPlanned / budget;
-    final budgetContent = budget <= 0
+    final budgetPriced = repository.budgetMonthIsValued(currentMonthKey);
+    final hasBudget =
+        repository.activeBudgetsForMonth(currentMonthKey).isNotEmpty;
+    final budgetContent = !hasBudget
         ? Text('本月尚未设置预算', style: textTheme.bodySmall)
-        : Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
+        : !budgetPriced
+            ? Text(
+                '缺少汇率，预算进度未估值（已折算预算 ${_money(budget)}，已折算占用 ${_money(budgetUsed)}）',
+                style: textTheme.bodySmall)
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                    child: Text(
-                      '已用（含预计交易）',
-                      style: textTheme.titleSmall,
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '已用（含预计交易）',
+                          style: textTheme.titleSmall,
+                        ),
+                      ),
+                      Text(
+                        budget <= 0
+                            ? '—'
+                            : '${(budgetRate * 100).toStringAsFixed(0)}%',
+                        key: const Key('reports-budget-rate'),
+                        style: TextStyle(
+                          color: budgetRate > 1.0
+                              ? financePaletteOf(context).expense
+                              : budgetRate >= .8
+                                  ? financePaletteOf(context).warning
+                                  : financePaletteOf(context).income,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w700,
+                          fontFeatures: compassTabularFigures,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  CompassDualProgressBar(
+                    actualRatio: budgetActualRatio,
+                    plannedRatio: budgetPlannedRatio,
+                    alertThreshold: 0.8,
+                    height: 8,
+                    semanticsLabel: '本月总体预算进度',
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    '已用 ${_money(budgetUsed)} / 预算 ${_money(budget)}',
+                    style: textTheme.bodySmall?.copyWith(
+                      fontFeatures: compassTabularFigures,
                     ),
                   ),
                   Text(
-                    '${(budgetRate * 100).toStringAsFixed(0)}%',
-                    key: const Key('reports-budget-rate'),
-                    style: TextStyle(
-                      color: budgetRate > 1.0
+                    '其中预计 ${_money(budgetPlanned)} · '
+                    '${budgetRemaining >= 0 ? '剩余 ${_money(budgetRemaining)}' : '超支 ${_money(-budgetRemaining)}'}',
+                    style: textTheme.bodySmall?.copyWith(
+                      color: budgetRemaining < 0
                           ? financePaletteOf(context).expense
-                          : budgetRate >= .8
-                              ? financePaletteOf(context).warning
-                              : financePaletteOf(context).income,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
+                          : null,
                       fontFeatures: compassTabularFigures,
                     ),
                   ),
                 ],
-              ),
-              const SizedBox(height: 10),
-              CompassDualProgressBar(
-                actualRatio: budgetActualRatio,
-                plannedRatio: budgetPlannedRatio,
-                alertThreshold: 0.8,
-                height: 8,
-                semanticsLabel: '本月总体预算进度',
-              ),
-              const SizedBox(height: 10),
-              Text(
-                '已用 ${_money(budgetUsed)} / 预算 ${_money(budget)}',
-                style: textTheme.bodySmall?.copyWith(
-                  fontFeatures: compassTabularFigures,
-                ),
-              ),
-              Text(
-                '其中预计 ${_money(budgetPlanned)} · '
-                '${budgetRemaining >= 0 ? '剩余 ${_money(budgetRemaining)}' : '超支 ${_money(-budgetRemaining)}'}',
-                style: textTheme.bodySmall?.copyWith(
-                  color: budgetRemaining < 0
-                      ? financePaletteOf(context).expense
-                      : null,
-                  fontFeatures: compassTabularFigures,
-                ),
-              ),
-            ],
-          );
+              );
     final investmentHeading = _SectionHeader(
       title: '投资与退休账户',
       scope: asOfLabel,
@@ -737,18 +776,16 @@ class _ReportsV2ScreenState extends State<ReportsV2Screen> {
                   ),
                   Expanded(
                     child: _Metric(
-                      label: '剩余成本',
-                      value: hasCost ? _money(remainingCost) : '—',
+                      label: '净投入',
+                      value: _money(remainingCost),
                     ),
                   ),
                   Expanded(
                     child: _Metric(
-                      label: '未实现盈亏',
-                      value: hasCost ? _changeAmount(unrealizedPnl) : '—',
+                      label: '资金净收益',
+                      value: _changeAmount(unrealizedPnl),
                       valueKey: const Key('reports-investment-pnl'),
-                      color: hasCost
-                          ? _signColor(context, unrealizedPnl)
-                          : financePaletteOf(context).textMuted,
+                      color: _signColor(context, unrealizedPnl),
                     ),
                   ),
                 ],
@@ -756,8 +793,8 @@ class _ReportsV2ScreenState extends State<ReportsV2Screen> {
               const SizedBox(height: 10),
               Text(
                 hasCost
-                    ? '未实现收益率 ${_signedPercent(unrealizedPnl / remainingCost)}'
-                    : '尚无成本数据',
+                    ? '资金收益率 ${_signedPercent(unrealizedPnl / remainingCost)}'
+                    : '净投入不大于零，收益率不适用',
                 style: textTheme.bodySmall?.copyWith(
                   fontFeatures: compassTabularFigures,
                 ),
@@ -1061,14 +1098,14 @@ class _CategoryRankRow extends StatelessWidget {
   final double amount;
   final String currency;
   final double maxAmount;
-  final double share;
+  final double? share;
   final bool wide;
 
   @override
   Widget build(BuildContext context) {
     final palette = financePaletteOf(context);
     final barRatio =
-        maxAmount <= 0 ? 0.0 : (amount / maxAmount).clamp(0.0, 1.0);
+        maxAmount <= 0 ? 0.0 : (amount.abs() / maxAmount).clamp(0.0, 1.0);
     final amountLabel = Text(
       compassMoney(amount, currency: currency),
       key: Key('reports-category-$index-amount'),
@@ -1116,7 +1153,8 @@ class _CategoryRankRow extends StatelessWidget {
                             actualRatio: barRatio,
                             alertThreshold: 1.0,
                             height: 6,
-                            actualColor: palette.seed,
+                            actualColor:
+                                amount < 0 ? palette.income : palette.seed,
                           ),
                         ),
                       ),
@@ -1154,7 +1192,7 @@ class _CategoryRankRow extends StatelessWidget {
               SizedBox(
                 width: wide ? _expenseShareColumnWidth : 52,
                 child: Text(
-                  '${(share * 100).toStringAsFixed(1)}%',
+                  share == null ? '—' : '${(share! * 100).toStringAsFixed(1)}%',
                   textAlign: TextAlign.right,
                   style: TextStyle(
                     color: palette.textMuted,
@@ -1172,7 +1210,7 @@ class _CategoryRankRow extends StatelessWidget {
                 actualRatio: barRatio,
                 alertThreshold: 1.0,
                 height: 4,
-                actualColor: palette.seed,
+                actualColor: amount < 0 ? palette.income : palette.seed,
               ),
             ),
         ],
@@ -1494,12 +1532,16 @@ class _ReportsViewData {
     required this.averageMonthlyNet,
     required this.rankedExpenses,
     required this.expenseTotal,
+    required this.positiveExpenseTotal,
+    required this.unclassifiedActual,
+    required this.unpricedExpenses,
     required this.maxExpenseAmount,
     required this.cash,
     required this.investment,
     required this.retirement,
     required this.debt,
     required this.cardCredit,
+    required this.loanCredit,
     required this.positiveTotal,
     required this.hasComposition,
     required this.budget,
@@ -1540,12 +1582,16 @@ class _ReportsViewData {
   final double averageMonthlyNet;
   final List<MapEntry<String, double>> rankedExpenses;
   final double expenseTotal;
+  final double positiveExpenseTotal;
+  final double? unclassifiedActual;
+  final Map<String, double> unpricedExpenses;
   final double maxExpenseAmount;
   final double cash;
   final double investment;
   final double retirement;
   final double debt;
   final double cardCredit;
+  final double loanCredit;
   final double positiveTotal;
   final bool hasComposition;
   final double budget;

@@ -8,6 +8,132 @@ import 'package:finance_app/src/core/models/transaction.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('opening capital, refund, withdrawals and self-transfer use signed legs',
+      () async {
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    var repo = await FinanceRepository.load(db);
+    for (final account in [
+      const Account(
+          id: 'fund',
+          name: '投资',
+          accountType: AccountType.trading,
+          reportGroup: ReportGroup.investment,
+          currency: 'MYR',
+          initialBalance: 100,
+          currentBalance: 100),
+      const Account(
+          id: 'bank',
+          name: '银行',
+          accountType: AccountType.bankSaving,
+          reportGroup: ReportGroup.cash,
+          currency: 'MYR',
+          currentBalance: 0),
+    ]) {
+      repo = await repo.addAccount(account);
+    }
+    final date = DateTime(2026, 1, 8);
+    final opening = repo.investmentValuationAt('fund', date);
+    expect(opening.marketValue, 100);
+    expect(opening.cumulativeCost, 100);
+    expect(opening.netInvestment, 100);
+    expect(opening.gain, 0);
+    repo = await repo.addTransactions([
+      FinanceTransaction(
+          id: 'income',
+          type: TransactionType.income,
+          accountId: 'fund',
+          amount: 60,
+          currency: 'MYR',
+          transactionDate: date),
+      FinanceTransaction(
+          id: 'withdraw',
+          type: TransactionType.transfer,
+          accountId: 'fund',
+          toAccountId: 'bank',
+          amount: 130,
+          currency: 'MYR',
+          transactionDate: date),
+    ]);
+    // Some old exports contain both legs in one account. They net to zero and
+    // must not inflate gross capital. New forms need not offer this operation.
+    final self = FinanceTransaction(
+        id: 'self',
+        type: TransactionType.transfer,
+        accountId: 'fund',
+        toAccountId: 'fund',
+        amount: 80,
+        currency: 'MYR',
+        transactionDate: date);
+    expect(repo.transactionDeltaForAccount('fund', self), 0);
+    final unequalLegs = FinanceTransaction(
+      id: 'legacy-self',
+      type: TransactionType.transfer,
+      accountId: 'fund',
+      toAccountId: 'fund',
+      amount: 80,
+      toAmount: 75,
+      currency: 'MYR',
+      transactionDate: date,
+    );
+    expect(repo.transactionDeltaForAccount('fund', unequalLegs), -5);
+    final value = repo.investmentValuationAt('fund', date);
+    expect(repo.snapshotsForAccount('fund'), isEmpty);
+    expect(value.marketValue, 30);
+    expect(value.cashBalance, 30);
+    expect(value.cumulativeCost, 100);
+    expect(value.netInvestment, -30);
+    expect(value.gain, 60);
+    expect(value.returnRatio, isNull);
+    expect(repo.accountBalanceTrace('fund', date).endingBalance,
+        value.marketValue);
+  });
+
+  test(
+      'a draft observation uses its own point and the first cost by date and ID',
+      () async {
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    var repo = await FinanceRepository.load(db);
+    repo = await repo.addAccount(const Account(
+        id: 'fund',
+        name: '投资',
+        accountType: AccountType.trading,
+        reportGroup: ReportGroup.investment,
+        currency: 'MYR',
+        initialBalance: 50,
+        currentBalance: 50));
+    final date = DateTime(2026, 2, 1);
+    final b = AssetSnapshot(
+        id: 'b',
+        accountId: 'fund',
+        snapshotDate: date,
+        marketValue: 120,
+        cashBalance: 25,
+        costBasis: 90);
+    final a = AssetSnapshot(
+        id: 'a',
+        accountId: 'fund',
+        snapshotDate: date,
+        marketValue: 100,
+        cashBalance: 10,
+        costBasis: 80);
+    repo = await repo.addAssetSnapshot(b);
+    expect(repo.snapshotSetsCostBaseline(a), isTrue);
+    repo = await repo.addAssetSnapshot(a);
+    expect(repo.snapshotSetsCostBaseline(b), isFalse);
+    expect(repo.accountBalanceAt('fund', date), 120);
+    expect(repo.snapshotValuation(b).cumulativeCost, 80);
+    expect(repo.snapshotValuation(b).gain, 40);
+    expect(repo.snapshotValuation(a).marketValue, 100);
+    expect(repo.snapshotValuation(a).cashBalance, 10);
+    expect(repo.snapshotValuation(a).gain, 20);
+    expect(repo.snapshotValuation(a).returnRatio, .25);
+    final earlier = DateTime(2026, 1);
+    expect(repo.suggestedSnapshotBaseline('fund', earlier), 50);
+    expect(repo.investmentValuationAt('fund', earlier).cumulativeCost, 50);
+  });
+
   test('withdrawal reduces remaining cost without creating a false loss',
       () async {
     final database = AppDatabase.forTesting(NativeDatabase.memory());
@@ -127,10 +253,10 @@ void main() {
       transactionDate: DateTime(2026, 1, 5),
     ));
 
-    expect(repository.firstSnapshotForAccount('investment')!.costBasis, 600);
+    expect(repository.firstSnapshotForAccount('investment')!.costBasis, 800);
     expect(
         repository.remainingCostBasisForAccount('investment',
             upToDate: DateTime(2026, 1, 31)),
-        600);
+        800);
   });
 }

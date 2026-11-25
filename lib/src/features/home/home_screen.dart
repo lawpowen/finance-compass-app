@@ -16,6 +16,7 @@ import '../dashboard/dashboard_v2_screen.dart';
 import '../reports/reports_v2_screen.dart';
 import '../shared/compass_loading.dart';
 import '../shared/compass_ui.dart';
+import '../settings/settings_screen.dart';
 import '../settings/settings_v2_screen.dart';
 import '../transactions/transactions_v2_screen.dart';
 
@@ -95,6 +96,31 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   final List<Widget?> _cachedTabScreens =
       List<Widget?>.filled(_destinations.length, null);
 
+  int? _rateEditorTab;
+
+  Future<void> _openRateEditor(FinanceRepository repository) async {
+    if (_rateEditorTab case final int openTab) {
+      if (openTab != selectedIndex) _selectDestination(openTab);
+      return;
+    }
+    final navigator = _navigation._keys[selectedIndex].currentState;
+    if (navigator == null) return;
+    setState(() => _rateEditorTab = selectedIndex);
+    try {
+      await navigator.push<void>(MaterialPageRoute(
+        builder: (_) => Scaffold(
+          appBar: AppBar(title: const Text('编辑货币与汇率')),
+          body: SettingsScreen(
+            repository: repository,
+            settingsController: widget.settingsController,
+          ),
+        ),
+      ));
+    } finally {
+      if (mounted) setState(() => _rateEditorTab = null);
+    }
+  }
+
   Widget _tabScreenFor(int index, FinanceRepository repository, bool syncing) {
     return _cachedTabScreens[index] ??= switch (index) {
       0 => DashboardV2Screen(
@@ -160,6 +186,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         ),
       ),
       data: (repository) {
+        final unpriced = repository.unpricedCurrencies;
         final reducedMotion = MediaQuery.disableAnimationsOf(context);
         final reveal = _showedLoading && !_openedWorkspace && !reducedMotion;
         _openedWorkspace = true;
@@ -198,36 +225,69 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   child: SizedBox(
                     width: desktop ? _workspaceMaxWidth : double.infinity,
                     height: double.infinity,
-                    child: TweenAnimationBuilder<double>(
-                      tween: Tween(begin: reveal ? 0.0 : 1.0, end: 1.0),
-                      duration: const Duration(milliseconds: 240),
-                      curve: Curves.easeOut,
-                      builder: (context, progress, child) {
-                        final opacity = reducedMotion ? 1.0 : progress;
-                        return Opacity(
-                          opacity: opacity,
-                          alwaysIncludeSemantics: true,
-                          child: Transform.translate(
-                            offset: Offset(0, 3 * (1 - opacity)),
-                            child: child,
+                    child: Column(children: [
+                      if (unpriced.isNotEmpty)
+                        Material(
+                          key: const Key('missing-exchange-rates'),
+                          color: Theme.of(context)
+                              .colorScheme
+                              .surfaceContainerHigh,
+                          child: Padding(
+                            padding: const EdgeInsetsDirectional.only(
+                                start: 16, end: 8),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                    child: Text(
+                                  "${unpriced.take(3).join('、')}${unpriced.length > 3 ? ' 等 ${unpriced.length} 种币种' : ''} 未估值，合计仅含有汇率的金额。",
+                                  maxLines: 3,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                )),
+                                TextButton(
+                                  onPressed: _rateEditorTab == selectedIndex
+                                      ? null
+                                      : () => _openRateEditor(repository),
+                                  child: const Text('设置汇率'),
+                                ),
+                              ],
+                            ),
                           ),
-                        );
-                      },
-                      child: IndexedStack(
-                        index: selectedIndex,
-                        children: [
-                          for (var i = 0; i < _destinations.length; i++)
-                            if (_openedTabs.contains(i))
-                              _WorkspaceTab(
-                                navigatorKey: _navigation._keys[i],
-                                active: selectedIndex == i,
-                                child: _tabScreenFor(i, repository, syncing),
-                              )
-                            else
-                              const SizedBox.shrink(),
-                        ],
+                        ),
+                      Expanded(
+                        child: TweenAnimationBuilder<double>(
+                          tween: Tween(begin: reveal ? 0.0 : 1.0, end: 1.0),
+                          duration: const Duration(milliseconds: 240),
+                          curve: Curves.easeOut,
+                          builder: (context, progress, child) {
+                            final opacity = reducedMotion ? 1.0 : progress;
+                            return Opacity(
+                              opacity: opacity,
+                              alwaysIncludeSemantics: true,
+                              child: Transform.translate(
+                                offset: Offset(0, 3 * (1 - opacity)),
+                                child: child,
+                              ),
+                            );
+                          },
+                          child: IndexedStack(
+                            index: selectedIndex,
+                            children: [
+                              for (var i = 0; i < _destinations.length; i++)
+                                if (_openedTabs.contains(i))
+                                  _WorkspaceTab(
+                                    navigatorKey: _navigation._keys[i],
+                                    active: selectedIndex == i,
+                                    child:
+                                        _tabScreenFor(i, repository, syncing),
+                                  )
+                                else
+                                  const SizedBox.shrink(),
+                            ],
+                          ),
+                        ),
                       ),
-                    ),
+                    ]),
                   ),
                 ),
               ),

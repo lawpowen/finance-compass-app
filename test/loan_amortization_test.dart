@@ -97,6 +97,76 @@ void main() {
       expect(result.installments.last.remainingPrincipal, 0);
     });
 
+    test('600 flat-rate payments allocate exactly 100000 cents over the term',
+        () {
+      final result = calculateLoanAmortization(
+        principal: 1000,
+        annualInterestRatePercent: 0,
+        termMonths: 600,
+        startDate: DateTime(2026, 1, 31),
+        paymentDay: 31,
+        method: LoanRepaymentMethod.flatRate,
+      );
+      final rows = result.installments;
+      expect(rows, hasLength(600));
+      expect(rows.take(3).map((i) => i.principal), [1.66, 1.67, 1.67]);
+      expect(rows[598].remainingPrincipal, 1.67);
+      expect(rows.last.remainingPrincipal, 0);
+      expect(
+          rows.fold<int>(0, (s, i) => s + (i.principal * 100).round()), 100000);
+      expect(result.totalPayment, 1000);
+    });
+
+    test('flat-rate quoted and midstream plans reconcile cents in every row',
+        () {
+      for (final opening in [1000.01, 12.34]) {
+        final result = calculateLoanAmortization(
+          principal: 1000.01,
+          openingPrincipal: opening,
+          annualInterestRatePercent: 3.875,
+          termMonths: 600,
+          startDate: DateTime(2026, 6, 30),
+          paymentDay: 31,
+          method: LoanRepaymentMethod.flatRate,
+          quotedMonthlyPayment: 4.6,
+        );
+        final rows = result.installments;
+        var balance = (opening * 100).round();
+        var interest = 0;
+        for (final row in rows) {
+          final principalCents = (row.principal * 100).round();
+          final interestCents = (row.interest * 100).round();
+          expect(principalCents, inInclusiveRange(0, balance));
+          expect((row.payment * 100).round(), principalCents + interestCents);
+          balance -= principalCents;
+          interest += interestCents;
+          expect((row.remainingPrincipal * 100).round(), balance);
+        }
+        expect(balance, 0);
+        expect(rows.first.dueDate, DateTime(2026, 7, 31));
+        expect(interest, 193752 * rows.length ~/ 600);
+        if (opening == 1000.01) {
+          expect(rows, hasLength(600));
+        } else {
+          expect(rows.length, lessThan(600));
+        }
+      }
+    });
+
+    test('flat-rate interest rounds a half cent once for the whole contract',
+        () {
+      final result = calculateLoanAmortization(
+          principal: 1,
+          annualInterestRatePercent: 6,
+          termMonths: 1,
+          startDate: DateTime(2026),
+          paymentDay: 1,
+          method: LoanRepaymentMethod.flatRate);
+      expect(result.installments.single.principal, 1);
+      expect(result.totalInterest, .01);
+      expect(result.totalPayment, 1.01);
+    });
+
     test('midstream reducing-balance loan starts from reported balance', () {
       final result = calculateLoanAmortization(
         principal: 120000,
@@ -116,6 +186,23 @@ void main() {
       expect(result.installments.last.payment, 1055.44);
       expect(result.totalInterest, 3654.44);
       expect(result.totalPayment, 74751.44);
+      expect(result.installments.last.remainingPrincipal, 0);
+    });
+
+    test('high-rate long-term equal installment avoids pow overflow', () {
+      final result = calculateLoanAmortization(
+        principal: 1000000,
+        annualInterestRatePercent: 12,
+        termMonths: 1200,
+        startDate: DateTime(2026, 1, 1),
+        paymentDay: 15,
+        method: LoanRepaymentMethod.equalInstallment,
+      );
+
+      expect(result.regularPayment.isFinite, isTrue);
+      expect(result.regularPayment, greaterThan(10000));
+      expect(result.installments, isNotEmpty);
+      expect(result.installments.length, lessThanOrEqualTo(1200));
       expect(result.installments.last.remainingPrincipal, 0);
     });
   });

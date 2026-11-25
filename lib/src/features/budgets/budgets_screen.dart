@@ -15,7 +15,9 @@ import '../shared/finance_metric_card.dart';
 import '../shared/screen_header.dart';
 import '../shared/section_card.dart';
 import 'budget_form_dialog.dart';
+import 'budget_rule_ui.dart';
 
+/// Legacy layout retained for compatibility; the active UI uses BudgetsV2Screen.
 class BudgetsScreen extends ConsumerStatefulWidget {
   const BudgetsScreen({super.key, required this.repository});
 
@@ -144,6 +146,7 @@ class _BudgetsScreenState extends ConsumerState<BudgetsScreen> {
       _selectedMonth,
     );
     final totalBalance = totalBudget - totalSpent - totalPlanned;
+    final monthValued = repository.budgetMonthIsValued(_selectedMonth);
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -152,7 +155,7 @@ class _BudgetsScreenState extends ConsumerState<BudgetsScreen> {
           title: '预算',
           actions: [
             IconButton.filled(
-              onPressed: () => _showAddBudget(context),
+              onPressed: () => _showBudgetDialog(context),
               icon: const Icon(Icons.add),
               tooltip: '新增预算',
             ),
@@ -209,7 +212,7 @@ class _BudgetsScreenState extends ConsumerState<BudgetsScreen> {
                   ),
                   FinanceMetricCard(
                     label: '预算池余额',
-                    value: formatMoney(totalBalance),
+                    value: monthValued ? formatMoney(totalBalance) : '未估值',
                     tone: totalBalance >= 0
                         ? FinanceMetricTone.income
                         : FinanceMetricTone.expense,
@@ -247,7 +250,7 @@ class _BudgetsScreenState extends ConsumerState<BudgetsScreen> {
                     });
                   },
                   onToggleCollapsed: () => _toggleBudgetCollapse(budget.id),
-                  onEdit: () => _showEditBudget(context, budget),
+                  onEdit: () => _showBudgetDialog(context, source: budget),
                   onDelete: () => _confirmDeleteBudget(context, budget),
                 );
               },
@@ -265,36 +268,28 @@ class _BudgetsScreenState extends ConsumerState<BudgetsScreen> {
     );
   }
 
-  Future<void> _showAddBudget(BuildContext context) async {
-    final result = await showDialog<Budget>(
+  Future<void> _showBudgetDialog(BuildContext context, {Budget? source}) async {
+    await showDialog<Budget>(
       context: context,
-      builder: (_) => BudgetFormDialog(repository: widget.repository),
+      builder: (_) => liveBudgetEditor(
+          widget.repository,
+          source,
+          (live, persist) => BudgetFormDialog(
+              repository: live,
+              initialBudget: source,
+              monthKey: _selectedMonth,
+              persist: persist)),
     );
-    if (result != null) {
-      await ref.read(budgetMutationsProvider.notifier).addBudget(result);
-    }
-  }
-
-  Future<void> _showEditBudget(BuildContext context, Budget budget) async {
-    final result = await showDialog<Budget>(
-      context: context,
-      builder: (_) => BudgetFormDialog(
-        repository: widget.repository,
-        initialBudget: budget,
-      ),
-    );
-    if (result != null) {
-      await ref.read(budgetMutationsProvider.notifier).addBudget(result);
-    }
   }
 
   Future<void> _confirmDeleteBudget(BuildContext context, Budget budget) async {
-    final categoryName = widget.repository.categoryName(budget.categoryId);
+    final repository = widget.repository;
     final confirmed = await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
-            title: const Text('删除预算'),
-            content: Text('确定删除“$categoryName”的预算规则吗？'),
+            title: const Text('删除源预算规则？'),
+            content: Text(
+                budgetRuleDeletionMessage(repository, budget, _selectedMonth)),
             actions: [
               TextButton(
                 onPressed: () => Navigator.of(context).pop(false),
@@ -302,7 +297,7 @@ class _BudgetsScreenState extends ConsumerState<BudgetsScreen> {
               ),
               FilledButton(
                 onPressed: () => Navigator.of(context).pop(true),
-                child: const Text('删除'),
+                child: const Text('删除源规则'),
               ),
             ],
           ),
@@ -357,53 +352,52 @@ class _BudgetTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final monthlyBudget = repository.budgetAmountInBase(budget);
-    final effectiveBudget = repository.effectiveBudgetForMonth(
-      budget,
-      selectedMonth,
-    );
-    final spent = repository.expenseTotalForCategory(
-      budget.categoryId,
-      selectedMonth,
-    );
-    final planned = repository.plannedExpenseTotalForCategory(
-      budget.categoryId,
-      selectedMonth,
-    );
+    final usageForMonth =
+        repository.budgetUsageFor(budget.categoryId, selectedMonth);
+    if (!repository.budgetLimitIsValued(budget.categoryId, selectedMonth) ||
+        !usageForMonth.actualValued ||
+        !usageForMonth.plannedValued) {
+      return ListTile(
+        title: Text(budgetCategoryLabel(repository, budget.categoryId)),
+        subtitle: Text(
+            '${formatMoney(budget.amount, currency: budget.currency)} · 未估值'),
+        onTap: onEdit,
+        trailing: IconButton(
+            icon: const Icon(Icons.delete_outline),
+            tooltip: '删除预算',
+            onPressed: onDelete),
+      );
+    }
+    final effectiveBudget =
+        repository.effectiveBudgetForMonth(budget, selectedMonth);
+    final spent = usageForMonth.actual;
+    final planned = usageForMonth.planned;
     final monthlyBalance = effectiveBudget - spent - planned;
     final displayCurrency = budget.currency;
-    final displayMonthlyBudget = repository.convertFromBase(
-      monthlyBudget,
-      displayCurrency,
-    );
-    final displayEffectiveBudget = repository.convertFromBase(
-      effectiveBudget,
-      displayCurrency,
-    );
+    final displayMonthlyBudget = budget.amount;
+    final displayEffectiveBudget =
+        repository.convertFromBase(effectiveBudget, displayCurrency);
     final displaySpent = repository.convertFromBase(spent, displayCurrency);
     final displayPlanned = repository.convertFromBase(planned, displayCurrency);
-    final displayMonthlyBalance = repository.convertFromBase(
-      monthlyBalance,
-      displayCurrency,
-    );
+    final displayMonthlyBalance =
+        repository.convertFromBase(monthlyBalance, displayCurrency);
     final yearKey = selectedMonth.split('-').first;
-    final annualBudget = monthlyBudget * 12;
-    final annualSpent = List.generate(
-      12,
-      (index) => '$yearKey-${(index + 1).toString().padLeft(2, '0')}',
-    ).fold<double>(
-      0,
-      (sum, monthKey) =>
-          sum + repository.expenseTotalForCategory(budget.categoryId, monthKey),
-    );
-    final displayAnnualBudget = repository.convertFromBase(
-      annualBudget,
-      displayCurrency,
-    );
-    final displayAnnualSpent = repository.convertFromBase(
-      annualSpent,
-      displayCurrency,
-    );
+    var annualBudget = 0.0;
+    var annualSpent = 0.0;
+    for (var month = 1; month <= 12; month++) {
+      final key = '$yearKey-${month.toString().padLeft(2, '0')}';
+      final rule = repository
+          .activeBudgetsForMonth(key)
+          .where((item) => item.categoryId == budget.categoryId)
+          .firstOrNull;
+      if (rule == null) continue;
+      annualBudget += repository.budgetAmountInBase(rule);
+      annualSpent += repository.budgetUsageFor(budget.categoryId, key).actual;
+    }
+    final displayAnnualBudget =
+        repository.convertFromBase(annualBudget, displayCurrency);
+    final displayAnnualSpent =
+        repository.convertFromBase(annualSpent, displayCurrency);
     final usage =
         effectiveBudget <= 0 ? 0.0 : (spent / effectiveBudget).clamp(0.0, 1.0);
     final theme = Theme.of(context);
@@ -457,7 +451,7 @@ class _BudgetTile extends StatelessWidget {
                       children: [
                         Flexible(
                           child: Text(
-                            repository.categoryName(budget.categoryId),
+                            budgetCategoryLabel(repository, budget.categoryId),
                             style: Theme.of(context).textTheme.titleSmall,
                             overflow: TextOverflow.ellipsis,
                           ),

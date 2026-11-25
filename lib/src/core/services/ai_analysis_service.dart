@@ -4,10 +4,12 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../data/finance_repository.dart';
+import '../data/category_reporting.dart';
 import '../models/account.dart';
 import '../models/category.dart';
 import '../models/transaction.dart';
 import '../utils/month_key.dart';
+import '../utils/anchored_month.dart';
 import '../utils/month_range.dart';
 
 class AiAnalysisService {
@@ -20,7 +22,7 @@ class AiAnalysisService {
 - 兼容两类文件：含 analysis_contract 的分析摘要 JSON，以及含 format_version、accounts、transactions、budgets 的完整备份 JSON。若没有 analysis_contract，使用本提示词的规则自行计算。
 - 以 generated_at 或 exported_at 作为分析时点；若两者都缺失，明确说明无法精确判断“截至今天”。
 - transaction_date 是经济事项发生日期；record_date 只是录入/原始记录日期，不能用于月度归属。
-- actual/settled 表示已确认记录，planned 表示预计。交易日期晚于分析时点的 actual/settled 是“未来已确定”，不是截至分析时点已经发生的现金流或消费。
+- actual/settled 表示已确认记录，planned 表示预计。交易日期在分析日次日及以后的 actual/settled 是“未来已确定”，不是截至分析时点已经发生的现金流或消费。
 - 默认没有另选时间范围时，历史汇总截至当前自然月及分析时点；不得把之后月份的 EPF、投资调整、收入或支出提前计入当前资产和本月实绩。
 
 二、必须分开三个观察口径
@@ -33,8 +35,9 @@ class AiAnalysisService {
 - 转入投资或退休账户是资产重新配置，不是消费；投资市值调整不是工资或经营收入。
 - future actual/settled 与 future planned 必须分列：前者叫“未来已确定”，后者叫“预计”。两者都不能混入截至分析时点的本月实绩。
 - 周期规则若已经生成对应 future_transactions，不得重复累计；只有尚未生成的月份才可用规则补足，并标记为推算。
+- 现金预测以分析日日终现金为基线；income 与 expense 为非转账现金收付，transfers 为转账对现金账户的净变动，还卡不再重复计入 expense。
 - 金额为零时保留记录但不影响合计；负数按代数方向处理，不可取绝对值后直接相加。
-- 多币种优先使用 *_base 或已经折算的汇总；否则按 exchange_rates_to_base 换算到 base_currency，并注明换算口径。
+- 多币种优先使用 *_base 或已经折算的汇总；缺少报价时保留原币并标为未估值。unpriced_currencies 非空时，汇总只包含可估值部分。
 
 四、分析方法
 - 先核对关键合计能否由明细解释；若账户余额、月度汇总和交易明细不一致，列出差额与可能原因，不要擅自选择最有利的数字。
@@ -140,8 +143,13 @@ class AiAnalysisService {
     required bool includePlanned,
     required int monthCount,
     int futureMonthCount = defaultFutureMonthCount,
+    DateTime? asOf,
   }) {
-    final now = DateTime.now();
+    if (monthCount < 1) throw ArgumentError.value(monthCount, 'monthCount');
+    if (futureMonthCount < 0) {
+      throw ArgumentError.value(futureMonthCount, 'futureMonthCount');
+    }
+    final now = (asOf ?? DateTime.now()).toLocal();
     final today = DateTime(now.year, now.month, now.day);
     final currentMonth = monthKeyFromDate(now);
     final lastMonth = monthKeyFromDate(DateTime(now.year, now.month - 1));
@@ -155,128 +163,117 @@ class AiAnalysisService {
       ...historyMonthKeys,
       ...futureMonthKeys,
     ];
-    final cutoffDate = repository.currentMonthCutoffDate();
+    final tomorrow = DateTime(today.year, today.month, today.day + 1);
+    final cutoffDate = tomorrow.subtract(const Duration(microseconds: 1));
+    final historyStart = DateTime(now.year, now.month - monthCount + 1);
+    final futureEndExclusive =
+        DateTime(now.year, now.month + futureMonthCount + 1);
+    CategoryReportIndex report(DateTime start, DateTime end) =>
+        CategoryReportIndex(
+          repository.categoryHierarchy,
+          repository.transactions.where((t) =>
+              !t.transactionDate.isBefore(start) &&
+              t.transactionDate.isBefore(end)),
+          hasRate: repository.hasExchangeRate,
+          convertToBase: repository.convertToBase,
+        );
+    final occurred = report(historyStart, tomorrow);
+    final upcoming = report(tomorrow, futureEndExclusive);
 
     final accounts = <Map<String, dynamic>>[];
     for (final group in ReportGroup.values) {
       for (final account in repository.accountsByGroup(group)) {
-        final balance = repository.accountBalanceAtBase(account.id, cutoffDate);
+        final nativeBalance =
+            repository.accountBalanceAt(account.id, cutoffDate);
+        final balance = repository.tryConvertAmount(
+            amount: nativeBalance,
+            fromCurrency: account.currency,
+            toCurrency: repository.baseCurrency);
         accounts.add({
           'name': account.name,
           'type': account.accountType.name,
-          'report_group': account.reportGroup.name,
+          'report_group': account.effectiveReportGroup.name,
           'currency': account.currency,
           'balance': balance,
           'balance_base': balance,
-          'native_balance': repository.accountBalanceAt(account.id, cutoffDate),
+          'native_balance': nativeBalance,
           'is_active': account.isActive,
+          if (account.accountType == AccountType.creditCard)
+            'all_date_committed_outstanding_native':
+                repository.creditCardCommittedOutstandingBalance(account.id),
         });
       }
     }
 
-    final income = repository.totalIncomeForMonth(currentMonth);
-    final expense = repository.totalExpenseForMonth(currentMonth);
-    final plannedIncome = repository.plannedIncomeForMonth(currentMonth);
-    final plannedExpense = repository.plannedExpenseForMonth(currentMonth);
-    final displayIncome = includePlanned ? income + plannedIncome : income;
-    final displayExpense = includePlanned ? expense + plannedExpense : expense;
-
-    final lastActualIncome = repository.totalIncomeForMonth(lastMonth);
-    final lastActualExpense = repository.totalExpenseForMonth(lastMonth);
-    final lastPlannedIncome = repository.plannedIncomeForMonth(lastMonth);
-    final lastPlannedExpense = repository.plannedExpenseForMonth(lastMonth);
-    final lastIncome =
-        lastActualIncome + (includePlanned ? lastPlannedIncome : 0);
-    final lastExpense =
-        lastActualExpense + (includePlanned ? lastPlannedExpense : 0);
-
-    final monthRows = analysisMonthKeys
-        .map(
-          (monthKey) => _monthlyRow(
-            repository,
-            monthKey: monthKey,
-            currentMonth: currentMonth,
-            includePlanned: includePlanned,
-          ),
-        )
-        .toList();
-    final futureMonthRows = futureMonthKeys
-        .map(
-          (monthKey) => _monthlyRow(
-            repository,
-            monthKey: monthKey,
-            currentMonth: currentMonth,
-            includePlanned: true,
-          ),
-        )
-        .toList();
-    final recentMonthsForGateway = (includePlanned
-            ? monthRows
-            : monthRows.where((item) => item['period'] != 'future').toList())
-        .map(
-          (item) => {
-            'month': item['month'],
-            'income': item['analysis_income'],
-            'expense': item['analysis_expense'],
-            'net': item['analysis_net'],
-            'period': item['period'],
-            'actual_income': item['actual_income'],
-            'actual_expense': item['actual_expense'],
-            'planned_income': item['planned_income'],
-            'planned_expense': item['planned_expense'],
-          },
-        )
-        .where(
-          (item) =>
-              (item['income'] as double) != 0 ||
-              (item['expense'] as double) != 0 ||
-              item['period'] == 'future',
-        )
-        .toList();
-
-    final categoryDivisor =
-        monthCount + (includePlanned ? futureMonthCount : 0);
+    final cash = repository.actualCashFlowSummaryForMonth(currentMonth,
+        cutoffDate: cutoffDate);
+    final current =
+        _monthlyRow(occurred, currentMonth, currentMonth, includePlanned);
+    final previousReport = historyStart
+            .isAfter(DateTime(now.year, now.month - 1))
+        ? report(
+            DateTime(now.year, now.month - 1), DateTime(now.year, now.month))
+        : occurred;
+    final previous =
+        _monthlyRow(previousReport, lastMonth, currentMonth, includePlanned);
+    final remainder =
+        _monthlyRow(upcoming, currentMonth, currentMonth, true, future: true);
+    final historyRows = [
+      for (final key in historyMonthKeys)
+        _monthlyRow(occurred, key, currentMonth, includePlanned),
+    ];
+    final futureMonthRows = [
+      for (final key in futureMonthKeys)
+        _monthlyRow(upcoming, key, currentMonth, true, future: true),
+    ];
+    final monthRows = [...historyRows, ...futureMonthRows];
     final expenseCategories = _categorySummary(
-      repository,
+      occurred,
       type: CategoryType.expense,
-      monthKeys: analysisMonthKeys,
+      monthKeys: historyMonthKeys,
       includePlanned: includePlanned,
-      divisor: categoryDivisor,
     );
     final incomeCategories = _categorySummary(
-      repository,
+      occurred,
       type: CategoryType.income,
-      monthKeys: analysisMonthKeys,
+      monthKeys: historyMonthKeys,
       includePlanned: includePlanned,
-      divisor: categoryDivisor,
     );
-
     final budgetsByMonth = {
       for (final monthKey in [currentMonth, ...futureMonthKeys])
-        monthKey: _budgetRowsForMonth(repository, monthKey),
+        monthKey: _budgetRowsForMonth(repository, monthKey, tomorrow),
     };
     final budgets = budgetsByMonth[currentMonth] ?? const [];
 
     final goals = <Map<String, dynamic>>[];
-    for (final goal in repository.assetGoalSummaries()) {
+    for (final goal in repository.assetGoalSummaries(cutoffDate: cutoffDate)) {
       goals.add({
         'name': goal.goal.name,
-        'target': goal.goal.targetAmount,
-        'current': goal.currentAssets,
-        'progress': (goal.progressRatio * 100).toStringAsFixed(1),
-        'is_reached': goal.isReached,
+        'valuation_available': goal.valuationAvailable,
+        'target': repository.tryConvertAmount(
+            amount: goal.goal.targetAmount,
+            fromCurrency: goal.goal.currency,
+            toCurrency: repository.baseCurrency),
+        'original_target': goal.goal.targetAmount,
+        'original_currency': goal.goal.currency,
+        'current': goal.valuationAvailable ? goal.currentAssets : null,
+        'progress': goal.valuationAvailable
+            ? (goal.progressRatio * 100).toStringAsFixed(1)
+            : null,
+        'is_reached': goal.valuationAvailable ? goal.isReached : null,
       });
     }
 
     final futureTransactions = _transactionsInWindow(
       repository,
-      startDateExclusive: today,
-      endDateInclusive: DateTime(now.year, now.month + futureMonthCount + 1, 0),
+      startInclusive: tomorrow,
+      endExclusive: futureEndExclusive,
       limit: 120,
     );
     final recentActualTransactions = _transactionsInWindow(
       repository,
-      endDateInclusive: today,
+      startInclusive: historyStart,
+      endExclusive: tomorrow,
       limit: 50,
       descending: true,
       actualOnly: true,
@@ -292,7 +289,7 @@ class AiAnalysisService {
         )
         .toList();
     final cashFlowProjection = repository
-        .futureCashFlowProjection(months: futureMonthCount + 1)
+        .futureCashFlowProjection(months: futureMonthCount + 1, asOf: now)
         .map(
           (item) => {
             'month': item.monthKey,
@@ -300,33 +297,38 @@ class AiAnalysisService {
             'expense': item.expense,
             'transfers': item.transfers,
             'net': item.net,
-            'ending_cash_after_credit': item.endingCash,
+            'ending_cash': item.endingCash,
           },
         )
         .toList();
-    final futureMonthsWithKnownData = futureMonthRows
-        .where((item) => _monthHasKnownFutureData(item))
-        .map((item) => item['month'])
-        .toList();
+    final monthsWithRecords = {
+      for (final item in repository.transactions)
+        if (!item.transactionDate.isBefore(tomorrow) &&
+            item.transactionDate.isBefore(futureEndExclusive))
+          monthKeyFromDate(item.transactionDate),
+    };
+    final futureMonthsWithKnownData =
+        futureMonthKeys.where(monthsWithRecords.contains).toList();
     final budgetRiskRows = _budgetRiskRows(budgetsByMonth);
 
     return {
       'schema_version': 3,
       'prompt_version': 'finance_compass_three_lenses_v3',
-      'generated_at': DateTime.now().toIso8601String(),
+      'generated_at': now.toIso8601String(),
+      'actual_through_date': _dateText(today),
       'base_currency': repository.baseCurrency,
+      'unpriced_currencies': repository.unpricedCurrencies.toList()..sort(),
       'analysis_contract': {
         'actual': 'completed or settled records that affect real balances',
         'planned':
             'user-entered estimates that should not be treated as completed cash flow',
-        'analysis_income': includePlanned
-            ? 'actual_income plus planned_income'
-            : 'actual_income only',
-        'analysis_expense': includePlanned
-            ? 'actual_expense plus planned_expense'
-            : 'actual_expense only',
+        'history_mode': includePlanned
+            ? 'historical analysis_income/expense adds planned records dated through actual_through_date'
+            : 'historical analysis_income/expense uses occurred actual/settled records',
+        'future_mode':
+            'future rows total confirmed_future and planned as two separate components',
         'cash_flow_projection':
-            'cash and credit pressure projection; this is not total net worth',
+            'known dated cash movements only; net = income minus expense plus signed cash transfers. No additional deduction for unrecorded bills',
         'consumption_occurrence':
             'income and expense by transaction_date; transfers and card repayments are excluded',
         'cash_settlement':
@@ -334,9 +336,10 @@ class AiAnalysisService {
         'credit_commitment':
             'confirmed credit liabilities; all-date actual/settled may represent locked commitments, planned is scenario only',
         'future_actual':
-            'confirmed future event, not cash flow or consumption already completed as of generated_at',
+            'confirmed event dated after actual_through_date; listed separately from occurred actuals',
         'recommended_source_order': [
           'current_month and last_month summaries',
+          'current_month_remaining',
           'cash_flow_projection',
           'future_monthly_actual_planned',
           'future_transactions',
@@ -346,9 +349,8 @@ class AiAnalysisService {
         ],
       },
       'data_mode': includePlanned ? 'all' : 'actual',
-      'data_mode_note': includePlanned
-          ? 'analysis fields include actual plus planned records; actual/planned remain separated'
-          : 'analysis fields use actual records only; future planned data is still included in dedicated future fields',
+      'data_mode_note':
+          'history and current_month run through actual_through_date; future planning rows distinguish confirmed events and estimates',
       'month_count': monthCount,
       'future_month_count': futureMonthCount,
       'current_month_key': currentMonth,
@@ -363,32 +365,19 @@ class AiAnalysisService {
       'exchange_rates_to_base': repository.exchangeRatesToBase,
       'accounts': accounts,
       'assets_by_group': {
-        'cash': repository.totalAssetsByGroup(ReportGroup.cash),
-        'credit': repository.totalAssetsByGroup(ReportGroup.credit),
-        'investment': repository.totalAssetsByGroup(ReportGroup.investment),
-        'retirement': repository.totalAssetsByGroup(ReportGroup.retirement),
+        for (final group in ReportGroup.values)
+          group.name: repository.displayTotalAssetsByGroup(group,
+              cutoffDate: cutoffDate),
       },
-      'total_assets': repository.totalAssets(),
+      'total_assets': repository.totalAssetsAt(cutoffDate),
       'current_month': {
-        'income': displayIncome,
-        'expense': displayExpense,
-        'net': displayIncome - displayExpense,
-        'actual_income': income,
-        'actual_expense': expense,
-        'actual_net': income - expense,
-        'planned_income': plannedIncome,
-        'planned_expense': plannedExpense,
-        'planned_net': plannedIncome - plannedExpense,
+        ...current,
+        'actual_cash_inflow': cash.inflow,
+        'actual_cash_outflow': cash.outflow,
+        'actual_cash_net': cash.net,
       },
-      'last_month': {
-        'income': lastIncome,
-        'expense': lastExpense,
-        'net': lastIncome - lastExpense,
-        'actual_income': lastActualIncome,
-        'actual_expense': lastActualExpense,
-        'planned_income': lastPlannedIncome,
-        'planned_expense': lastPlannedExpense,
-      },
+      'current_month_remaining': remainder,
+      'last_month': previous,
       'monthly_actual_planned': monthRows,
       'future_monthly_actual_planned': futureMonthRows,
       'expense_categories': expenseCategories,
@@ -413,12 +402,12 @@ class AiAnalysisService {
         'recent_actual_transactions_count': recentActualTransactions.length,
         'budget_risk_count': budgetRiskRows.length,
       },
-      'recent_months': recentMonthsForGateway,
+      'recent_months': historyRows,
       'analysis_notes': [
         'planned transactions are user-entered estimates, not completed cash flow',
         'future_transactions may already include generated recurring records',
         'recurring_transaction_rules explain fixed patterns and should not be double-counted when matching future planned transactions exist',
-        'cash_flow_projection focuses on cash and credit groups, while total_assets includes investment and retirement groups',
+        'cash_flow_projection starts with end-of-day cash; transfers records signed net cash movement from transfers, including repayments. A same-currency cash-to-cash transfer nets to zero.',
       ],
     };
   }
@@ -436,7 +425,7 @@ $financeAnalysisSystemPrompt
 1. base_currency 是 $baseCurrency，所有 *_base 或汇总金额都已折算到该货币。
 2. 如果存在 analysis_contract，必须与上面的三口径规则一起遵守；如有冲突，以更严格地区分时间与状态的规则为准。
 3. 不要把信用卡还款再次算成消费，也不要把刷卡月份的消费推迟到还款月份；分别放入消费发生与现金收付口径。
-4. 日期晚于 generated_at/exported_at 的 actual/settled 必须标为“未来已确定”，不得混入截至该时点的实绩；planned 始终单列为预计。
+4. 以 generated_at/exported_at 的本地自然日为截止日，次日起的 actual/settled 必须标为“未来已确定”，不得混入截至该时点的实绩；planned 始终单列为预计。
 5. recurring_transaction_rules 若已生成对应交易，不得重复计算。budgets_by_month 用于消费预算，cash_flow_projection 用于现金安全，两者不能互相替代。
 6. 如果资料只有原始明细，先建立账户 ID 到 report_group 的映射，再处理转账两端；不得仅看交易 type 猜测现金流。
 7. data_quality 或原始资料覆盖不足时，降低置信度并列出缺失项。
@@ -461,47 +450,45 @@ $prompt
 ''';
   }
 
-  static Map<String, dynamic> _monthlyRow(
-    FinanceRepository repository, {
-    required String monthKey,
-    required String currentMonth,
-    required bool includePlanned,
-  }) {
-    final actualIncome = repository.totalIncomeForMonth(monthKey);
-    final actualExpense = repository.totalExpenseForMonth(monthKey);
-    final plannedIncome = repository.plannedIncomeForMonth(monthKey);
-    final plannedExpense = repository.plannedExpenseForMonth(monthKey);
-    final analysisIncome = actualIncome + (includePlanned ? plannedIncome : 0);
-    final analysisExpense =
-        actualExpense + (includePlanned ? plannedExpense : 0);
+  static Map<String, dynamic> _monthlyRow(CategoryReportIndex index,
+      String monthKey, String currentMonth, bool includePlanned,
+      {bool future = false}) {
+    final inflows = index.read(CategoryType.income, [monthKey]).all;
+    final outflows = index.read(CategoryType.expense, [monthKey]).all;
+    final actualIncome = future ? 0.0 : inflows.actual;
+    final actualExpense = future ? 0.0 : outflows.actual;
+    final income = inflows.actual + (includePlanned ? inflows.planned : 0);
+    final expense = outflows.actual + (includePlanned ? outflows.planned : 0);
     return {
       'month': monthKey,
-      'period': monthKey.compareTo(currentMonth) < 0
-          ? 'past'
+      'period': future
+          ? 'future'
           : monthKey == currentMonth
               ? 'current'
-              : 'future',
+              : 'past',
+      'income': income,
+      'expense': expense,
+      'net': income - expense,
       'actual_income': actualIncome,
       'actual_expense': actualExpense,
       'actual_net': actualIncome - actualExpense,
-      'planned_income': plannedIncome,
-      'planned_expense': plannedExpense,
-      'planned_net': plannedIncome - plannedExpense,
-      'total_known_income': actualIncome + plannedIncome,
-      'total_known_expense': actualExpense + plannedExpense,
+      'confirmed_future_income': future ? inflows.actual : 0.0,
+      'confirmed_future_expense': future ? outflows.actual : 0.0,
+      'planned_income': inflows.planned,
+      'planned_expense': outflows.planned,
+      'planned_net': inflows.planned - outflows.planned,
+      'total_known_income': inflows.actual + inflows.planned,
+      'total_known_expense': outflows.actual + outflows.planned,
       'total_known_net':
-          actualIncome + plannedIncome - actualExpense - plannedExpense,
-      'analysis_income': analysisIncome,
-      'analysis_expense': analysisExpense,
-      'analysis_net': analysisIncome - analysisExpense,
+          inflows.actual + inflows.planned - outflows.actual - outflows.planned,
+      'analysis_income': income,
+      'analysis_expense': expense,
+      'analysis_net': income - expense,
+      'transaction_count': inflows.actualCount +
+          inflows.plannedCount +
+          outflows.actualCount +
+          outflows.plannedCount,
     };
-  }
-
-  static bool _monthHasKnownFutureData(Map<String, dynamic> row) {
-    return (row['planned_income'] as double) != 0 ||
-        (row['planned_expense'] as double) != 0 ||
-        (row['actual_income'] as double) != 0 ||
-        (row['actual_expense'] as double) != 0;
   }
 
   static List<Map<String, dynamic>> _budgetRiskRows(
@@ -510,14 +497,15 @@ $prompt
     final rows = <Map<String, dynamic>>[];
     for (final entry in budgetsByMonth.entries) {
       for (final budget in entry.value) {
-        final remaining =
-            (budget['remaining_after_committed'] as num).toDouble();
-        if (remaining >= 0) {
+        final remaining = budget['remaining_after_committed'] as double?;
+        if (remaining == null || remaining >= 0) {
           continue;
         }
         rows.add({
           'month': entry.key,
           'category': budget['category'],
+          'category_id': budget['category_id'],
+          'path': budget['path'],
           'budget': (budget['budget'] as num).toDouble(),
           'committed_spend': (budget['committed_spend'] as num).toDouble(),
           'over_budget_by': -remaining,
@@ -532,109 +520,86 @@ $prompt
   }
 
   static List<Map<String, dynamic>> _categorySummary(
-    FinanceRepository repository, {
+    CategoryReportIndex index, {
     required CategoryType type,
     required List<String> monthKeys,
     required bool includePlanned,
-    required int divisor,
   }) {
-    final actual = _categoryTotals(
-      repository,
-      type: type,
-      monthKeys: monthKeys,
-      includePlanned: false,
-    );
-    final planned = _categoryTotals(
-      repository,
-      type: type,
-      monthKeys: monthKeys,
-      plannedOnly: true,
-    );
-    final categoryIds = <String>{...actual.keys, ...planned.keys};
-    final rows = <Map<String, dynamic>>[];
-    for (final categoryId in categoryIds) {
-      final actualTotal = actual[categoryId] ?? 0;
-      final plannedTotal = planned[categoryId] ?? 0;
-      final total = actualTotal + (includePlanned ? plannedTotal : 0);
-      if (total == 0 && plannedTotal == 0 && actualTotal == 0) {
-        continue;
-      }
-      rows.add({
-        'name': _categoryName(repository, categoryId),
+    final divisor = monthKeys.length;
+    final report = index.read(type, monthKeys);
+    return report.rows().map((row) {
+      final actual = row['actual'] as double;
+      final planned = row['planned'] as double;
+      final total = actual + (includePlanned ? planned : 0);
+      return {
+        ...row,
         'total': total,
-        'actual_total': actualTotal,
-        'planned_total': plannedTotal,
+        'actual_total': actual,
+        'planned_total': planned,
         'monthly_avg': divisor <= 0 ? total : total / divisor,
-      });
-    }
-    rows.sort(
-      (a, b) => (b['total'] as double).compareTo(a['total'] as double),
-    );
-    return rows;
-  }
-
-  static Map<String, double> _categoryTotals(
-    FinanceRepository repository, {
-    required CategoryType type,
-    required List<String> monthKeys,
-    bool includePlanned = true,
-    bool plannedOnly = false,
-  }) {
-    final allowedIds = repository.categories
-        .where((category) => category.type == type)
-        .map((category) => category.id)
-        .toSet();
-    final totals = <String, double>{};
-    for (final transaction in repository.transactions) {
-      final categoryId = transaction.categoryId;
-      if (categoryId == null || !allowedIds.contains(categoryId)) {
-        continue;
-      }
-      if (!monthKeys.contains(monthKeyFromDate(transaction.transactionDate))) {
-        continue;
-      }
-      if (plannedOnly && transaction.status != TransactionStatus.planned) {
-        continue;
-      }
-      if (!includePlanned && transaction.status == TransactionStatus.planned) {
-        continue;
-      }
-      if (type == CategoryType.expense &&
-          transaction.type != TransactionType.expense) {
-        continue;
-      }
-      if (type == CategoryType.income &&
-          transaction.type != TransactionType.income) {
-        continue;
-      }
-      totals[categoryId] = (totals[categoryId] ?? 0) +
-          repository.transactionAmountInBase(transaction);
-    }
-    return totals;
+      };
+    }).toList()
+      ..sort((a, b) => (b['total'] as double).compareTo(a['total'] as double));
   }
 
   static List<Map<String, dynamic>> _budgetRowsForMonth(
     FinanceRepository repository,
     String monthKey,
+    DateTime tomorrow,
   ) {
     return repository.activeBudgetsForMonth(monthKey).map((budget) {
       final effective = repository.effectiveBudgetForMonth(budget, monthKey);
-      final actualSpent =
-          repository.expenseTotalForCategory(budget.categoryId, monthKey);
-      final plannedSpent = repository.plannedExpenseTotalForCategory(
-        budget.categoryId,
-        monthKey,
-      );
-      final committed = actualSpent + plannedSpent;
+      final usage = repository.budgetUsageFor(budget.categoryId, monthKey);
+      var actualSpent = 0.0;
+      var futureConfirmed = 0.0;
+      var actualValued = true;
+      var futureValued = true;
+      for (final entry in usage.transactions.where((t) => t.affectsBalance)) {
+        final value = repository.tryConvertAmount(
+            amount: entry.amount,
+            fromCurrency: entry.currency,
+            toCurrency: repository.baseCurrency);
+        if (entry.transactionDate.isBefore(tomorrow)) {
+          actualSpent += value ?? 0;
+          actualValued = actualValued && value != null;
+        } else {
+          futureConfirmed += value ?? 0;
+          futureValued = futureValued && value != null;
+        }
+      }
+      final plannedSpent = usage.planned;
+      final committed = actualSpent + futureConfirmed + plannedSpent;
+      final limitValued =
+          repository.budgetLimitIsValued(budget.categoryId, monthKey);
+      final committedValued =
+          actualValued && futureValued && usage.plannedValued;
+      final complete = limitValued && committedValued;
       return {
         'category': _categoryName(repository, budget.categoryId),
-        'budget': effective,
-        'spent': actualSpent,
-        'actual_spent': actualSpent,
-        'planned_spent': plannedSpent,
-        'committed_spend': committed,
-        'remaining_after_actual': effective - actualSpent,
-        'remaining_after_committed': effective - committed,
+        'category_id': budget.categoryId,
+        'path': repository.categoryHierarchy
+            .pathOf(budget.categoryId)
+            .map((c) => c.name)
+            .toList(),
+        'original_amount': budget.amount,
+        'original_currency': budget.currency,
+        'valuation_complete': complete,
+        'budget': limitValued ? effective : null,
+        'spent': actualValued ? actualSpent : null,
+        'actual_spent': actualValued ? actualSpent : null,
+        'confirmed_future_spent': futureValued ? futureConfirmed : null,
+        'planned_spent': usage.plannedValued ? plannedSpent : null,
+        'committed_spend': committedValued ? committed : null,
+        'remaining_after_actual':
+            limitValued && actualValued ? effective - actualSpent : null,
+        'remaining_after_committed': complete ? effective - committed : null,
+        if (!complete)
+          'priced_subtotals': {
+            'effective_budget': effective,
+            'actual_spent': actualSpent,
+            'confirmed_future_spent': futureConfirmed,
+            'planned_spent': plannedSpent,
+          },
         'rollover_enabled': budget.rolloverEnabled,
         'alert_threshold': budget.alertThreshold,
       };
@@ -643,8 +608,8 @@ $prompt
 
   static List<Map<String, dynamic>> _transactionsInWindow(
     FinanceRepository repository, {
-    DateTime? startDateExclusive,
-    required DateTime endDateInclusive,
+    required DateTime startInclusive,
+    required DateTime endExclusive,
     int limit = 80,
     bool descending = false,
     bool actualOnly = false,
@@ -653,11 +618,10 @@ $prompt
       if (actualOnly && transaction.status == TransactionStatus.planned) {
         return false;
       }
-      if (startDateExclusive != null &&
-          !transaction.transactionDate.isAfter(startDateExclusive)) {
+      if (transaction.transactionDate.isBefore(startInclusive)) {
         return false;
       }
-      if (transaction.transactionDate.isAfter(endDateInclusive)) {
+      if (!transaction.transactionDate.isBefore(endExclusive)) {
         return false;
       }
       return true;
@@ -690,10 +654,19 @@ $prompt
           ? null
           : _accountName(repository, transaction.toAccountId!),
       'category': _categoryName(repository, transaction.categoryId),
+      'category_id': transaction.categoryId,
       'amount': transaction.amount,
       'currency': transaction.currency,
-      'amount_base': repository.transactionAmountInBase(transaction),
+      'amount_base': repository.tryConvertAmount(
+          amount: transaction.amount,
+          fromCurrency: transaction.currency,
+          toCurrency: repository.baseCurrency),
       'to_amount': transaction.toAmount,
+      if (transaction.loanInstallmentNumber != null) ...{
+        'loan_installment_number': transaction.loanInstallmentNumber,
+        'loan_payment_amount':
+            transaction.loanPaymentAmount ?? transaction.amount,
+      },
       'to_currency': transaction.toCurrency,
       'description': transaction.description,
       'merchant': transaction.merchant,
@@ -710,7 +683,8 @@ $prompt
       'id': rule.id,
       'name': rule.name,
       'type': rule.type.name,
-      'status_when_generated': rule.status.name,
+      'template_status': rule.status.name,
+      'status_when_generated': TransactionStatus.planned.name,
       'is_active': rule.isActive,
       'account': _accountName(repository, rule.accountId),
       'to_account': rule.toAccountId == null
@@ -719,8 +693,15 @@ $prompt
       'category': _categoryName(repository, rule.categoryId),
       'amount': rule.amount,
       'currency': rule.currency,
-      'amount_base': repository.convertToBase(rule.amount, rule.currency),
+      'amount_base': repository.tryConvertAmount(
+          amount: rule.amount,
+          fromCurrency: rule.currency,
+          toCurrency: repository.baseCurrency),
       'to_amount': rule.toAmount,
+      if (rule.loanInstallmentNumber != null) ...{
+        'loan_installment_number': rule.loanInstallmentNumber,
+        'loan_payment_amount': rule.loanPaymentAmount ?? rule.amount,
+      },
       'to_currency': rule.toCurrency,
       'interval_months': rule.intervalMonths,
       'start_date': _dateText(rule.startDate),
@@ -745,52 +726,30 @@ $prompt
     final today = DateTime(now.year, now.month, now.day);
     final endDate = DateTime(now.year, now.month + futureMonthCount + 1, 0);
     final rows = <Map<String, dynamic>>[];
-    var cursor = DateTime(
-      rule.startDate.year,
-      rule.startDate.month,
-      rule.startDate.day,
-    );
-    var guard = 0;
-    while (!cursor.isAfter(endDate) && guard++ < 240) {
-      if (cursor.isAfter(today) &&
-          (rule.endDate == null || !cursor.isAfter(rule.endDate!))) {
-        final occurrenceMonthKey = monthKeyFromDate(cursor);
-        rows.add({
-          'date': _dateText(cursor),
-          'month': occurrenceMonthKey,
-          'already_generated_as_transaction':
-              rule.generatedMonthKeys.contains(occurrenceMonthKey),
-        });
-      }
-      cursor = DateTime(
-        cursor.year,
-        cursor.month + rule.intervalMonths,
-        cursor.day,
-      );
+    for (final date in recurringDates(
+        start: rule.startDate,
+        intervalMonths: rule.intervalMonths,
+        after: today,
+        through: endDate,
+        end: rule.endDate)) {
+      final key = monthKeyFromDate(date);
+      rows.add({
+        'date': _dateText(date),
+        'month': key,
+        'already_generated_as_transaction':
+            rule.generatedMonthKeys.contains(key)
+      });
     }
     return rows;
   }
 
   static String _categoryName(
       FinanceRepository repository, String? categoryId) {
-    if (categoryId == null) {
-      return '未分类';
-    }
-    for (final category in repository.categories) {
-      if (category.id == categoryId) {
-        return category.name;
-      }
-    }
-    return '未命名类别';
+    return categoryId == null ? '未分类' : repository.categoryName(categoryId);
   }
 
   static String _accountName(FinanceRepository repository, String accountId) {
-    for (final account in repository.accounts) {
-      if (account.id == accountId) {
-        return account.name;
-      }
-    }
-    return '未知账户';
+    return repository.accountName(accountId);
   }
 
   static String _dateText(DateTime date) {

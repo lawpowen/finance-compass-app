@@ -15,8 +15,14 @@ class BudgetMutations extends Notifier<void> {
       ref.read(financeRepositoryProvider.notifier);
 
   /// Creates or updates a budget (upsert by id, or by category+monthKey).
-  Future<void> addBudget(Budget budget) async {
-    await _repoNotifier.mutate((repository) => repository.addBudget(budget));
+  Future<void> addBudget(Budget budget, {String? expectedSourceId}) async {
+    await _repoNotifier.mutate((repository) {
+      if (expectedSourceId != null &&
+          !repository.budgets.any((item) => item.id == expectedSourceId)) {
+        throw StateError('此预算规则已被删除，请返回预算列表。');
+      }
+      return repository.addBudget(budget);
+    });
   }
 
   /// Deletes a budget by its id.
@@ -27,5 +33,6 @@ class BudgetMutations extends Notifier<void> {
 }
 
 /// Provider for budget CRUD mutations.
-final budgetMutationsProvider =
-    NotifierProvider<BudgetMutations, void>(BudgetMutations.new);
+final budgetMutationsProvider = NotifierProvider<BudgetMutations, void>(
+    BudgetMutations.new,
+    dependencies: [financeRepositoryProvider]);
