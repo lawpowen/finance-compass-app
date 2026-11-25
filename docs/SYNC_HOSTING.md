@@ -101,6 +101,8 @@ Homelab 的 [AI 设施总览](https://homelab.tail43a542.ts.net/#services)中也
 
 Homelab 代码目录在 `~/finance-compass-deploy/current`，部署参数在 `~/finance-compass-deploy/runtime.env`。从代码目录执行下方 Compose 命令时，使用 `sudo -n docker compose --env-file "$HOME/finance-compass-deploy/runtime.env" ...`。
 
+Web 26 启用来源信用卡入账日时，须一并更新同步后端与前端，以统一快照校验和提醒计算。先确认其他设备没有待上传的旧快照并保存 v3 备份。开始录入入账日后，各写入客户端都应使用支持该字段的版本；旧客户端重新上传整份快照时可能丢失它未识别的交易字段。
+
 生产更新从 GitHub 的指定 `main` 提交签出到新的发布目录。先验证现有同步数据库的在线备份，再使用同一 Compose 项目和数据卷构建上线。健康检查与静态版本确认后，将 `current` 指向新目录。
 
 日常注册直接在网页完成。管理员可以在 Homelab 的交互式 Bash 提示中创建或重置指定账号密码。重置会撤销该账号的旧会话。密码通过标准输入和隐藏输入取得，勿将密码放进命令参数、配置文件或 Git。

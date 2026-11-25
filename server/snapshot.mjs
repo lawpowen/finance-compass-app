@@ -13,6 +13,12 @@ const boolean = (value) => typeof value === 'boolean';
 const date = (value) => string(value) &&
   /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)?$/.test(value) &&
   Number.isFinite(Date.parse(value));
+export function parseCalendarDay(value) {
+  if (!string(value) || value.length !== 10 || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === value ? parsed : null;
+}
+const calendarDay = (value) => parseCalendarDay(value) !== null;
 const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const enumOf = (...values) => (value) => values.includes(value);
 const optional = (check) => (value) => value == null || check(value);
@@ -96,6 +102,7 @@ const schema = {
     legacy_loan_id: optional(string),
     record_date: optional(date),
     transaction_date: date,
+    card_posting_date: optional(calendarDay),
     recurring_rule_id: optional(string),
   },
   asset_snapshots: {
@@ -185,6 +192,7 @@ export function validSnapshot(snapshot) {
       !object(snapshot.meta) || !Object.values(snapshot.meta).every(string) || !validCurrencyMeta(snapshot.meta) ||
       (snapshot.meta.loan_installment_semantics != null && snapshot.meta.loan_installment_semantics !== 'explicit_v1')) return false;
   if (!validRetiredRuleHistory(snapshot.meta)) return false;
+  if (Object.keys(snapshot.meta).some((key) => key.startsWith('credit_card_posting_dates/'))) return false;
   const ids = {};
   for (const [section, spec] of Object.entries(schema)) {
     const rows = snapshot[section];
@@ -193,7 +201,8 @@ export function validSnapshot(snapshot) {
     const fields = Object.entries(spec);
     for (const row of rows) {
       if (!object(row) || !string(row.id) || !row.id.trim() || sectionIds.has(row.id) ||
-          !fields.every(([name, check]) => check(row[name]))) return false;
+          !fields.every(([name, check]) => check(row[name])) ||
+          (section !== 'transactions' && row.card_posting_date != null)) return false;
       sectionIds.add(row.id);
     }
     ids[section] = sectionIds;
@@ -226,7 +235,9 @@ export function validSnapshot(snapshot) {
       !row.loan_tracking_start_date || row.loan_tracking_start_date.slice(0, 10) >= row.loan_start_date.slice(0, 10)) &&
     validCategoryHierarchy(snapshot.categories) &&
     snapshot.budgets.every((row) => ids.categories.has(row.category_id)) &&
-    snapshot.transactions.every((row) => moneyRefs(row) && validLegacyPart(row)) &&
+    snapshot.transactions.every((row) => moneyRefs(row) && validLegacyPart(row) &&
+      (row.card_posting_date == null || (accounts.get(row.account_id).account_type === 'creditCard' &&
+        row.card_posting_date >= row.transaction_date.slice(0, 10)))) &&
     snapshot.asset_snapshots.every((row) => ids.accounts.has(row.account_id)) &&
     snapshot.transaction_templates.every((row) => moneyRefs(row) && !hasLegacyPart(row)) &&
     snapshot.recurring_transaction_rules.every((row) => moneyRefs(row) && !hasLegacyPart(row));

@@ -10,6 +10,7 @@ import '../../core/models/category.dart';
 import '../../core/models/transaction.dart';
 import '../../core/theme/finance_theme.dart';
 import '../../core/utils/id_generator.dart';
+import '../shared/card_posting_date_field.dart';
 import '../shared/compass_ui.dart';
 import '../shared/finance_amount_field.dart';
 import 'transaction_form_dialog.dart';
@@ -22,6 +23,7 @@ class TransactionComposerPage extends StatefulWidget {
     this.editExisting = false,
     this.title,
     this.allowRecurringGeneration = true,
+    this.isPresetDefinition = false,
   });
 
   final FinanceRepository repository;
@@ -29,6 +31,7 @@ class TransactionComposerPage extends StatefulWidget {
   final bool editExisting;
   final String? title;
   final bool allowRecurringGeneration;
+  final bool isPresetDefinition;
 
   @override
   State<TransactionComposerPage> createState() =>
@@ -39,6 +42,7 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
   late TransactionType type;
   late TransactionStatus status;
   late DateTime date;
+  DateTime? cardPostingDate;
   late String? accountId;
   late String? toAccountId;
   int? loanInstallmentNumber;
@@ -78,6 +82,7 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
     type = draft?.type ?? TransactionType.expense;
     status = draft?.status ?? TransactionStatus.actual;
     date = draft?.transactionDate ?? DateTime.now();
+    cardPostingDate = widget.editExisting ? draft?.cardPostingDate : null;
     accountId = draft == null
         ? _entryAccounts().firstOrNull?.id
         : _entryAccounts()
@@ -469,19 +474,26 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
                           horizontal: 6,
                           vertical: 0,
                         ),
-                        onSelected: (_) => setState(() {
-                          date = DateTime(
-                            entry.date.year,
-                            entry.date.month,
-                            entry.date.day,
-                            date.hour,
-                            date.minute,
-                          );
-                        }),
+                        onSelected: (_) => _setDate(DateTime(
+                          entry.date.year,
+                          entry.date.month,
+                          entry.date.day,
+                          date.hour,
+                          date.minute,
+                        )),
                       ),
                   ],
                 ),
               ),
+              if (!widget.isPresetDefinition &&
+                  account != null &&
+                  account.accountType == AccountType.creditCard)
+                CardPostingDateField(
+                  source: account,
+                  transactionDate: date,
+                  value: cardPostingDate,
+                  onChanged: (value) => setState(() => cardPostingDate = value),
+                ),
               const SizedBox(height: 10),
               InkWell(
                 onTap: () => setState(() => moreExpanded = !moreExpanded),
@@ -728,6 +740,7 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
       final loanPayment = _isStructuredLoanPayment ? _loanPayment : null;
       setState(() {
         accountId = value.id;
+        if (value.accountType != AccountType.creditCard) cardPostingDate = null;
         if (toAccountId == value.id) toAccountId = null;
         final loanCurrency = _account(toAccountId)?.currency;
         if (loanPayment != null &&
@@ -806,6 +819,7 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
     setState(() {
       type = selected.type;
       status = selected.status;
+      cardPostingDate = null;
       accountId = _entryAccounts()
           .where((a) => a.id == selected.accountId)
           .firstOrNull
@@ -889,7 +903,16 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
       firstDate: DateTime(2020),
       lastDate: DateTime(2100),
     );
-    if (value != null) setState(() => date = value);
+    if (value != null && mounted) _setDate(value);
+  }
+
+  void _setDate(DateTime value) {
+    setState(() {
+      date = value;
+      if (cardPostingDate?.isBefore(DateUtils.dateOnly(value)) == true) {
+        cardPostingDate = null;
+      }
+    });
   }
 
   Future<void> _pickRecurrenceMonths() async {
@@ -1115,6 +1138,10 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
       recordDate:
           widget.editExisting && draft != null ? draft.recordDate : date,
       transactionDate: date,
+      cardPostingDate:
+          _account(accountId)?.accountType == AccountType.creditCard
+              ? cardPostingDate
+              : null,
       status: status,
       recurringRuleId: widget.editExisting ? draft?.recurringRuleId : null,
       merchant: _emptyToNull(merchantController.text),

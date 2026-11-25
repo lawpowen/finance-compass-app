@@ -472,6 +472,52 @@ test('v3 validates loan identities, explicit zero principal and both monetary un
     loan_tracking_start_date: '2026-04-24' }] }), false);
 });
 
+test('card posting dates are real local days on source-card transactions only', async () => {
+  const { validSnapshot } = await import('./snapshot.mjs');
+  const source = { ...account, id: 'uob', account_type: 'creditCard', report_group: 'credit' };
+  const row = { ...fixture.transactions[0], account_id: source.id,
+    transaction_date: '2024-02-28T23:59:59.999-05:00' };
+  const ledger = { ...fixture, accounts: [...fixture.accounts, source], transactions: [row] };
+  const valid = (overrides) => validSnapshot({ ...ledger, transactions: [{ ...row, ...overrides }] });
+  assert.equal(validSnapshot(fixture), true);
+  for (const day of [null, '2024-02-28', '2024-02-29', '2024-03-01']) {
+    assert.equal(valid({ card_posting_date: day }), true);
+  }
+  for (const day of ['2024-02-27', '2024-02-30', '2025-02-29', '2024-13-01',
+    '2024-02-00', '2024-3-01', '2024-03-01T00:00:00Z', '2024-03-01\n', 20240301, '']) {
+    assert.equal(valid({ card_posting_date: day }), false, JSON.stringify(day));
+  }
+  assert.equal(valid({ type: 'transfer', to_account_id: account.id, card_posting_date: '2024-02-29' }), true);
+  assert.equal(valid({ type: 'transfer', account_id: account.id, to_account_id: source.id,
+    card_posting_date: '2024-02-29' }), false);
+  for (const section of ['transaction_templates', 'recurring_transaction_rules']) {
+    assert.equal(validSnapshot({ ...ledger, [section]: [{ ...fixture[section][0],
+      account_id: source.id, card_posting_date: '2026-11-26' }] }), false);
+  }
+  assert.equal(validSnapshot({ ...ledger, meta: { 'credit_card_posting_dates/transactions': '{}' } }), false);
+  assert.equal(validSnapshot({ ...ledger, meta: { 'credit_card_posting_dates/other': '{}' } }), false);
+});
+
+test('sync preserves the source posting day and rejects an invalid update without advancing the ledger', async (t) => {
+  const store = openStore(':memory:');
+  await store.provision(username, password);
+  const request = await createHarness(t, store);
+  const cookie = await signIn(request);
+  const source = { ...account, id: 'uob', account_type: 'creditCard', report_group: 'credit' };
+  const target = { ...source, id: 'laz' };
+  const payment = { id: 'credit-payment', type: 'transfer', account_id: source.id, to_account_id: target.id,
+    amount: 241.94, currency: 'MYR', transaction_date: '2026-11-25T23:58:00', card_posting_date: '2026-11-26' };
+  const ledger = { ...fixture, accounts: [account, source, target], transactions: [payment] };
+  const write = (baseRevision, operationId, snapshot) =>
+    request('/ledger', { method: 'PUT', cookie, body: { baseRevision, operationId, snapshot } });
+  assert.equal((await write(0, 'posting-roundtrip-write', ledger)).status, 200);
+  const invalid = { ...ledger, transactions: [{ ...payment, card_posting_date: '2026-11-24' }] };
+  assert.equal((await write(1, 'posting-invalid-change', invalid)).status, 400);
+  const stored = await (await request('/ledger', { cookie })).json();
+  assert.equal(stored.revision, 1);
+  assert.deepEqual(stored.snapshot, ledger);
+});
+
 test('currency quotes use finite positive rates and preserve historical units', async () => {
   const { validSnapshot } = await import('./snapshot.mjs');
   const withRates = (rates) => ({ ...fixture, meta: { exchange_rates_to_base_json: JSON.stringify(rates) } });

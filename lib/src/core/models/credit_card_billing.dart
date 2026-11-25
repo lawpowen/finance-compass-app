@@ -87,11 +87,10 @@ bool hasCreditCardBilledActivity({
     now: today,
   );
   return transactions.any((transaction) {
-    final transactionDate = _dateOnly(transaction.transactionDate);
     return transaction.affectsBalance &&
-        !transactionDate.isAfter(today) &&
         transaction.accountId == account.id &&
-        period.containsBilled(transactionDate);
+        period.containsBilled(
+            creditCardSourceBillingDate(transaction, account.id));
   });
 }
 
@@ -112,7 +111,7 @@ class CreditCardBillingPeriod {
   /// the month that just ended; other statement days remain in their calendar
   /// month as expected.
   DateTime get billingMonthDate =>
-      statementDate.subtract(const Duration(days: 1));
+      DateTime(statementDate.year, statementDate.month, statementDate.day - 1);
 
   bool containsBilled(DateTime value) {
     final date = _dateOnly(value);
@@ -157,7 +156,8 @@ CreditCardBillingPeriod calculateCreditCardBillingPeriodForStatement({
     normalizedStatementDate.month - 1,
     statementDay,
   );
-  final cycleStartDate = previousStatementDate.add(const Duration(days: 1));
+  final cycleStartDate = DateTime(previousStatementDate.year,
+      previousStatementDate.month, previousStatementDate.day + 1);
   final nextStatementDate = _clampedDate(
     normalizedStatementDate.year,
     normalizedStatementDate.month + 1,
@@ -203,7 +203,7 @@ List<CreditCardBillingPeriod> availableCreditCardBillingPeriods({
   DateTime? earliestDate;
   DateTime? latestFutureChargeDate;
   for (final transaction in relevantTransactions) {
-    final date = _dateOnly(transaction.transactionDate);
+    final date = creditCardSourceBillingDate(transaction, account.id);
     if (earliestDate == null || date.isBefore(earliestDate)) {
       earliestDate = date;
     }
@@ -265,7 +265,8 @@ double calculateCreditCardStatementAmount({
   for (final transaction in transactions) {
     if (!transaction.affectsBalance ||
         transaction.accountId != accountId ||
-        !period.containsBilled(transaction.transactionDate)) {
+        !period.containsBilled(
+            creditCardSourceBillingDate(transaction, accountId))) {
       continue;
     }
     amount += creditCardSourceCharge(transaction, accountId);
@@ -296,7 +297,12 @@ double calculateCreditCardOriginalStatementAmount({
     (transaction) =>
         transaction.affectsBalance &&
         transaction.accountId == accountId &&
-        period.containsBilled(transaction.transactionDate),
+        (period.containsBilled(
+                creditCardSourceBillingDate(transaction, accountId)) ||
+            // A documented deferral out of this period can leave a genuine
+            // zero statement; a later bank payment is not evidence to replace it.
+            (transaction.cardPostingDate != null &&
+                period.containsBilled(transaction.transactionDate))),
   );
   if (hasSourceRecords) {
     return calculateCreditCardStatementAmount(
@@ -333,6 +339,17 @@ double creditCardSourceCharge(FinanceTransaction transaction, String cardId) {
   };
 }
 
+/// Only the source card uses its bank posting day. Payments received by a
+/// card always retain the economic day, even when the payer is another card.
+DateTime creditCardSourceBillingDate(
+        FinanceTransaction transaction, String cardId) =>
+    _dateOnly(transaction.accountId == cardId
+        ? transaction.cardPostingDate ?? transaction.transactionDate
+        : transaction.transactionDate);
+
+DateTime estimatedCreditCardDueDate(DateTime asOf) =>
+    DateTime(asOf.year, asOf.month + 1, 25);
+
 CreditCardBillingSummary calculateCreditCardBilling({
   required Account account,
   required Iterable<FinanceTransaction> transactions,
@@ -365,7 +382,10 @@ CreditCardBillingSummary calculateCreditCardBilling({
     if (balanceAtCutoff == null) {
       signedBalance += charge - _incomingPayment(entry, account.id);
     }
-    if (reference.containsUnbilled(day)) nextConfirmed += charge;
+    if (reference
+        .containsUnbilled(creditCardSourceBillingDate(entry, account.id))) {
+      nextConfirmed += charge;
+    }
   }
   final outstanding = math.max(0.0, -signedBalance);
   if (!configured) {
@@ -373,7 +393,7 @@ CreditCardBillingSummary calculateCreditCardBilling({
       outstandingBalance: outstanding,
       billedBalance: outstanding,
       unbilledBalance: 0,
-      dueDate: _clampedDate(today.year, today.month + 1, 25),
+      dueDate: estimatedCreditCardDueDate(today),
       isEstimated: true,
     );
   }
@@ -394,8 +414,16 @@ CreditCardBillingSummary calculateCreditCardBilling({
     if (day.isBefore(firstDay)) firstDay = day;
     openingDebt += payment - charge;
     if (charge != 0) {
-      final cut = _chargeStatement(day, account.statementDay!);
-      charges[cut] = (charges[cut] ?? 0) + charge;
+      final billingDay = creditCardSourceBillingDate(entry, account.id);
+      final cut =
+          creditCardChargeStatementDate(billingDay, account.statementDay!);
+      if (billingDay.isAfter(today)) {
+        // It already affects the signed balance and openingDebt. Until the
+        // posting day a pending refund cannot pay down an older printed bill.
+        if (cut == reference.nextStatementDate) nextConfirmed += charge;
+      } else {
+        charges[cut] = (charges[cut] ?? 0) + charge;
+      }
     }
     if (payment != 0) {
       payments.add(entry);
@@ -442,9 +470,9 @@ CreditCardBillingSummary calculateCreditCardBilling({
     final applied = math.min(amount, credit);
     final remaining = amount - applied;
     credit -= applied;
-    if (date.isAfter(reference.statementDate)) {
-      unbilled += remaining;
-    } else if (remaining >= .005) {
+    if (date == reference.nextStatementDate) {
+      unbilled = remaining;
+    } else if (!date.isAfter(reference.statementDate) && remaining >= .005) {
       final period = calculateCreditCardBillingPeriodForStatement(
         statementDay: account.statementDay!,
         paymentDueDay: account.paymentDueDay!,
@@ -484,10 +512,12 @@ double _incomingPayment(FinanceTransaction transaction, String cardId) =>
         ? transaction.transferInAmount
         : 0;
 
-DateTime _chargeStatement(DateTime date, int statementDay) {
-  final cut = _clampedDate(date.year, date.month, statementDay);
-  return date.isAfter(cut)
-      ? _clampedDate(date.year, date.month + 1, statementDay)
+/// The first closing date on or after the charge's local billing day.
+DateTime creditCardChargeStatementDate(DateTime date, int statementDay) {
+  final day = _dateOnly(date);
+  final cut = _clampedDate(day.year, day.month, statementDay);
+  return day.isAfter(cut)
+      ? _clampedDate(day.year, day.month + 1, statementDay)
       : cut;
 }
 

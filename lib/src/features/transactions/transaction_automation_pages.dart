@@ -197,7 +197,10 @@ class QuickTemplateManagerPage extends ConsumerWidget {
     final result = await Navigator.of(context).push<TransactionFormResult>(
       MaterialPageRoute(
         fullscreenDialog: true,
-        builder: (_) => TransactionComposerPage(repository: current),
+        builder: (_) => TransactionComposerPage(
+          repository: current,
+          isPresetDefinition: true,
+        ),
       ),
     );
     if (result == null || result.transactions.isEmpty || !context.mounted) {
@@ -492,6 +495,7 @@ class _TemplateEditorPageState extends ConsumerState<TemplateEditorPage> {
         builder: (_) => TransactionComposerPage(
           repository: ledger,
           draft: draft,
+          isPresetDefinition: true,
         ),
       ),
     );
@@ -750,6 +754,7 @@ class _RecurringPlanPageState extends ConsumerState<RecurringPlanPage> {
         builder: (_) => TransactionComposerPage(
           repository: repository,
           allowRecurringGeneration: false,
+          isPresetDefinition: true,
         ),
       ),
     );
@@ -1034,6 +1039,7 @@ class _RecurringRuleEditorPageState
         builder: (_) => TransactionComposerPage(
           repository: ledger,
           draft: draft,
+          isPresetDefinition: true,
         ),
       ),
     );

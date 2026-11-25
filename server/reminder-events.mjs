@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { validMoney } from './snapshot.mjs';
+import { parseCalendarDay, validMoney } from './snapshot.mjs';
 
 const advanceDays = 3;
 const epsilon = 0.005;
@@ -7,9 +7,7 @@ const dayMilliseconds = 86_400_000;
 
 function parseDay(value) {
   const prefix = typeof value === 'string' && /^\d{4}-\d{2}-\d{2}(?=T|$)/.exec(value)?.[0];
-  if (!prefix) return null;
-  const date = new Date(`${prefix}T00:00:00.000Z`);
-  return Number.isFinite(date.valueOf()) && dayKey(date) === prefix ? date : null;
+  return parseCalendarDay(prefix);
 }
 
 const dayKey = (date) => date.toISOString().slice(0, 10);
@@ -192,6 +190,7 @@ function creditBilledBalance(account, transactions, statement, today) {
   const charges = new Map();
   const payments = [];
   const addCharge = (cut, amount) => charges.set(+cut, (charges.get(+cut) ?? 0) + amount);
+  let pendingForStatement = 0;
   let openingDebt = -balanceAsOf(account, transactions, today);
   let firstDay = today;
   for (const item of transactions) {
@@ -203,9 +202,14 @@ function creditBilledBalance(account, transactions, statement, today) {
     if (item.date < firstDay) firstDay = item.date;
     openingDebt += payment - charge;
     if (charge !== 0) {
-      const month = monthNumber(item.date);
-      const cut = monthDay(month, account.statement_day);
-      addCharge(item.date <= cut ? cut : monthDay(month + 1, account.statement_day), charge);
+      const billingDate = parseCalendarDay(item.card_posting_date) ?? item.date;
+      const month = monthNumber(billingDate);
+      const close = monthDay(month, account.statement_day);
+      const cut = billingDate <= close ? close : monthDay(month + 1, account.statement_day);
+      // Only posted credits can cover other statements. A pending posting may
+      // affect the requested upcoming statement's estimated notice.
+      addCharge(cut, billingDate <= today ? charge : 0);
+      if (billingDate > today && +cut === +statement) pendingForStatement += charge;
     }
     if (payment !== 0) payments.push(item);
   }
@@ -225,10 +229,9 @@ function creditBilledBalance(account, transactions, statement, today) {
   }
   for (const charge of charges.values()) if (charge < 0) credit -= charge;
   for (const [closed, charge] of [...charges].sort(([a], [b]) => a - b)) {
-    if (charge <= 0) continue;
-    const applied = Math.min(credit, charge);
-    credit -= applied;
-    if (closed === +statement) return charge - applied;
+    const debit = Math.max(0, charge);
+    if (closed === +statement) return Math.max(0, debit + pendingForStatement - credit);
+    credit = Math.max(0, credit - debit);
   }
   return 0;
 }

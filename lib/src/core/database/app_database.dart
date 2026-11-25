@@ -26,6 +26,7 @@ import 'tables/transaction_templates_table.dart';
 import 'tables/recurring_transaction_rules_table.dart';
 
 part 'app_database.g.dart';
+part 'credit_card_posting_storage.dart';
 part 'investment_snapshot_upgrade.dart';
 part 'loan_installment_storage.dart';
 
@@ -198,15 +199,18 @@ class AppDatabase extends _$AppDatabase {
         .toList();
   }
 
-  Future<List<model.FinanceTransaction>> fetchTransactions() async {
-    final links = await _readLoanLinks(_loanTransactions);
-    return (await select(transactions).get())
-        .map((row) => _transactionModel(row, links[row.id]))
-        .toList();
-  }
+  Future<List<model.FinanceTransaction>> fetchTransactions() =>
+      super.transaction(() async {
+        final links = await _readLoanLinks(_loanTransactions);
+        final postingDates = await _readCardPostingDates();
+        return (await select(transactions).get())
+            .map((row) =>
+                _transactionModel(row, links[row.id], postingDates[row.id]))
+            .toList();
+      });
 
   model.FinanceTransaction _transactionModel(Transaction row,
-      [Map<String, dynamic>? link]) {
+      [Map<String, dynamic>? link, DateTime? postingDate]) {
     return model.FinanceTransaction(
       id: row.id,
       loanInstallmentNumber: link?['loan_installment_number'] as int?,
@@ -223,6 +227,7 @@ class AppDatabase extends _$AppDatabase {
       toCurrency: row.toCurrency,
       recordDate: row.recordDate ?? row.transactionDate,
       transactionDate: row.transactionDate,
+      cardPostingDate: postingDate,
       status: enumByName(model.TransactionStatus.values,
           row.status ?? model.TransactionStatus.actual.name),
       recurringRuleId: row.recurringRuleId,
@@ -659,6 +664,7 @@ class AppDatabase extends _$AppDatabase {
             transactionItems: transactionItems,
             snapshotItems: snapshotItems);
         await _saveSeedLoanLinks(transactionItems);
+        await _patchCardPostingDates(transactionItems);
         await _rebuildInvestmentCaches(accountItems, snapshotItems);
       });
 
@@ -827,6 +833,8 @@ class AppDatabase extends _$AppDatabase {
           batch.insertAll(
             appMeta,
             metaValues.entries
+                .where((entry) =>
+                    !entry.key.startsWith(model.creditCardPostingMetaPrefix))
                 .map(
                   (entry) => AppMetaCompanion.insert(
                     key: entry.key,
@@ -860,6 +868,7 @@ class AppDatabase extends _$AppDatabase {
             _investmentSemanticsKey, _immutableInvestmentSemantics);
       }
       await _replaceLoanLinks(_loanTransactions, transactionItems);
+      await _patchCardPostingDates(transactionItems);
       await _replaceLoanLinks(_loanTemplates, templateItems);
       await _replaceLoanLinks(_loanRules, recurringRuleItems);
       if (metaValues == null) {
@@ -1491,6 +1500,7 @@ class AppDatabase extends _$AppDatabase {
             .write(_transactionCompanion(entry));
         _collectBalanceChanges(changes, entry);
         await _patchLoanLinks(_loanTransactions, links, [entry], [entry.id]);
+        await _patchCardPostingDates([entry], removed: [entry.id]);
         await _updateBalanceCaches(changes);
       });
 
@@ -1538,6 +1548,7 @@ class AppDatabase extends _$AppDatabase {
         _collectBalanceChanges(changes, entry);
       }
       await _patchLoanLinks(_loanTransactions, links, insertItems, ids);
+      await _patchCardPostingDates(insertItems, removed: ids);
       await _updateBalanceCaches(changes);
     });
   }

@@ -14,6 +14,153 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test(
+      'v3 transports card posting days on rows and cannot import the private index',
+      () async {
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    var repo = await FinanceRepository.load(db);
+    final snapshot = await repo.buildJsonSnapshotPayload();
+    snapshot['accounts'] = [
+      {
+        'id': 'card',
+        'name': 'Card',
+        'account_type': 'creditCard',
+        'report_group': 'credit',
+        'currency': 'MYR',
+        'current_balance': -30
+      },
+    ];
+    final purchase = {
+      'id': 'posted',
+      'type': 'expense',
+      'account_id': 'card',
+      'amount': 15,
+      'transaction_date': '2026-11-25T18:31:00.000',
+    };
+    snapshot['transactions'] = [
+      {...purchase, 'card_posting_date': '2026-11-26'},
+      {...purchase, 'id': 'legacy'},
+    ];
+    const internal = 'credit_card_posting_dates/transactions';
+    const injected = 'credit_card_posting_dates/untrusted';
+    (snapshot['meta'] as Map<String, String>).addAll({
+      internal: '{"legacy":"2027-01-01","posted":"2099-01-01"}',
+      injected: 'untrusted',
+    });
+    repo = await repo.restoreSyncedSnapshot(snapshot);
+    expect(await db.getMetaValue(injected), isNull);
+    expect(jsonDecode((await db.getMetaValue(internal))!),
+        {'posted': '2026-11-26'});
+
+    // Test the export filter independently, including future keys in this namespace.
+    await db.setMetaValue(injected, 'private');
+    final exported =
+        jsonDecode(utf8.decode(await repo.exportJsonSnapshotBytes()))
+            as Map<String, dynamic>;
+    expect(exported['format_version'], 3);
+    expect(exported['schema_version'], 9);
+    expect(
+        (exported['meta'] as Map).keys.where(
+            (key) => key.toString().startsWith('credit_card_posting_dates/')),
+        isEmpty);
+    final rows =
+        (exported['transactions'] as List).cast<Map<String, dynamic>>();
+    expect(rows.singleWhere((r) => r['id'] == 'posted')['card_posting_date'],
+        '2026-11-26');
+    expect(
+        rows
+            .singleWhere((r) => r['id'] == 'legacy')
+            .containsKey('card_posting_date'),
+        isFalse);
+    repo = await repo.restoreSyncedSnapshot(exported);
+    final posted = repo.transactions.singleWhere((tx) => tx.id == 'posted');
+    expect(posted.cardPostingDate, DateTime(2026, 11, 26));
+    expect(posted.transactionDate, DateTime(2026, 11, 25, 18, 31));
+    expect(
+        repo.transactions
+            .singleWhere((tx) => tx.id == 'legacy')
+            .cardPostingDate,
+        isNull);
+    expect(repo.accounts.single.currentBalance, -30);
+
+    rows.singleWhere((r) => r['id'] == 'posted').remove('card_posting_date');
+    repo = await repo.restoreSyncedSnapshot(exported);
+    expect(repo.transactions.every((t) => t.cardPostingDate == null), isTrue);
+    expect(await db.getMetaValue(internal), isNull);
+    expect(repo.accounts.single.currentBalance, -30);
+  });
+
+  test(
+      'invalid card posting days fail manual and sync restore without replacing the ledger',
+      () async {
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    final repo = await (await FinanceRepository.load(db)).addAccount(
+      const Account(
+          id: 'original',
+          name: 'Original',
+          accountType: AccountType.cash,
+          reportGroup: ReportGroup.cash,
+          currency: 'MYR',
+          currentBalance: 77),
+    );
+    final snapshot = await repo.buildJsonSnapshotPayload();
+    snapshot['accounts'] = [
+      {
+        'id': 'card',
+        'name': 'Card',
+        'account_type': 'creditCard',
+        'report_group': 'credit'
+      },
+      {
+        'id': 'cash',
+        'name': 'Cash',
+        'account_type': 'cash',
+        'report_group': 'cash'
+      },
+    ];
+    for (final invalid in <Map<String, Object>>[
+      {'card_posting_date': '2026-02-30'},
+      {'card_posting_date': '2026-11-26T00:00:00'},
+      {'card_posting_date': 20261126},
+      {'card_posting_date': '2026-11-24'},
+      {
+        'account_id': 'cash',
+        'to_account_id': 'card',
+        'card_posting_date': '2026-11-26'
+      },
+      {
+        'transaction_date': '2026-11-26T00:01:00+14:00',
+        'card_posting_date': '2026-11-25'
+      },
+    ]) {
+      snapshot['transactions'] = [
+        {
+          'id': 'invalid',
+          'type': 'transfer',
+          'account_id': 'card',
+          'to_account_id': 'cash',
+          'amount': 5,
+          'transaction_date': '2026-11-25T23:59:00',
+          ...invalid
+        },
+      ];
+      await expectLater(
+          repo.restoreSyncedSnapshot(snapshot), throwsA(isA<FormatException>()),
+          reason: '$invalid sync');
+      await expectLater(
+          repo.importJsonSnapshotBytes(
+              Uint8List.fromList(utf8.encode(jsonEncode(snapshot)))),
+          throwsA(isA<FormatException>()),
+          reason: '$invalid import');
+      final intact = await FinanceRepository.load(db);
+      expect(intact.accounts.single.id, 'original');
+      expect(intact.accounts.single.currentBalance, 77);
+      expect(intact.transactions, isEmpty);
+    }
+  });
+
   test('explicit loan identity survives presets and repeated v3 restores',
       () async {
     final db = AppDatabase.forTesting(NativeDatabase.memory());
@@ -460,6 +607,7 @@ void main() {
     expect(repository.transactions.single.recordDate, DateTime(2026, 6, 20));
     expect(
         repository.transactions.single.transactionDate, DateTime(2026, 6, 20));
+    expect(repository.transactions.single.cardPostingDate, isNull);
 
     await file.writeAsString(jsonEncode({
       'format_version': 3,
@@ -483,6 +631,7 @@ void main() {
           'currency': 'MYR',
           'record_date': '2026-06-20T00:00:00.000',
           'transaction_date': '2026-06-25T00:00:00.000',
+          'card_posting_date': '2026-06-26',
           'status': 'actual',
         }
       ],
@@ -491,6 +640,8 @@ void main() {
     expect(repository.transactions.single.recordDate, DateTime(2026, 6, 20));
     expect(
         repository.transactions.single.transactionDate, DateTime(2026, 6, 25));
+    expect(
+        repository.transactions.single.cardPostingDate, DateTime(2026, 6, 26));
 
     await database.close();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger

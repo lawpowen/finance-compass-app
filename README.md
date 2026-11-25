@@ -1,6 +1,6 @@
 # Finance Compass
 
-应用版本为 `0.10.1+45`。GitHub 的 [`v0.10.1`](https://github.com/lawpowen/finance-compass-app/releases/tag/v0.10.1) 于 2026-09-29 公开发布，详见[发布 QA](docs/public-release-qa-v0.10.1-2026-09-29.md)。当前源码的同步 Web 版本为 Web 25，详见[变更记录](docs/CHANGELOG.md)。
+应用版本为 `0.10.1+45`。GitHub 的 [`v0.10.1`](https://github.com/lawpowen/finance-compass-app/releases/tag/v0.10.1) 于 2026-09-29 公开发布，详见[发布 QA](docs/public-release-qa-v0.10.1-2026-09-29.md)。当前源码的同步 Web 版本为 Web 26，详见[变更记录](docs/CHANGELOG.md)。
 
 完整中文需求与设计文档请看：[finance-app-design.md](finance-app-design.md)。
 
@@ -56,7 +56,7 @@ APK 使用 Finance Compass 独立发布密钥签名。首次侧载时，Android 
 
 - 全应用交互门禁：可见箭头和启用控件必须执行真实操作；周期规则、预算月份、报表区间、货币格式和应用内提醒均已接入，计划能力明确禁用。
 - 交易页顶部三种口径为“实际消费”“实际现金”“信用/贷款”；“实际现金”卡以“需准备现金”为副标题，把已知现金流出与尚未安排的到期信用卡/贷款合并，已安排还款不重复计算，不再额外占用独立大卡。未来月份的现金流出按现金账户整笔进出计算，贷款转账使用完整月供。
-- 报表收入/支出统一为实际现金流入/流出；资产目标按不扣除信用卡和贷款的总资产计算；信用账户还款使用“选择同币种现金账户 → 确认金额”的专用流程。
+- 报表收入/支出统一为实际现金流入/流出；资产目标按不扣除信用卡和贷款的总资产计算；信用卡及 PayLater 还款可选同币种现金账户或其他信用卡，再确认金额和日期。贷款月供使用同币种现金账户。
 - 月度预算是按生效月延续的规则：新月份金额只覆盖该月及以后，更早月份继续使用当时有效的旧规则。
 
 - Cross-platform Flutter app for Android, Windows, iOS, macOS, Linux, and Web targets.

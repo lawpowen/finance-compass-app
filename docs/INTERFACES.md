@@ -18,13 +18,15 @@ Web 自托管版没有 JSON/REST/GraphQL 服务端接口。Caddy 仅提供静态
 
 ## JSON v3
 
+Web 26 的可选交易行字段 `card_posting_date` 用于来源信用卡账单归期；格式及验证见[数据设计](DATA_DESIGN.md)。
+
 顶层字段：`format_version=3`、`transaction_date_semantics=occurrence_date`、`app_version`、`schema_version`、`exported_at`、`meta`、`accounts`、`categories`、`budgets`、`transactions`、`asset_snapshots`、`transaction_templates`、`recurring_transaction_rules`。
 
 完整导出读取 `core/app_version.dart` 的应用版本，测试核对其值与 `pubspec.yaml` 一致。判断数据格式使用 `format_version` 和 `schema_version`，界面版本见设置中的版本信息。JSON 同时携带 `initial_balance`、`current_balance` 与流水。同步修订号、操作 ID 和会话在 JSON 账本之外。余额语义见[账户余额的计算与保存](DATA_DESIGN.md#账户余额的计算与保存)。
 
 `accounts` 的贷款扩展字段为 `loan_principal`、`loan_annual_interest_rate`、`loan_term_months`、`loan_start_date`（合同开始日）、`loan_tracking_start_date`（开始记账日）、`loan_payment_day`、`loan_repayment_method` 和可空的 `loan_quoted_monthly_payment`。日期使用 ISO-8601。JSON v3 保持向后兼容：旧备份缺少追踪日期时按 `NULL` 导入并回退使用合同开始日；新备份的 `schema_version=9`，旧应用可能忽略未知字段，因此回滚前必须保留 v9 恢复点。
 
-导入按整份账本替换。导入前展示数量摘要并要求确认。原生端在路径可用时自动建立 JSON 恢复点，Web 端可从界面下载当前账本。空文件、缺少财务数据或枚举/日期格式错误会拒绝导入。兼容旧信用卡资料时，若 `record_date` 与 `transaction_date` 不同，以 `record_date` 作为实际发生日期写入两个字段；信用卡账期由账户级 `statement_day` 推导。
+导入按整份账本替换。导入前展示数量摘要并要求确认。原生端在路径可用时自动建立 JSON 恢复点，Web 端可从界面下载当前账本。空文件、缺少财务数据或枚举/日期格式错误会拒绝导入。兼容 v1/v2 的旧信用卡资料时，若 `record_date` 与 `transaction_date` 不同，以 `record_date` 作为实际发生日期写入两个字段；信用卡账期由账户级 `statement_day` 推导。
 
 Android/桌面端通过系统文件选择器读取 `.json`，并由同一文件选择器把非空字节直接写入用户选定的文档 URI；Android 写入异常必须返回应用，不能把已创建但未写入的 0 KB 文档报告为成功。应用不会把导出路径写死到公共存储。设置页还可生成最近 6 个月的 AI 摘要 JSON，以及未来 24 个月计划表 CSV。导入完成后 mutation provider 会重新载入 `FinanceRepository`，界面退回主路由，因此账户、交易、预算、模板和周期规则立即使用新快照且不保留引用旧 repository 的详情页。
 
@@ -57,7 +59,7 @@ Android/桌面端通过系统文件选择器读取 `.json`，并由同一文件�
 
 `FinanceRepository.actualCashFlowSummaryForMonth(monthKey, includePlanned, accountId, type, categoryId)` 与复数月份版本 `actualCashFlowSummaryForMonths` 返回 `CashFlowSummary(inflow, outflow)`。它们只计算 `ReportGroup.cash` 的真实增减，筛选参数先选择交易集合再计算现金两端；默认排除 `planned`。`actualCashOutflowByCategoryForMonths` 将无类别的还款/转账流出放入 `uncategorizedCashOutflowKey`，`actualCashOutflowByAccountForMonth` 只返回现金来源账户。报表和历史平均使用这些接口；预算消费仍使用消费支出接口。
 
-`monthlyFundingNeedForMonth(monthKey, includePlanned:, asOf:)` 返回当月已知现金流出、卡与贷款到期义务以及已覆盖部分。总需求等于已知现金流出加尚未安排的义务。信用卡逐卡按发生日和到期日建立预测时间线，月度指标统计选定月份到期的义务；贷款按目标、期号、本金和利息分别核销。已发生的非现金结算可降低欠款，只有现金付款计入现金支出覆盖。
+`monthlyFundingNeedForMonth(monthKey, includePlanned:, asOf:)` 返回当月已知现金流出、卡与贷款到期义务以及已覆盖部分。总需求等于已知现金流出加尚未安排的义务。信用卡逐卡按发生日和到期日建立预测时间线，月度指标统计选定月份到期的义务；贷款按目标、期号、本金和利息分别核销。已发生的非现金结算可降低欠款，只有现金付款计入现金支出覆盖。卡还卡同时减少目标账单并增加来源卡义务；包含预计时，两端一起进入预测，同一金额只在对应现金付款或未覆盖到期义务中计入一次。账期不全的付款卡在前瞻现金预测中，对新增卡还卡借款沿用发生日次月 25 日的估算口径。
 
 `cashForecast(asOf:, endInclusive:)` 提供同一个预测窗口内按日期查询的现金余额、期末余额和未覆盖卡款。所有卡先按各自原币核销，再按账本汇率转换到本位币。预测以起始日日终现金为基线，叠加窗口内已知现金流水，在各账期到期时为尚未覆盖的余额计入预测现金支出。之后的同账期现金还款可替换这次预测扣款。到期后的商户退款保留在卡内，可抵后续账单，不增加银行现金。每个取样点读取同一时间线。卡已停用但仍有未付账单时，金额仍进入现金需求；提醒设置和账户启用状态单独控制通知。
 
@@ -81,7 +83,7 @@ AI 摘要的 `category_rows` 与 `category_rows_by_month` 按分类 ID 标识，
 
 ## 信用账单余额接口补充
 
-信用卡账单浏览使用五个无写入接口：`availableCreditCardBillingPeriods(account, transactions, now, maximumPeriods)` 返回“未来已确定（升序）→本期→历史（倒序）”的账期列表；`calculateCreditCardBillingPeriodForStatement(statementDay, paymentDueDay, statementDate)` 重建指定结算日；`CreditCardBillingPeriod.billingMonthDate` 以结算日前一天确定用户看到的账单月份；`calculateCreditCardStatementAmount(accountId, transactions, period)` 只汇总来源卡方向的单个账期流水；`calculateCreditCardOriginalStatementAmount(accountId, transactions, period, statementAmountOverride)` 返回可在还款后继续校对的原始账单额：覆盖值优先（下限 0）；否则该期只要有来源卡流水（含净额为 0）即返回其净额；只有完全缺少来源流水时才以结算日至还款日的明确转入还款（`transferInAmount`，已验证漏记的旧到账在迁移中归一化）作为凭据，负数转账按净额抵减且结果下限 0。返回值在三级中均不为负。它不再取“交易额与还款额较大值”，因此消费 100、还款 150 返回 100。`FinanceRepository.creditCardStatementBalance` 仅保留为结算日余额审计接口，不能替代月份账单金额。选择账单月份只更新页面内存状态，不修改账户、交易或当前账单状态。
+信用卡账单浏览使用五个无写入接口：`availableCreditCardBillingPeriods(account, transactions, now, maximumPeriods)` 返回“未来已确定（升序）→本期→历史（倒序）”的账期列表；`calculateCreditCardBillingPeriodForStatement(statementDay, paymentDueDay, statementDate)` 重建指定结算日；`CreditCardBillingPeriod.billingMonthDate` 以结算日前一天确定用户看到的账单月份；`calculateCreditCardStatementAmount(accountId, transactions, period)` 只汇总来源卡方向的单个账期流水；`calculateCreditCardOriginalStatementAmount(accountId, transactions, period, statementAmountOverride)` 返回可在还款后继续校对的原始账单额：覆盖值优先（下限 0）；否则该期只要有来源卡流水（含净额为 0）即返回其净额；只有完全缺少来源流水且没有显式顺延证据时才以结算日至还款日的明确转入还款（`transferInAmount`，已验证漏记的旧到账在迁移中归一化）作为凭据，负数转账按净额抵减且结果下限 0。返回值在三级中均不为负。它不再取“交易额与还款额较大值”，因此消费 100、还款 150 返回 100。`FinanceRepository.creditCardStatementBalance` 仅保留为结算日余额审计接口，不能替代月份账单金额。选择账单月份只更新页面内存状态，不修改账户、交易或当前账单状态。
 
 ## 内部交易删除契约
 

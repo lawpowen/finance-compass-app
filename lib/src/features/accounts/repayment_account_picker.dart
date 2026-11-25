@@ -11,9 +11,13 @@ Future<Account?> pickRepaymentAccount(
   Account debt,
 ) async {
   if (!debt.isActive) return null;
+  final isCard = debt.accountType == AccountType.creditCard;
+  final emptyMessage = isCard
+      ? '请先建立或启用一个 ${debt.currency} 现金账户或其他同币种信用卡。'
+      : '请先建立或启用一个 ${debt.currency} 现金账户用于偿还贷款。';
   if (ledger.repaymentSources(debt.id).isEmpty) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('请先建立或启用一个 ${debt.currency} 资金账户。')),
+      SnackBar(content: Text(emptyMessage)),
     );
     return null;
   }
@@ -37,13 +41,14 @@ Future<Account?> pickRepaymentAccount(
           children: [
             Text('选择还款账户', style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 8),
-            if (sources.isEmpty) const Text('当前没有可用的还款账户。'),
+            if (sources.isEmpty) Text(emptyMessage),
             for (final payer in sources)
               ListTile(
                 key: ValueKey(
-                    '${debt.accountType == AccountType.creditCard ? 'credit-card' : 'loan'}-repayment-source-${payer.id}'),
+                    '${isCard ? 'credit-card' : 'loan'}-repayment-source-${payer.id}'),
                 title: Text(payer.name),
-                subtitle: Text(payer.currency),
+                subtitle: Text(
+                    '${payer.accountType == AccountType.creditCard ? '信用卡' : '现金账户'} · ${payer.currency}'),
                 trailing: const Icon(Icons.chevron_right_rounded),
                 onTap: () => Navigator.pop(sheetContext, payer),
               ),

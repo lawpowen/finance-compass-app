@@ -1051,6 +1051,9 @@ class _AccountRow extends StatelessWidget {
             cutoffDate: cutoffDate,
           )
         : null;
+    final usageAmount = creditDebt == null || isHistorical
+        ? creditDebt
+        : repository.creditCardCommittedOutstandingBalance(account.id);
     final overpaid = account.accountType == AccountType.creditCard
         ? repository.creditCardCreditBalance(
             account.id,
@@ -1075,13 +1078,11 @@ class _AccountRow extends StatelessWidget {
                 now: now,
               ),
               now: now,
-              committedOutstanding: isHistorical
-                  ? creditDebt
-                  : repository
-                      .creditCardCommittedOutstandingBalance(account.id),
+              committedOutstanding: usageAmount,
             ),
             billing,
             palette,
+            liveMonthEndDebt: isHistorical ? null : creditDebt,
           );
     final amount = creditDebt ??
         (account.accountType == AccountType.loan
@@ -1123,11 +1124,11 @@ class _AccountRow extends StatelessWidget {
       }
     }
     final creditLimit = account.creditLimit;
-    final creditUtilization = creditDebt != null &&
+    final creditUtilization = usageAmount != null &&
             creditLimit != null &&
-            creditLimit > 0 &&
-            creditDebt > 0
-        ? creditDebt / creditLimit
+            creditLimit.isFinite &&
+            creditLimit > 0
+        ? (usageAmount / creditLimit).clamp(0.0, 1.0)
         : null;
     final subtitle = billing == null
         ? [
@@ -1236,12 +1237,19 @@ class _AccountStatusExtras extends StatelessWidget {
           Wrap(
             spacing: 6,
             runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              if (cardDisplay case final display?)
+              if (cardDisplay case final display?) ...[
                 CompassStatusBadge(
                   label: display.statusLabel,
                   color: display.color,
                 ),
+                if (display.amountDue case final due?)
+                  Text('本期应还 ${compassMoney(due, currency: currency)}',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: display.color,
+                          fontFeatures: compassTabularFigures)),
+              ],
               if (overpaid > 0)
                 CompassStatusBadge(
                   label: '溢缴 ${compassMoney(overpaid, currency: currency)}',
@@ -1259,7 +1267,7 @@ class _AccountStatusExtras extends StatelessWidget {
         if (creditUtilization case final ratio?) ...[
           const SizedBox(height: 7),
           CompassDualProgressBar(
-            actualRatio: ratio.clamp(0.0, 1.0),
+            actualRatio: ratio,
             alertThreshold: 0.75,
             height: 4,
           ),
@@ -1329,75 +1337,41 @@ class _AccountAmountColumn extends StatelessWidget {
 }
 
 class _AccountCardDisplay {
-  const _AccountCardDisplay({
-    required this.amountLabel,
-    required this.amount,
-    required this.statusLabel,
-    required this.color,
-  });
+  const _AccountCardDisplay(this.statusLabel, this.color, {this.amountDue});
 
-  final String amountLabel;
-  final double amount;
   final String statusLabel;
   final Color color;
+  final double? amountDue;
 }
 
 _AccountCardDisplay _accountCardDisplay(
   CreditCardDisplayState state,
   CreditCardBillingSummary summary,
-  FinanceThemePalette palette,
-) {
-  switch (state) {
-    case CreditCardDisplayState.overdue:
-      return _AccountCardDisplay(
-        amountLabel: '逾期账单',
-        amount: summary.billedBalance,
-        statusLabel: '逾期未还',
-        color: palette.expense,
-      );
-    case CreditCardDisplayState.dueToday:
-      return _AccountCardDisplay(
-        amountLabel: '今日应还',
-        amount: summary.billedBalance,
-        statusLabel: '今日到期',
-        color: palette.expense,
-      );
-    case CreditCardDisplayState.paymentDue:
-      return _AccountCardDisplay(
-        amountLabel: '本期账单',
-        amount: summary.billedBalance,
-        statusLabel: '待还款',
-        color: palette.expense,
-      );
-    case CreditCardDisplayState.paidThisCycle:
-      return _AccountCardDisplay(
-        amountLabel: summary.unbilledBalance > 0 ? '下期已使用' : '本期账单',
-        amount: summary.unbilledBalance,
-        statusLabel: '本期已还清',
-        color: palette.income,
-      );
-    case CreditCardDisplayState.unbilledOnly:
-      return _AccountCardDisplay(
-        amountLabel: '下期已使用',
-        amount: summary.unbilledBalance,
-        statusLabel: '尚未出账',
-        color: palette.income,
-      );
-    case CreditCardDisplayState.noBalance:
-      return _AccountCardDisplay(
-        amountLabel: '当前欠款',
-        amount: 0,
-        statusLabel: '暂无欠款',
-        color: palette.income,
-      );
-    case CreditCardDisplayState.profileIncomplete:
-      return _AccountCardDisplay(
-        amountLabel: '当前欠款（估算）',
-        amount: summary.outstandingBalance,
-        statusLabel: '账期待设置',
-        color: palette.expense,
-      );
-  }
+  FinanceThemePalette palette, {
+  required double? liveMonthEndDebt,
+}) {
+  final billed = summary.billedBalance;
+  final amountDue = liveMonthEndDebt != null &&
+          billed > .005 &&
+          billed.toStringAsFixed(2) != liveMonthEndDebt.toStringAsFixed(2)
+      ? billed
+      : null;
+  return switch (state) {
+    CreditCardDisplayState.overdue =>
+      _AccountCardDisplay('逾期未还', palette.expense, amountDue: amountDue),
+    CreditCardDisplayState.dueToday =>
+      _AccountCardDisplay('今日到期', palette.expense, amountDue: amountDue),
+    CreditCardDisplayState.paymentDue =>
+      _AccountCardDisplay('待还款', palette.expense, amountDue: amountDue),
+    CreditCardDisplayState.paidThisCycle =>
+      _AccountCardDisplay('本期已还清', palette.income),
+    CreditCardDisplayState.unbilledOnly =>
+      _AccountCardDisplay('尚未出账', palette.income),
+    CreditCardDisplayState.noBalance =>
+      _AccountCardDisplay('暂无欠款', palette.income),
+    CreditCardDisplayState.profileIncomplete =>
+      _AccountCardDisplay('账期待设置', palette.expense),
+  };
 }
 
 String _groupLabel(int index) => switch (index) {

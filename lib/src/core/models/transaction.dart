@@ -11,6 +11,48 @@ enum TransactionStatus {
   settled,
 }
 
+const creditCardPostingMetaPrefix = 'credit_card_posting_dates/';
+final _cardPostingDayPattern = RegExp(r'^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
+
+/// The wire value is a calendar day, never a timestamp or a UTC conversion.
+DateTime? parseCardPostingDate(Object? value) {
+  if (value == null) return null;
+  if (value is String &&
+      value.length == 10 &&
+      _cardPostingDayPattern.hasMatch(value)) {
+    final year = int.parse(value.substring(0, 4));
+    final month = int.parse(value.substring(5, 7));
+    final day = int.parse(value.substring(8));
+    final date = DateTime(year, month, day);
+    if (date.year == year && date.month == month && date.day == day) {
+      return date;
+    }
+  }
+  throw const FormatException('信用卡账单入账日须为有效的 YYYY-MM-DD 日期。');
+}
+
+String formatCardPostingDate(DateTime date) {
+  if (date.year < 0 || date.year > 9999) {
+    throw const FormatException('信用卡账单入账日须为四位数年份。');
+  }
+  return '${date.year.toString().padLeft(4, '0')}-'
+      '${date.month.toString().padLeft(2, '0')}-'
+      '${date.day.toString().padLeft(2, '0')}';
+}
+
+void validateCardPostingDate(FinanceTransaction tx,
+    {required bool sourceIsCreditCard}) {
+  final posting = tx.cardPostingDate;
+  if (posting == null) return;
+  if (!sourceIsCreditCard) {
+    throw const FormatException('仅信用卡来源交易可设置账单入账日。');
+  }
+  final economic = tx.transactionDate.toLocal();
+  if (posting.isBefore(DateTime(economic.year, economic.month, economic.day))) {
+    throw const FormatException('信用卡账单入账日不能早于交易发生日。');
+  }
+}
+
 /// Settlement uses integer cents on both native Dart and JavaScript.
 bool isLoanMoney(double amount) {
   final cents = amount * 100;
@@ -75,13 +117,14 @@ mixin LoanInstallmentFields {
 }
 
 class FinanceTransaction with LoanInstallmentFields {
-  const FinanceTransaction({
+  FinanceTransaction({
     required this.id,
     required this.type,
     required this.accountId,
     required this.amount,
     required this.currency,
     required this.transactionDate,
+    DateTime? cardPostingDate,
     DateTime? recordDate,
     this.status = TransactionStatus.actual,
     this.recurringRuleId,
@@ -95,7 +138,11 @@ class FinanceTransaction with LoanInstallmentFields {
     this.toCurrency,
     this.description,
     this.merchant,
-  }) : recordDate = recordDate ?? transactionDate;
+  })  : recordDate = recordDate ?? transactionDate,
+        cardPostingDate = cardPostingDate == null
+            ? null
+            : DateTime(cardPostingDate.year, cardPostingDate.month,
+                cardPostingDate.day);
 
   @override
   final String id;
@@ -122,6 +169,7 @@ class FinanceTransaction with LoanInstallmentFields {
   final String? toCurrency;
   final DateTime recordDate;
   final DateTime transactionDate;
+  final DateTime? cardPostingDate;
   final TransactionStatus status;
   final String? recurringRuleId;
   @override
@@ -152,6 +200,7 @@ class FinanceTransaction with LoanInstallmentFields {
         currency: currency,
         toCurrency: toCurrency,
         transactionDate: transactionDate,
+        cardPostingDate: cardPostingDate,
         recordDate: recordDate,
         status: status,
         merchant: merchant,

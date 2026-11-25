@@ -5,10 +5,13 @@ import 'package:finance_app/src/core/database/app_database.dart'
 import 'package:finance_app/src/core/models/account.dart';
 import 'package:finance_app/src/core/models/credit_card_billing.dart';
 import 'package:finance_app/src/core/models/transaction.dart';
+import 'package:finance_app/src/core/providers/repository_provider.dart';
 import 'package:finance_app/src/core/settings/app_theme_style.dart';
 import 'package:finance_app/src/core/theme/finance_theme.dart';
 import 'package:finance_app/src/features/accounts/accounts_v2_screen.dart';
+import 'package:finance_app/src/features/shared/compass_ui.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _card = Account(
@@ -68,6 +71,15 @@ Future<FinanceRepository> _repositoryWith(
     repository = await repository.addTransactions(transactions);
   }
   return repository;
+}
+
+class _CardRepository extends FinanceRepositoryNotifier {
+  _CardRepository(this.repository);
+
+  final FinanceRepository repository;
+
+  @override
+  Future<FinanceRepository> build() async => repository;
 }
 
 void main() {
@@ -376,6 +388,7 @@ void main() {
           50,
           DateTime(today.year, today.month, 1),
         ),
+        _charge('future', 'debt', 1000, DateTime(today.year, today.month + 2)),
       ],
     );
 
@@ -418,6 +431,11 @@ void main() {
             matching: find.text('MYR 80.00')),
         findsOneWidget);
     expect(find.text('MYR 30.00'), findsNothing);
+    await tester.tap(find.text('信用'));
+    await tester.pumpAndSettle();
+    expect(find.text('额度已用 9%'), findsOneWidget); // 470 / 5000 at cutoff
+    expect(find.text('额度已用 29%'), findsNothing);
+    expect(find.textContaining('本期应还 '), findsNothing);
 
     tester.view.physicalSize = const Size(960, 844);
     await tester.pumpAndSettle();
@@ -429,6 +447,92 @@ void main() {
     expect(creditAmount, findsOneWidget);
     expect(tester.getTopLeft(creditAmount).dx,
         greaterThan(tester.getTopRight(creditLabel).dx));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('due amount, month-end debt and committed usage stay distinct',
+      (tester) async {
+    tester.view.physicalSize = const Size(390, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final today = DateUtils.dateOnly(DateTime.now());
+    final statementDay = today.day == 1 ? 15 : today.day - 1;
+    Account card(String id, double limit) => Account(
+          id: id,
+          name: id,
+          accountType: AccountType.creditCard,
+          reportGroup: ReportGroup.credit,
+          currency: 'MYR',
+          currentBalance: 0,
+          creditLimit: limit,
+          statementDay: statementDay,
+          paymentDueDay: today.day,
+        );
+    final period = calculateCreditCardBillingPeriod(
+        statementDay: statementDay, paymentDueDay: today.day, now: today);
+    final repo = await _repositoryWith([
+      card('PayLater', 1000),
+      card('Other', 0)
+    ], [
+      _charge('billed', 'PayLater', 241.94, period.statementDate),
+      _charge('unbilled', 'PayLater', 58.06, today),
+      _charge('instalment', 'PayLater', 200,
+          DateTime(today.year, today.month + 2, 1)),
+      _charge(
+          'planned', 'PayLater', 500, DateTime(today.year, today.month + 2, 2),
+          status: TransactionStatus.planned),
+      _charge('same-balance', 'Other', 20, period.statementDate),
+    ]);
+    await tester.pumpWidget(ProviderScope(
+      overrides: [
+        financeRepositoryProvider.overrideWith(() => _CardRepository(repo))
+      ],
+      child: MaterialApp(
+        theme: buildFinanceTheme(AppThemeStyle.monochrome),
+        home: Scaffold(body: AccountsV2Screen(repository: repo)),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('信用'));
+    await tester.pumpAndSettle();
+
+    final row = find
+        .ancestor(of: find.text('PayLater'), matching: find.byType(InkWell))
+        .first;
+    expect(
+        find.descendant(of: row, matching: find.text('今日到期')), findsOneWidget);
+    expect(
+        find.descendant(of: row, matching: find.text('月末欠款')), findsOneWidget);
+    expect(find.descendant(of: row, matching: find.text('MYR 300.00')),
+        findsOneWidget);
+    expect(find.descendant(of: row, matching: find.text('本期应还 MYR 241.94')),
+        findsOneWidget);
+    expect(find.text('本期应还 MYR 20.00'), findsNothing);
+    expect(find.descendant(of: row, matching: find.text('额度已用 50%')),
+        findsOneWidget);
+    final usage = tester
+        .widget<CompassDualProgressBar>(find.descendant(
+            of: row, matching: find.byType(CompassDualProgressBar)))
+        .actualRatio;
+    expect(usage, 0.5);
+    final otherRow = find
+        .ancestor(of: find.text('Other'), matching: find.byType(InkWell))
+        .first;
+    expect(
+        find.descendant(
+            of: otherRow, matching: find.byType(CompassDualProgressBar)),
+        findsNothing);
+    await tester.tap(find.text('PayLater'));
+    await tester.pumpAndSettle();
+    expect(find.text('额度使用 50%'), findsOneWidget);
+    expect(
+        tester
+            .widget<LinearProgressIndicator>(
+                find.byType(LinearProgressIndicator))
+            .value,
+        usage);
     expect(tester.takeException(), isNull);
   });
 }

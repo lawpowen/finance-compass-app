@@ -185,6 +185,54 @@ test('credit reminders use ledger balance and only account for occurred entries'
   assert.equal(reminderEvents(snapshot([{ ...card, current_balance: 0 }], [futurePayment], phase2), '2026-11-23').length, 1);
 });
 
+test('cross-card payment clears PayLater on occurrence and bills UOB on its posting date', () => {
+  const uob = { ...card, id: 'uob', name: 'UOB', statement_day: 25, payment_due_day: 14, current_balance: -241.94 };
+  const laz = { ...card, id: 'laz', name: 'Laz PayLater', statement_day: 10, payment_due_day: 25, current_balance: 0 };
+  const purchase = { id: 'purchase', account_id: laz.id, type: 'expense', amount: 241.94, transaction_date: '2026-11-03' };
+  const payment = { id: 'payment', account_id: uob.id, to_account_id: laz.id, type: 'transfer', amount: 241.94,
+    transaction_date: '2026-11-25T18:45:00', card_posting_date: '2026-11-26' };
+  const repaymentOnly = { notification_preferences_json: '[true,false]' };
+  const ledger = snapshot([uob, laz], [purchase, payment], repaymentOnly);
+  const messages = (day) => reminderEvents(ledger, day).map((event) => event.body);
+  assert.deepEqual(messages('2026-11-22'), ['「Laz PayLater」将在 2026-11-25 到期，请安排还款。']);
+  assert.deepEqual(messages('2026-11-25'), []);
+  assert.deepEqual(messages('2026-12-11'), []);
+  assert.deepEqual(messages('2026-12-14'), []);
+  assert.deepEqual(messages('2027-01-11'), ['「UOB」将在 2027-01-14 到期，请安排还款。']);
+  assert.deepEqual(messages('2027-01-14'), ['「UOB」今天到期，请尽快还款。']);
+  const ordinary = { ...payment };
+  delete ordinary.card_posting_date;
+  assert.equal(reminderEvents(snapshot([uob, laz], [purchase, ordinary], repaymentOnly),
+    '2026-12-14')[0].title, '信用卡今天到期');
+});
+
+test('a refund posted later does not suppress an earlier repayment notice before posting', () => {
+  const bill = { ...card, statement_day: 10, payment_due_day: 25, current_balance: 0 };
+  const purchase = { id: 'charge', type: 'expense', account_id: bill.id, amount: 80, transaction_date: '2026-11-09' };
+  const refund = { ...purchase, id: 'refund', amount: -80, transaction_date: '2026-11-20', card_posting_date: '2026-11-24' };
+  const ledger = snapshot([bill], [purchase, refund]);
+  assert.equal(reminderEvents(ledger, '2026-11-22')[0]?.title, '近期信用卡还款提醒');
+  assert.deepEqual(reminderEvents(ledger, '2026-11-25'), []);
+});
+
+test('a settlement-day purchase posted a day later is due one statement later', () => {
+  const uob = { ...card, statement_day: 25, payment_due_day: 14, current_balance: -80 };
+  const purchase = { id: 'charge', type: 'expense', account_id: uob.id, amount: 80,
+    transaction_date: '2026-11-25', card_posting_date: '2026-11-26' };
+  const ledger = snapshot([uob], [purchase]);
+  assert.deepEqual(reminderEvents(ledger, '2026-12-14'), []);
+  assert.equal(reminderEvents(ledger, '2027-01-14')[0]?.title, '信用卡今天到期');
+});
+
+test('estimated near-closing reminder includes only pending charges which belong to that statement', () => {
+  const nearClose = { ...card, statement_day: 25, payment_due_day: 27, current_balance: -80 };
+  const purchase = { id: 'pending', type: 'expense', account_id: nearClose.id, amount: 80,
+    transaction_date: '2026-11-24', card_posting_date: '2026-11-25' };
+  const events = (entry) => reminderEvents(snapshot([nearClose], [entry]), '2026-11-24');
+  assert.equal(events(purchase)[0]?.title, '近期信用卡还款提醒');
+  assert.deepEqual(events({ ...purchase, card_posting_date: '2026-11-26' }), []);
+});
+
 test('reminder preferences and inactive accounts suppress all applicable events', () => {
   assert.deepEqual(reminderEvents(snapshot([card, car], [], { notifications_enabled: 'false' }), '2026-11-23'), []);
   const meta = { notification_preferences_json: '[true,false,true,true,true,false,false]' };

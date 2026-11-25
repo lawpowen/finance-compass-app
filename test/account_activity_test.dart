@@ -11,12 +11,15 @@ import 'package:finance_app/src/core/providers/repository_provider.dart';
 import 'package:finance_app/src/core/settings/app_theme_style.dart';
 import 'package:finance_app/src/core/theme/finance_theme.dart';
 import 'package:finance_app/src/features/accounts/account_form_dialog.dart';
+import 'package:finance_app/src/features/accounts/credit_card_detail_screen.dart';
 import 'package:finance_app/src/features/accounts/repayment_account_picker.dart';
 import 'package:finance_app/src/features/transactions/transaction_composer_page.dart';
 import 'package:finance_app/src/features/transactions/transaction_form_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'support/amount_entry.dart';
 
 Account bank(String id) => Account(
     id: id,
@@ -49,6 +52,138 @@ Future<(AppDatabase, FinanceRepository)> setup() async {
 }
 
 void main() {
+  Account debt(String id,
+          {AccountType type = AccountType.creditCard,
+          String currency = 'MYR',
+          bool active = true}) =>
+      Account(
+          id: id,
+          name: id,
+          accountType: type,
+          reportGroup: ReportGroup.credit,
+          currency: currency,
+          isActive: active,
+          currentBalance: 0,
+          creditLimit: 5000,
+          statementDay: 20,
+          paymentDueDay: 10);
+
+  test(
+      'card repayment offers cash before other active cards in the same currency; loans require cash',
+      () async {
+    final (db, _) = await setup();
+    final repo = FinanceRepository.fromSnapshot(database: db, accounts: [
+      debt('payer'),
+      debt('PayLater'),
+      debt('loan', type: AccountType.loan),
+      bank('cash'),
+      debt('disabled', active: false),
+      debt('USD card', currency: 'USD'),
+      debt('second payer'),
+      bank('other cash'),
+    ]);
+    expect(repo.repaymentSources('PayLater').map((a) => a.id),
+        ['cash', 'other cash', 'payer', 'second payer']);
+    expect(
+        repo.repaymentSources('loan').map((a) => a.id), ['cash', 'other cash']);
+    expect(repo.repaymentSources('disabled'), isEmpty);
+    expect(repo.repaymentSources('cash'), isEmpty);
+  });
+
+  test(
+      'saving a repayment rechecks account activity after the source was picked',
+      () async {
+    final (_, original) = await setup();
+    final card = debt('PayLater');
+    final payer = debt('other card');
+    var oldLedger = await original.addAccount(card);
+    oldLedger = await oldLedger.addAccount(payer);
+    expect(oldLedger.repaymentSources(card.id).map((a) => a.id),
+        contains(payer.id));
+    await oldLedger.setAccountActive(payer.id, false);
+    await expectLater(
+        oldLedger.recordCreditCardRepayment(
+          card: card,
+          source: payer,
+          amount: 30,
+          paymentDate: DateTime.now(),
+        ),
+        throwsFormatException);
+    expect((await oldLedger.refresh()).transactions, isEmpty);
+  });
+
+  testWidgets(
+      'a backdated card-to-PayLater payment keeps its selected day and recording time',
+      (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final (db, original) = await setup();
+    final now = DateTime.now();
+    final bill = debt('PayLater');
+    final payer = debt('payer');
+    var repo = await original.addAccount(bill);
+    repo = await repo.addAccount(payer);
+    repo = await repo.addTransaction(FinanceTransaction(
+        id: 'purchase',
+        type: TransactionType.expense,
+        accountId: bill.id,
+        currency: 'MYR',
+        amount: 100,
+        transactionDate: DateTime(now.year, now.month - 2, 1)));
+    final scope = ProviderContainer(
+        overrides: [appDatabaseProvider.overrideWithValue(db)]);
+    addTearDown(scope.dispose);
+    await scope.read(financeRepositoryProvider.future);
+    await tester.pumpWidget(UncontrolledProviderScope(
+        container: scope,
+        child: MaterialApp(
+            home: CreditCardDetailScreen(account: bill, repository: repo))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('record-credit-card-repayment')));
+    await tester.pumpAndSettle();
+    final sourceTile =
+        find.byKey(const Key('credit-card-repayment-source-payer'));
+    expect(find.descendant(of: sourceTile, matching: find.text('信用卡 · MYR')),
+        findsOneWidget);
+    await tester.ensureVisible(sourceTile);
+    await tester.tap(sourceTile);
+    await tester.pumpAndSettle();
+    await enterAmount(
+        tester, find.byKey(const Key('credit-card-repayment-amount')), '70');
+    await tester.tap(find.byKey(const Key('credit-card-repayment-date')));
+    await tester.pumpAndSettle();
+    final picker = find.byType(DatePickerDialog);
+    expect(
+        DateUtils.isSameDay(
+            tester.widget<DatePickerDialog>(picker).initialDate, now),
+        isTrue);
+    final labels = MaterialLocalizations.of(tester.element(picker));
+    await tester.tap(find.byTooltip(labels.previousMonthTooltip));
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(of: picker, matching: find.text('15')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+        find.descendant(of: picker, matching: find.text(labels.okButtonLabel)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('credit-card-repayment-confirm')));
+    await tester.pumpAndSettle();
+    final ledger = await scope.read(financeRepositoryProvider.future);
+    final payment = ledger.transactions
+        .singleWhere((t) => t.type == TransactionType.transfer);
+    expect(payment.accountId, payer.id);
+    expect(payment.toAccountId, bill.id);
+    expect(payment.amount, 70);
+    expect(payment.transactionDate, DateTime(now.year, now.month - 1, 15));
+    expect(DateUtils.isSameDay(payment.recordDate, now), isTrue);
+    expect(ledger.accounts.singleWhere((a) => a.id == bill.id).currentBalance,
+        -30);
+    expect(ledger.accounts.singleWhere((a) => a.id == payer.id).currentBalance,
+        -70);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('repayment source choices refresh while the sheet is open',
       (tester) async {
     final (db, initial) = await setup();

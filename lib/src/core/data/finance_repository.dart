@@ -530,20 +530,68 @@ class FinanceRepository with InvestmentValuationQueries, BudgetQueries {
 
   List<Account> repaymentSources(String debtId) {
     final debt = _accounts.where((a) => a.id == debtId).firstOrNull;
+    return _repaymentSources(_accounts, debt);
+  }
+
+  List<Account> _repaymentSources(Iterable<Account> accounts, Account? debt) {
     if (debt == null ||
         !debt.isActive ||
         (debt.accountType != AccountType.creditCard &&
             debt.accountType != AccountType.loan)) {
       return [];
     }
-    return entryAccounts()
-        .where((source) =>
-            source.id != debtId &&
-            source.effectiveReportGroup == ReportGroup.cash &&
-            normalizeCurrency(source.currency) ==
-                normalizeCurrency(debt.currency))
-        .toList();
+    final eligible = accounts.where((source) =>
+        source.isActive &&
+        source.id != debt.id &&
+        normalizeCurrency(source.currency) == normalizeCurrency(debt.currency));
+    return [
+      ...eligible.where((a) => a.effectiveReportGroup == ReportGroup.cash),
+      if (debt.accountType == AccountType.creditCard)
+        ...eligible.where((a) => a.accountType == AccountType.creditCard),
+    ];
   }
+
+  /// Revalidate the two accounts in the same transaction as posting the payment.
+  Future<FinanceRepository> recordCreditCardRepayment({
+    required Account card,
+    required Account source,
+    required double amount,
+    required DateTime paymentDate,
+    DateTime? cardPostingDate,
+  }) =>
+      database.transaction(() async {
+        if (!amount.isFinite || amount <= 0) {
+          throw const FormatException('请输入大于 0 的还款金额。');
+        }
+        final accounts = await database.fetchAccounts();
+        final liveCard = accounts.where((a) => a.id == card.id).firstOrNull;
+        if (liveCard == null ||
+            liveCard.accountType != AccountType.creditCard ||
+            normalizeCurrency(liveCard.currency) !=
+                normalizeCurrency(card.currency) ||
+            !_repaymentSources(accounts, liveCard).any((a) =>
+                a.id == source.id &&
+                a.effectiveReportGroup == source.effectiveReportGroup)) {
+          throw const FormatException('还款账户已变更，请重新选择同币种的启用账户。');
+        }
+        final now = DateTime.now();
+        final isToday = paymentDate.year == now.year &&
+            paymentDate.month == now.month &&
+            paymentDate.day == now.day;
+        return addTransaction(FinanceTransaction(
+          id: buildId('txn_card_payment'),
+          type: TransactionType.transfer,
+          accountId: source.id,
+          toAccountId: card.id,
+          amount: amount,
+          currency: liveCard.currency,
+          toCurrency: liveCard.currency,
+          recordDate: now,
+          transactionDate: isToday ? now : paymentDate,
+          cardPostingDate: cardPostingDate,
+          description: '信用卡还款',
+        ));
+      });
 
   List<Account> accountsByGroup(ReportGroup group) {
     return _accounts
@@ -1053,9 +1101,8 @@ class FinanceRepository with InvestmentValuationQueries, BudgetQueries {
       includeOverdue: false,
       includePlanned: includePlanned,
     ).timeline(monthEnd)(monthEnd);
-    // Keep prior actual settlements in both ledgers. Within this month only
-    // actual non-cash settlements can reduce debt without covering a cash
-    // outflow; planned non-cash transfers never stand in for available cash.
+    // For loan installments, both views retain prior actual settlements.
+    // Only cash-funded plans can cover the installment's projected outflow.
     final afterCash = _transactions.where((t) =>
         t.affectsBalance ||
         (includePlanned &&
@@ -1757,10 +1804,14 @@ class FinanceRepository with InvestmentValuationQueries, BudgetQueries {
     return refresh();
   }
 
+  bool _isInternalTransactionMeta(String key) =>
+      key.startsWith('loan_installment/') ||
+      key.startsWith(creditCardPostingMetaPrefix);
+
   Future<Map<String, dynamic>> buildJsonSnapshotPayload() async {
     final metaValues = await database.fetchAllMetaValues();
     final exportableMeta = Map<String, String>.from(metaValues)
-      ..removeWhere((key, _) => key.startsWith('loan_installment/'))
+      ..removeWhere((key, _) => _isInternalTransactionMeta(key))
       ..remove('data_migration_version')
       ..remove('account_report_groups_v1')
       ..remove(AppDatabase.presetTablesMarker)
@@ -1843,6 +1894,8 @@ class FinanceRepository with InvestmentValuationQueries, BudgetQueries {
               'to_currency': item.toCurrency,
               'record_date': item.recordDate.toIso8601String(),
               'transaction_date': item.transactionDate.toIso8601String(),
+              if (item.cardPostingDate case final postingDate?)
+                'card_posting_date': formatCardPostingDate(postingDate),
               'status': item.status.name,
               'recurring_rule_id': item.recurringRuleId,
               'description': item.description,
@@ -2031,6 +2084,19 @@ class FinanceRepository with InvestmentValuationQueries, BudgetQueries {
         .toList();
     final transactionItems =
         (payload['transactions'] as List<dynamic>? ?? const []).map((item) {
+      final postingDay = parseCardPostingDate(item['card_posting_date']);
+      if (postingDay != null && !usesLegacySettlementDates) {
+        // An offset timestamp may cross midnight when Drift reads it locally.
+        // The wire day must also satisfy the sync snapshot contract.
+        final timestamp = item['transaction_date'];
+        if (timestamp is! String || timestamp.length < 10) {
+          throw FormatException('交易 ${item['id']} 的发生日格式无效。');
+        }
+        final wireDay = timestamp.substring(0, 10);
+        if (formatCardPostingDate(postingDay).compareTo(wireDay) < 0) {
+          throw FormatException('交易 ${item['id']} 的账单入账日不能早于发生日。');
+        }
+      }
       final recordDate = DateTime.parse(
         (item['record_date'] as String?) ?? item['transaction_date'] as String,
       );
@@ -2038,7 +2104,7 @@ class FinanceRepository with InvestmentValuationQueries, BudgetQueries {
       final toAccountId = item['to_account_id'] as String?;
       final involvesCreditCard = creditCardAccountIds.contains(accountId) ||
           (toAccountId != null && creditCardAccountIds.contains(toAccountId));
-      return FinanceTransaction(
+      final transaction = FinanceTransaction(
         id: item['id'] as String,
         type: TransactionType.values.byName(item['type'] as String),
         accountId: accountId,
@@ -2058,6 +2124,7 @@ class FinanceRepository with InvestmentValuationQueries, BudgetQueries {
         transactionDate: usesLegacySettlementDates && involvesCreditCard
             ? recordDate
             : DateTime.parse(item['transaction_date'] as String),
+        cardPostingDate: postingDay,
         status: item['status'] == null
             ? TransactionStatus.actual
             : TransactionStatus.values.byName(item['status'] as String),
@@ -2065,6 +2132,9 @@ class FinanceRepository with InvestmentValuationQueries, BudgetQueries {
         description: item['description'] as String?,
         merchant: item['merchant'] as String?,
       );
+      validateCardPostingDate(transaction,
+          sourceIsCreditCard: creditCardAccountIds.contains(accountId));
+      return transaction;
     }).toList();
     final legacyTemplatePayload = metaPayload[AppDatabase.legacyTemplatesKey];
     final legacyRulePayload = metaPayload[AppDatabase.legacyRulesKey];
@@ -2132,7 +2202,7 @@ class FinanceRepository with InvestmentValuationQueries, BudgetQueries {
 
     final encodedMeta = {
       for (final entry in metaPayload.entries)
-        if (!entry.key.startsWith('loan_installment/') &&
+        if (!_isInternalTransactionMeta(entry.key) &&
             entry.key != AppDatabase.legacyTemplatesKey &&
             entry.key != AppDatabase.legacyRulesKey &&
             entry.key != AppDatabase.presetTablesMarker &&

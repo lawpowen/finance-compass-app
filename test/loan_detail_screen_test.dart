@@ -247,6 +247,72 @@ void main() {
     expect(find.text('记录第 1 期还款'), findsOneWidget);
   });
 
+  test(
+      'consolidating imported card-backed plans preserves their statement days',
+      () async {
+    final database = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(database.close);
+    var ledger = await FinanceRepository.load(database);
+    for (final type in [AccountType.creditCard, AccountType.loan]) {
+      ledger = await ledger.addAccount(Account(
+          id: type.name,
+          name: type.name,
+          accountType: type,
+          reportGroup: ReportGroup.credit,
+          currency: 'MYR',
+          currentBalance: 0));
+    }
+    final payload = await ledger.buildJsonSnapshotPayload();
+    final rows = <Map<String, dynamic>>[];
+    for (final (number, principalDay, interestDay) in [
+      (1, '2026-11-26', '2026-11-26'),
+      (2, '2026-11-25', '2026-11-26'),
+      (3, null, '2026-11-25'),
+    ]) {
+      for (final principal in [true, false]) {
+        final posting = principal ? principalDay : interestDay;
+        rows.add({
+          'id': '${principal ? 'principal' : 'interest'}-$number',
+          'type': principal ? 'transfer' : 'expense',
+          'account_id': 'creditCard',
+          if (principal) 'to_account_id': 'loan',
+          'amount': principal ? 80 : 20,
+          'currency': 'MYR',
+          'status': 'planned',
+          'transaction_date': '2026-11-25T12:00:00',
+          if (posting != null) 'card_posting_date': posting,
+          'legacy_loan_id': 'loan',
+          'legacy_loan_part_number': number,
+        });
+      }
+    }
+    payload['transactions'] = rows;
+    ledger = await ledger.restoreSyncedSnapshot(payload);
+    final container = ProviderContainer(overrides: [
+      financeRepositoryProvider
+          .overrideWith(() => _TestRepositoryNotifier(ledger)),
+    ]);
+    addTearDown(container.dispose);
+    await container
+        .read(transactionMutationsProvider.notifier)
+        .consolidateLegacyLoanPlans('loan');
+    final stored = {
+      for (final tx in await database.fetchTransactions()) tx.id: tx
+    };
+    expect(
+        stored.keys,
+        unorderedEquals(
+            ['principal-1', 'principal-2', 'interest-2', 'principal-3']));
+    expect(stored['principal-1']!.cardPostingDate, DateTime(2026, 11, 26));
+    expect(stored['principal-1']!.amount, 100);
+    expect(stored['principal-1']!.toAmount, 80);
+    expect(stored['principal-1']!.loanInstallmentNumber, 1);
+    expect(stored['principal-2']!.legacyLoanPartNumber, 2);
+    expect(stored['principal-2']!.cardPostingDate, DateTime(2026, 11, 25));
+    expect(stored['interest-2']!.cardPostingDate, DateTime(2026, 11, 26));
+    expect(stored['principal-3']!.cardPostingDate, DateTime(2026, 11, 25));
+  });
+
   test('deleting either legacy repayment part removes the whole installment',
       () async {
     final database = AppDatabase.forTesting(NativeDatabase.memory());

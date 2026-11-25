@@ -144,7 +144,7 @@ SQLite 仍为 v9，完整 JSON 仍为 v3。账本元数据 `investment_snapshot_
 
 ## 信用卡专用还款
 
-信用卡专用还款流程只允许选择与信用账户同币种的 `ReportGroup.cash` 来源，确认后写入一笔 `actual transfer`。同币种还款以 `amount` 同时作为现金扣款和信用账户入账，`to_amount` 保持 `NULL`；它不新增消费支出，但按完整 `amount` 进入实际现金流出。
+信用卡和 PayLater 专用还款允许同币种活跃现金账户或另一张活跃信用卡，确认后写入一笔 `actual transfer`。同币种两端均使用 `amount`，`to_amount` 保持 `NULL`。现金付款产生实际现金流出；卡还卡在发生日核销目标欠款，来源卡按可选入账日归账，资金需求随来源卡到期。
 
 ## 实际现金报表口径
 
@@ -152,7 +152,7 @@ SQLite 仍为 v9，完整 JSON 仍为 v3。账本元数据 `investment_snapshot_
 
 实际现金汇总是交易和账户分组的派生读模型，不新增字段。现金类账户收入为流入、支出为流出、调整按符号进入；转账分别检查来源和目标是否为 `ReportGroup.cash`。现金到信用卡或贷款的转账按来源完整 `amount` 形成现金流出，目标端本金/还款入账不与其抵消；现金账户之间的转账分别折算两端，金额相等时相抵，跨币到账金额与折算流出不等时保留净差额。信用账户消费在支付现金前不进入现金流。历史报表排除 `planned`，未来月份明确选择“包含预计”或预测时才纳入。
 
-信用卡账期是运行时派生数据，不新增表或字段。`CreditCardBillingPeriod` 使用账户的 `statement_day`、`payment_due_day` 和当前完整日期计算 `cycleStartDate`、`statementDate`、`dueDate`、`nextStatementDate`；月底日号在短月份夹到月末。本期和未出账交易按已归一为发生日期的 `transaction_date` 完整年月日闭区间筛选，历史账期交易不得混入当前列表。`transfer.account_id` 为信用卡时，转出金额按该卡消费方向进入账单；`transfer.to_account_id` 为信用卡时，转入金额只作为该卡还款方向减少余额。信用卡 A 转至信用卡 B 因而只增加 A 的账单，同时减少 B 的负债，不在 B 重复生成消费。迁移后 `transaction_date` 只表达可编辑的发生日期；`record_date` 保留最初录入/旧版发生日期，因此用户后来修改发生日期时两者可以不同，但该差异不再代表单笔结算日期。
+信用卡账期由账户和流水推导。SQLite v9 沿用原表结构。`CreditCardBillingPeriod` 使用账户的 `statement_day`、`payment_due_day` 和当前完整日期计算 `cycleStartDate`、`statementDate`、`dueDate`、`nextStatementDate`；月底日号在短月份夹到月末。付款卡的本期及未出账明细按来源入账日落入对应的完整日历区间。`transfer.account_id` 为信用卡时，转出金额按该卡消费方向进入账单；`transfer.to_account_id` 为信用卡时，转入金额只作为该卡还款方向减少余额。信用卡 A 转至信用卡 B 因而只增加 A 的账单，同时减少 B 的负债，不在 B 重复生成消费。迁移后 `transaction_date` 只表达可编辑的发生日期；`record_date` 保留最初录入/旧版发生日期，因此用户后来修改发生日期时两者可以不同，但该差异不再代表单笔结算日期。
 
 账单月份不新增快照表。`availableCreditCardBillingPeriods` 会先列出包含未来 `actual`/`settled` 的已确定账期，再列本期并向前逐月生成至最早相关实际交易，最多 120 期；历史中间无交易月份仍可显示为零账单。`calculateCreditCardBillingPeriodForStatement` 从所选结算日重建完整边界，`calculateCreditCardStatementAmount` 只汇总该边界内来源卡方向的实际流水并排除 `planned`；`calculateCreditCardOriginalStatementAmount` 在旧导入明细不完整时再用明确还款凭据补足原始账单额。修改交易后再次进入该月份会实时重算，不保存可能过期的账单副本。
 
@@ -178,7 +178,11 @@ SQLite 仍为 v9，完整 JSON 仍为 v3。账本元数据 `investment_snapshot_
 
 `availableCreditCardBillingPeriods` 先按结算日期升序列出由未来 `actual`/`settled` 记录形成的已确定账期，再列出本期，最后按倒序回溯历史账期，合计最多 120 期。未来 `planned` 不创建账期；账期仍是运行时派生数据，不新增表或快照。
 
-`calculateCreditCardStatementAmount` 汇总账期内来源卡方向的实际消费、转出、退款和调整。`calculateCreditCardOriginalStatementAmount` 的优先级为：权威结单覆盖值 → 该期来源流水净额 → 旧还款凭据。只要该期存在任一来源卡方向的影响余额记录（消费、转出、退款或调整，包括净额为 0 的全额退款），就以 `calculateCreditCardStatementAmount` 的净额（下限 0）为原始账单额，超额还款不会抬高账单；只有该期完全没有来源流水时，才为兼容消费明细缺失的旧导入资料汇总结算日至还款日之间转入该信用账户的实际还款，金额读取 `transferInAmount`，按已确认或已归一化的目标入账金额核算；负数转账（还款撤销）参与净额抵减，汇总结果下限为 0，与另两级的非负契约一致。还款后该值保持不变。若用户提供银行结单完成对账，`app_meta` 以 `credit_card_statement_amounts_<account_id>_json` 保存 `{yyyy-MM-dd: amount}`；`FinanceRepository.creditCardStatementAmountOverride` 校验 JSON、有限非负金额及结算日键后返回权威快照，历史列表和所选账单详情优先使用该值。该 meta 随完整 v3 导出备份，但不改变交易、`initial_balance`、`current_balance` 或实时额度。`FinanceRepository.creditCardStatementBalance` 仍表示结算日账户余额，只能用于余额审计，不再作为账单月份金额或下期已使用额度。
+`calculateCreditCardStatementAmount` 汇总账期内来源卡方向的实际消费、转出、退款和调整。`calculateCreditCardOriginalStatementAmount` 的优先级为：权威结单覆盖值 → 该期来源流水净额 → 旧还款凭据。只要该期存在任一来源卡方向的影响余额记录（消费、转出、退款或调整，包括净额为 0 的全额退款），就以 `calculateCreditCardStatementAmount` 的净额（下限 0）为原始账单额，超额还款不会抬高账单；只有该期缺少来源流水、也没有来源交易显式顺延到其他账期的证据时，才为兼容消费明细缺失的旧导入资料汇总结算日至还款日之间转入该信用账户的实际还款，金额读取 `transferInAmount`，按已确认或已归一化的目标入账金额核算；负数转账（还款撤销）参与净额抵减，汇总结果下限为 0，与另两级的非负契约一致。还款后该值保持不变。若用户提供银行结单完成对账，`app_meta` 以 `credit_card_statement_amounts_<account_id>_json` 保存 `{yyyy-MM-dd: amount}`；`FinanceRepository.creditCardStatementAmountOverride` 校验 JSON、有限非负金额及结算日键后返回权威快照，历史列表和所选账单详情优先使用该值。该 meta 随完整 v3 导出备份，但不改变交易、`initial_balance`、`current_balance` 或实时额度。`FinanceRepository.creditCardStatementBalance` 仍表示结算日账户余额，只能用于余额审计，不再作为账单月份金额或下期已使用额度。
+
+Web 26 的交易行可带 `card_posting_date`，是四位年份的本地日历日 `YYYY-MM-DD`。仅信用卡来源可填写，日期须真实且不早于交易发生日。SQLite 在 `app_meta` 的 `credit_card_posting_dates/transactions` 按交易 ID 稀疏保存日期；更新、删除和整库恢复均与流水同事务，删空映射即删除该键。JSON v3 仅在相应交易行输出非空日期。客户端从导入和导出的 `meta` 排除该命名空间，服务端拒绝收到带此内部前缀的快照。
+
+交易的 `transaction_date` 仍是经济发生日，`record_date` 仍是录入时间。余额和期初债务还原始终按发生时间计算；仅对来源卡的消费、退款、转出、收入或调整按入账日归期。已发生但尚未入账的金额影响额度，紧邻的下一期可列入未出账，更远期在相应月份的已确定账单中查看。尚未入账的退款不会提前核销老账单。转入目标卡的还款按发生日核销。模板、周期规则和新复制的流水均无固定入账日；手工一次生成多期流水时按原发生日与入账日间的日历天数推算每期。常规客户端导出的发生时间为本地 ISO 时间。手工导入带时区偏移的发生时间时，其原始日期和换算到设备后的本地发生日都不能晚于所填入账日。
 
 信用卡实时核销按卡及结算日分组。实际消费和转出增加账单，负支出、收入和贷方调整减少对应账单。转入还款按最早未结清账期抵扣，冲正可重新打开该期。跨过下一结算日后，旧欠款继续沿用原到期日；详情主金额显示最早未还一期，并列示其他未清账期。只有期初余额、缺乏历史日期证据时，从可识别的开账时点估算所属账期。
 

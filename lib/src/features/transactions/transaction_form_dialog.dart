@@ -9,6 +9,7 @@ import '../../core/providers/repository_provider.dart';
 import '../../core/utils/currency_formatter.dart';
 import '../../core/utils/anchored_month.dart';
 import '../../core/utils/id_generator.dart';
+import '../shared/card_posting_date_field.dart';
 import '../shared/finance_form_fields.dart';
 
 /// Retain the editing session's database when a standalone form is supplied.
@@ -95,6 +96,7 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
   late String currency;
   late String toCurrency;
   DateTime recordDate = DateTime.now();
+  DateTime? cardPostingDate;
   DateTime? settlementDate;
   String? accountId;
   String? toAccountId;
@@ -107,6 +109,9 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
       currentEntryLedger(context, widget.repository);
 
   bool get _isEditing => widget.initialTransaction != null;
+
+  Account? get _source =>
+      _ledger.accounts.where((a) => a.id == accountId).firstOrNull;
 
   FinanceTransaction? get _seed =>
       widget.initialTransaction ?? widget.draftTransaction;
@@ -149,8 +154,12 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
           ? seedTransaction.toAccountId
           : null;
       if (_usesCreditCardAccount) {
+        if (initialTransaction != null) {
+          recordDate = seedTransaction.transactionDate;
+        }
         settlementDate = null;
       }
+      cardPostingDate = initialTransaction?.cardPostingDate;
       categoryId = seedTransaction.categoryId;
       amountController.text = seedTransaction.amount.toString();
       currency = normalizeCurrency(seedTransaction.currency);
@@ -203,6 +212,7 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
       watchEntryLedger(context, widget.repository, _buildForm);
 
   Widget _buildForm(BuildContext context) {
+    final source = _source;
     final accountOptions = _sortedAccounts()
         .where((a) => !_isInstallment || a.id != toAccountId)
         .toList();
@@ -242,8 +252,10 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                             return;
                           }
                           setState(() {
+                            final wasCard = _usesCreditCardAccount;
                             transactionType = value;
                             toAccountId = null;
+                            _syncDateFields(wasCard);
                             toAmountController.clear();
                             loanPaymentController.clear();
                             toCurrency = currency;
@@ -304,10 +316,13 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                             final loanPayment =
                                 _isInstallment ? _loanPayment : null;
                             final oldCurrency = currency;
+                            final wasCard = _usesCreditCardAccount;
                             accountId = value;
                             if (accountId == toAccountId) toAccountId = null;
-                            if (_usesCreditCardAccount) {
-                              settlementDate = null;
+                            _syncDateFields(wasCard);
+                            if (_source?.accountType !=
+                                AccountType.creditCard) {
+                              cardPostingDate = null;
                             }
                             if (value != null) {
                               currency = _currencyForAccount(value) ?? currency;
@@ -351,10 +366,9 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                     onChanged: _isInstallment || _keepUnallocatedSplit
                         ? null
                         : (value) => setState(() {
+                              final wasCard = _usesCreditCardAccount;
                               toAccountId = value;
-                              if (_usesCreditCardAccount) {
-                                settlementDate = null;
-                              }
+                              _syncDateFields(wasCard);
                               if (value != null) {
                                 toCurrency =
                                     _currencyForAccount(value) ?? toCurrency;
@@ -457,10 +471,19 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                 ],
                 const SizedBox(height: 12),
                 _DateTile(
-                  title: '记录日期',
+                  title: _usesCreditCardAccount ? '交易日期' : '记录日期',
                   value: recordDate,
                   onPick: () => _pickRecordDate(),
                 ),
+                if (source != null &&
+                    source.accountType == AccountType.creditCard)
+                  CardPostingDateField(
+                    source: source,
+                    transactionDate: recordDate,
+                    value: cardPostingDate,
+                    onChanged: (value) =>
+                        setState(() => cardPostingDate = value),
+                  ),
                 if (!_usesCreditCardAccount) ...[
                   const SizedBox(height: 8),
                   _DateTile(
@@ -668,6 +691,17 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
         : _preferredCategoryId(categories.where((c) => !c.isArchived).toList());
   }
 
+  void _syncDateFields(bool wasCard) {
+    if (wasCard == _usesCreditCardAccount) return;
+    if (_usesCreditCardAccount) {
+      recordDate = settlementDate ?? recordDate;
+      settlementDate = null;
+    } else if (_isEditing) {
+      settlementDate = recordDate;
+      recordDate = widget.initialTransaction!.recordDate;
+    }
+  }
+
   Future<void> _pickRecordDate() async {
     final picked = await showDatePicker(
       context: context,
@@ -675,8 +709,13 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
       firstDate: DateTime(2020),
       lastDate: DateTime(2100),
     );
-    if (picked != null) {
-      setState(() => recordDate = picked);
+    if (picked != null && mounted) {
+      setState(() {
+        recordDate = picked;
+        if (cardPostingDate?.isBefore(DateUtils.dateOnly(picked)) == true) {
+          cardPostingDate = null;
+        }
+      });
     }
   }
 
@@ -730,6 +769,8 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
     final merchant = _nullIfEmpty(merchantController.text);
     final effectiveSettlementDate =
         _usesCreditCardAccount ? recordDate : settlementDate ?? recordDate;
+    final posting =
+        _source?.accountType == AccountType.creditCard ? cardPostingDate : null;
 
     if (_isEditing) {
       final keepLegacyLink =
@@ -758,8 +799,11 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                   ? widget.initialTransaction?.legacyLoanId
                   : null,
               toCurrency: transferInCurrency,
-              recordDate: recordDate,
+              recordDate: _usesCreditCardAccount
+                  ? widget.initialTransaction!.recordDate
+                  : recordDate,
               transactionDate: effectiveSettlementDate,
+              cardPostingDate: posting,
               status: transactionStatus,
               recurringRuleId: widget.initialTransaction!.recurringRuleId,
               description: description,
@@ -788,6 +832,7 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
         toCurrency: transferInCurrency,
         recordDate: recordDate,
         transactionDate: effectiveSettlementDate,
+        cardPostingDate: posting,
         status: transactionStatus,
         description: description,
         merchant: merchant,
@@ -1064,6 +1109,18 @@ List<FinanceTransaction> buildRecurringTransactions({
 }) {
   final safeMonths = months < 1 ? 1 : months;
   final idPrefix = baseTransaction.id;
+  final posting = baseTransaction.cardPostingDate;
+  final occurrence = baseTransaction.transactionDate;
+  // UTC midnights count calendar days even across a 23- or 25-hour local day.
+  final offsetDays = posting == null
+      ? null
+      : DateTime.utc(posting.year, posting.month, posting.day)
+          .difference(
+              DateTime.utc(occurrence.year, occurrence.month, occurrence.day))
+          .inDays;
+  if (offsetDays != null && offsetDays < 0) {
+    throw const FormatException('信用卡账单入账日不能早于交易发生日。');
+  }
 
   return List.generate(safeMonths, (index) {
     final settlementDate =
@@ -1083,6 +1140,10 @@ List<FinanceTransaction> buildRecurringTransactions({
       toCurrency: baseTransaction.toCurrency,
       recordDate: recordDate,
       transactionDate: settlementDate,
+      cardPostingDate: offsetDays == null
+          ? null
+          : DateTime(settlementDate.year, settlementDate.month,
+              settlementDate.day + offsetDays),
       status: baseTransaction.status,
       recurringRuleId: baseTransaction.recurringRuleId,
       description: baseTransaction.description,

@@ -48,6 +48,196 @@ void main() {
     expect(summary.isEstimated, isFalse);
   });
 
+  group('bank posting day on the source card', () {
+    const uob = Account(
+      id: 'uob',
+      name: 'UOB Lazada Credit Card',
+      accountType: AccountType.creditCard,
+      reportGroup: ReportGroup.credit,
+      currency: 'MYR',
+      currentBalance: -241.94,
+      creditLimit: 3000,
+      statementDay: 25,
+      paymentDueDay: 14,
+    );
+    const laz = Account(
+      id: 'laz',
+      name: 'Laz PayLater',
+      accountType: AccountType.creditCard,
+      reportGroup: ReportGroup.credit,
+      currency: 'MYR',
+      currentBalance: 0,
+      creditLimit: 1000,
+      statementDay: 10,
+      paymentDueDay: 25,
+    );
+    final cut = DateTime(2026, 11, 25);
+    final nextCut = DateTime(2026, 12, 25);
+    final nextDay = DateTime(2026, 11, 26);
+    FinanceTransaction sourceRow(String id, double amount, DateTime day,
+            {DateTime? posting}) =>
+        FinanceTransaction(
+            id: id,
+            accountId: uob.id,
+            type: TransactionType.expense,
+            currency: 'MYR',
+            amount: amount,
+            transactionDate: day,
+            cardPostingDate: posting);
+
+    test(
+        'cut-day purchase keeps actual debt, skips this statement and appears in next history',
+        () {
+      final entries = [
+        sourceRow('purchase', 241.94, DateTime(2026, 11, 25, 15),
+            posting: nextDay)
+      ];
+      final summary = calculateCreditCardBilling(
+          account: uob, transactions: entries, now: cut);
+      expect(summary.outstandingBalance, 241.94);
+      expect(summary.billedBalance, 0);
+      expect(summary.unbilledBalance, 241.94);
+      expect(
+          hasCreditCardBilledActivity(
+              account: uob, transactions: entries, now: cut),
+          isFalse);
+      final periods = availableCreditCardBillingPeriods(
+          account: uob, transactions: entries, now: cut);
+      expect(periods.map((p) => p.statementDate), [nextCut, cut]);
+      expect(
+          calculateCreditCardOriginalStatementAmount(
+              accountId: uob.id, transactions: entries, period: periods.last),
+          0);
+      final laterAdvance = FinanceTransaction(
+          id: 'unrelated-advance',
+          accountId: 'bank',
+          toAccountId: uob.id,
+          type: TransactionType.transfer,
+          currency: 'MYR',
+          amount: 60,
+          transactionDate: DateTime(2026, 12, 2));
+      expect(
+          calculateCreditCardOriginalStatementAmount(
+              accountId: uob.id,
+              transactions: [...entries, laterAdvance],
+              period: periods.last),
+          0);
+      expect(
+          calculateCreditCardOriginalStatementAmount(
+              accountId: uob.id, transactions: entries, period: periods.first),
+          241.94);
+      expect(
+          calculateCreditCardBilling(
+                  account: uob, transactions: entries, now: nextCut)
+              .billedBalance,
+          241.94);
+    });
+
+    test(
+        'incoming PayLater payment is effective before the payer posts the charge',
+        () {
+      final transfer = FinanceTransaction(
+          id: 'payer-to-laz',
+          accountId: uob.id,
+          toAccountId: laz.id,
+          type: TransactionType.transfer,
+          currency: 'MYR',
+          amount: 241.94,
+          transactionDate: DateTime(2026, 11, 25, 17),
+          cardPostingDate: nextDay);
+      final entries = [
+        FinanceTransaction(
+            id: 'purchase',
+            accountId: laz.id,
+            type: TransactionType.expense,
+            currency: 'MYR',
+            amount: 241.94,
+            transactionDate: DateTime(2026, 11, 4)),
+        transfer
+      ];
+      expect(creditCardSourceBillingDate(transfer, uob.id), nextDay);
+      expect(creditCardSourceBillingDate(transfer, laz.id), cut);
+      final before = calculateCreditCardBilling(
+          account: laz, transactions: entries, now: DateTime(2026, 11, 24));
+      expect(before.billedBalance, 241.94);
+      expect(before.dueDate, cut);
+      final paid = calculateCreditCardBilling(
+          account: laz, transactions: entries, now: cut);
+      expect(paid.billedBalance, 0);
+      expect(paid.openStatements, isEmpty);
+      final december = calculateCreditCardBilling(
+          account: uob, transactions: entries, now: nextCut);
+      expect(december.openStatements.single.period.statementDate, nextCut);
+      expect(december.dueDate, DateTime(2027, 1, 14));
+      expect(december.billedBalance, 241.94);
+    });
+
+    test(
+        'farther postings remain committed without consuming next-cycle surplus',
+        () {
+      final entries = [
+        sourceRow('far', 200, cut, posting: DateTime(2027, 1, 1)),
+        sourceRow('soon', 100, DateTime(2026, 11, 27)),
+        FinanceTransaction(
+            id: 'advance',
+            accountId: 'bank',
+            toAccountId: uob.id,
+            type: TransactionType.transfer,
+            currency: 'MYR',
+            amount: 50,
+            transactionDate: cut),
+      ];
+      final summary = calculateCreditCardBilling(
+          account: uob, transactions: entries, now: cut, balanceAtCutoff: -150);
+      expect(summary.outstandingBalance, 150);
+      expect(summary.openStatements, isEmpty);
+      expect(summary.unbilledBalance, 50);
+      expect(
+          availableCreditCardBillingPeriods(
+                  account: uob, transactions: entries, now: cut)
+              .map((p) => p.statementDate),
+          [nextCut, DateTime(2027, 1, 25), cut]);
+    });
+
+    test(
+        'future confirmed spend counts in the cycle containing its posting day',
+        () {
+      final spend = sourceRow(
+          'future economic and later bank posting', 90, DateTime(2026, 12, 20),
+          posting: DateTime(2026, 12, 26));
+      final early = calculateCreditCardBilling(
+          account: uob, transactions: [spend], now: cut, balanceAtCutoff: 0);
+      expect(early.unbilledBalance, 0);
+      expect(early.billedBalance, 0);
+      final onCut = calculateCreditCardBilling(
+          account: uob,
+          transactions: [spend],
+          now: nextCut,
+          balanceAtCutoff: -90);
+      expect(onCut.unbilledBalance, 90);
+      expect(onCut.billedBalance, 0);
+    });
+
+    test('a delayed refund cannot pay a closed bill before the bank posts it',
+        () {
+      final entries = [
+        sourceRow('billed', 180, DateTime(2026, 11, 2)),
+        sourceRow('pending-refund', -60, cut, posting: nextDay)
+      ];
+      final pending = calculateCreditCardBilling(
+          account: uob, transactions: entries, now: cut, balanceAtCutoff: -120);
+      expect(pending.outstandingBalance, 120);
+      expect(pending.billedBalance, 180);
+      expect(pending.unbilledBalance, 0);
+      final posted = calculateCreditCardBilling(
+          account: uob,
+          transactions: entries,
+          now: nextDay,
+          balanceAtCutoff: -120);
+      expect(posted.billedBalance, 120);
+    });
+  });
+
   test('surplus repayment reduces the remaining next statement amount', () {
     const reconciledCard = Account(
       id: 'uob_card',
@@ -420,6 +610,77 @@ void main() {
       ),
       isFalse,
     );
+  });
+
+  test(
+      'a backdated card repayment settles the PayLater bill on its posting day',
+      () {
+    const payLater = Account(
+      id: 'paylater',
+      name: 'Shopee PayLater',
+      accountType: AccountType.creditCard,
+      reportGroup: ReportGroup.credit,
+      currency: 'MYR',
+      currentBalance: 0,
+      creditLimit: 1000,
+      statementDay: 10,
+      paymentDueDay: 25,
+    );
+    final entries = [
+      FinanceTransaction(
+          id: 'purchase',
+          type: TransactionType.expense,
+          accountId: payLater.id,
+          amount: 241.94,
+          currency: 'MYR',
+          transactionDate: DateTime(2026, 11, 3)),
+      FinanceTransaction(
+          id: 'repayment',
+          type: TransactionType.transfer,
+          accountId: card.id,
+          toAccountId: payLater.id,
+          amount: 241.94,
+          currency: 'MYR',
+          transactionDate: DateTime(2026, 11, 25),
+          recordDate: DateTime(2026, 12, 2)),
+    ];
+    final before = calculateCreditCardBilling(
+        account: payLater,
+        transactions: entries,
+        now: DateTime(2026, 11, 24),
+        balanceAtCutoff: -241.94);
+    final paid = calculateCreditCardBilling(
+        account: payLater,
+        transactions: entries,
+        now: DateTime(2026, 11, 25),
+        balanceAtCutoff: 0);
+    final payer = calculateCreditCardBilling(
+        account: card,
+        transactions: entries,
+        now: DateTime(2026, 11, 25),
+        balanceAtCutoff: -241.94);
+    final closed = calculateCreditCardBilling(
+        account: card,
+        transactions: entries,
+        now: DateTime(2026, 11, 30),
+        balanceAtCutoff: -241.94);
+    expect(before.billedBalance, 241.94);
+    expect(before.dueDate, DateTime(2026, 11, 25));
+    expect(paid.openStatements, isEmpty);
+    expect(paid.outstandingBalance, 0);
+    expect(payer.billedBalance, 0);
+    expect(payer.unbilledBalance, 241.94);
+    expect(closed.billedBalance, 241.94);
+    expect(closed.dueDate, DateTime(2026, 12, 10));
+    expect(
+        calculateCreditCardOriginalStatementAmount(
+            accountId: payLater.id,
+            transactions: entries,
+            period: calculateCreditCardBillingPeriod(
+                statementDay: 10,
+                paymentDueDay: 25,
+                now: DateTime(2026, 11, 25))),
+        241.94);
   });
 
   test('lists historical periods and assigns April 29 to May statement', () {

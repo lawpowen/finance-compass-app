@@ -15,7 +15,7 @@ import '../../core/providers/mutations/account_mutations.dart';
 import '../../core/providers/mutations/transaction_mutations.dart';
 import '../../core/providers/repository_provider.dart';
 import '../../core/theme/finance_theme.dart';
-import '../../core/utils/id_generator.dart';
+import '../shared/card_posting_date_field.dart';
 import '../shared/compass_ui.dart';
 import '../transactions/transaction_composer_page.dart';
 import '../transactions/transaction_form_dialog.dart';
@@ -669,74 +669,34 @@ class _CreditCardDetailScreenState
     final source = await pickRepaymentAccount(context, repo, card);
     if (!context.mounted || source == null) return;
 
-    final amountController = TextEditingController(
-      text: suggestedAmount.toStringAsFixed(2),
-    );
-    final amount = await showDialog<double>(
+    final payment = await showDialog<
+        ({double amount, DateTime date, DateTime? postingDate})>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('记录信用卡还款'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('从 ${source.name} 转账至 ${card.name}'),
-            const SizedBox(height: 14),
-            FinanceAmountField(
-              key: const Key('credit-card-repayment-amount'),
-              controller: amountController,
-              autofocus: true,
-              decoration: InputDecoration(
-                labelText: '还款金额',
-                prefixText: '${card.currency} ',
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            key: const Key('credit-card-repayment-confirm'),
-            onPressed: () {
-              final value = double.tryParse(amountController.text.trim());
-              // tryParse accepts "NaN"/"Infinity"; only finite positives pass.
-              if (value == null || !value.isFinite || value <= 0) {
-                ScaffoldMessenger.of(dialogContext).showSnackBar(
-                  const SnackBar(content: Text('请输入大于 0 的还款金额。')),
-                );
-                return;
-              }
-              Navigator.pop(dialogContext, value);
-            },
-            child: const Text('确认记录'),
-          ),
-        ],
+      builder: (_) => _CreditCardRepaymentDialog(
+        card: card,
+        source: source,
+        suggestedAmount: suggestedAmount,
       ),
     );
-    if (!context.mounted || amount == null) return;
+    if (!context.mounted || payment == null) return;
 
-    final now = DateTime.now();
     try {
-      await ref.read(transactionMutationsProvider.notifier).addTransaction(
-          FinanceTransaction(
-            id: buildId('txn_card_payment'),
-            type: TransactionType.transfer,
-            accountId: source.id,
-            toAccountId: card.id,
-            amount: amount,
-            currency: source.currency,
-            toCurrency: card.currency,
-            recordDate: now,
-            transactionDate: now,
-            description: '信用卡还款',
-          ),
+      await ref.read(financeRepositoryProvider.notifier).mutate((current) {
+        if (!identical(current.database, repo.database)) {
+          throw const FormatException('账本已切换，请重新选择还款账户。');
+        }
+        return current.recordCreditCardRepayment(
+          card: card,
+          source: source,
+          amount: payment.amount,
+          paymentDate: payment.date,
+          cardPostingDate: payment.postingDate,
         );
+      });
     } on FormatException catch (error) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.message)));
       }
       return;
     }
@@ -775,6 +735,109 @@ class _CreditCardDetailScreenState
     if (result.transactions.length != 1) return;
     await mutations.updateTransaction(result.transactions.single);
   }
+}
+
+class _CreditCardRepaymentDialog extends StatefulWidget {
+  const _CreditCardRepaymentDialog({
+    required this.card,
+    required this.source,
+    required this.suggestedAmount,
+  });
+
+  final Account card;
+  final Account source;
+  final double suggestedAmount;
+
+  @override
+  State<_CreditCardRepaymentDialog> createState() =>
+      _CreditCardRepaymentDialogState();
+}
+
+class _CreditCardRepaymentDialogState
+    extends State<_CreditCardRepaymentDialog> {
+  late final amountController = TextEditingController(
+    text: widget.suggestedAmount.toStringAsFixed(2),
+  );
+  DateTime date = DateUtils.dateOnly(DateTime.now());
+  DateTime? postingDate;
+
+  @override
+  void dispose() {
+    amountController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: date,
+      firstDate: DateTime(1900),
+      lastDate: DateTime(2100, 12, 31),
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      date = DateUtils.dateOnly(picked);
+      if (postingDate != null && date.isAfter(postingDate!)) postingDate = null;
+    });
+  }
+
+  void _confirm() {
+    final amount = double.tryParse(amountController.text.trim());
+    if (amount == null || !amount.isFinite || amount <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请输入大于 0 的还款金额。')),
+      );
+      return;
+    }
+    Navigator.pop(context, (amount: amount, date: date, postingDate: postingDate));
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: const Text('记录信用卡还款'),
+        scrollable: true,
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('从 ${widget.source.name} 转账至 ${widget.card.name}'),
+            const SizedBox(height: 14),
+            FinanceAmountField(
+              key: const Key('credit-card-repayment-amount'),
+              controller: amountController,
+              autofocus: true,
+              decoration: InputDecoration(
+                labelText: '还款金额',
+                prefixText: '${widget.card.currency} ',
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextButton.icon(
+              key: const Key('credit-card-repayment-date'),
+              onPressed: _pickDate,
+              icon: const Icon(Icons.calendar_today_outlined),
+              label: Text('还款日期 ${date.year}年${_shortDate(date)}'),
+            ),
+            if (widget.source.accountType == AccountType.creditCard)
+              CardPostingDateField(
+                source: widget.source,
+                transactionDate: date,
+                value: postingDate,
+                repayment: true,
+                onChanged: (day) => setState(() => postingDate = day),
+              ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context), child: const Text('取消')),
+          FilledButton(
+            key: const Key('credit-card-repayment-confirm'),
+            onPressed: _confirm,
+            child: const Text('确认记录'),
+          ),
+        ],
+      );
 }
 
 class _HistoricalCreditCardBanner extends StatelessWidget {
@@ -838,29 +901,38 @@ class _BillingTimeline extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final labels = <(DateTime, String, bool)>[
-      (period.cycleStartDate, '周期开始', false),
-      (period.statementDate, '已结算', false),
-      if (showToday) (now, '今天', false),
-      (period.dueDate, '还款日', true),
-      (period.nextStatementDate, '下期结算', false),
-    ]..sort((a, b) => a.$1.compareTo(b.$1));
+    final today = DateUtils.dateOnly(now);
+    final dueDay = DateUtils.dateOnly(period.dueDate);
+    final labelsByDay = <DateTime, List<String>>{};
+    for (final (date, label) in [
+      (period.cycleStartDate, '周期开始'),
+      (period.statementDate, '已结算'),
+      (dueDay, '还款日'),
+      (period.nextStatementDate, '下期结算'),
+      if (showToday) (today, '今天'),
+    ]) {
+      (labelsByDay[DateUtils.dateOnly(date)] ??= []).add(label);
+    }
+    final nodes = labelsByDay.entries.toList()
+      ..sort((a, b) => a.key.compareTo(b.key));
     return Column(
+      key: const Key('credit-card-billing-timeline'),
       children: [
         SizedBox(
           height: 24,
           child: Row(
-            children: List.generate(labels.length, (index) {
-              final isDueDate = labels[index].$3;
+            children: List.generate(nodes.length, (index) {
+              final day = nodes[index].key;
+              final isDueDate = day == dueDay;
               final isOrange = isDueDate && dueNeedsAttention;
-              final isToday = labels[index].$2 == '今天';
+              final isToday = showToday && day == today;
               return Expanded(
                 child: Row(
                   children: [
                     Expanded(
                       child: Container(
                         height: 2,
-                        color: labels[index].$1.isAfter(now)
+                        color: day.isAfter(today)
                             ? financePaletteOf(context).border
                             : financePaletteOf(context).seed,
                       ),
@@ -870,7 +942,7 @@ class _BillingTimeline extends StatelessWidget {
                       height: isToday ? 16 : 12,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: labels[index].$1.isAfter(now)
+                        color: day.isAfter(today)
                             ? Colors.transparent
                             : financePaletteOf(context).seed,
                         border: Border.all(
@@ -901,17 +973,17 @@ class _BillingTimeline extends StatelessWidget {
         const SizedBox(height: 8),
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: labels
+          children: nodes
               .map(
                 (item) => Expanded(
                   child: Column(
                     children: [
                       Text(
-                        _shortDate(item.$1),
+                        _shortDate(item.key),
                         style: TextStyle(
-                          color: item.$3
+                          color: item.key == dueDay
                               ? financePaletteOf(context).expense
-                              : item.$2 == '今天'
+                              : showToday && item.key == today
                                   ? financePaletteOf(context).seed
                                   : null,
                           fontSize: 11,
@@ -919,11 +991,11 @@ class _BillingTimeline extends StatelessWidget {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        item.$2,
+                        item.value.join(' · '),
                         style: Theme.of(context).textTheme.bodySmall,
                         textAlign: TextAlign.center,
                       ),
-                      if (item.$3)
+                      if (item.key == dueDay)
                         Text(
                           dueStatusLabel,
                           style: TextStyle(
@@ -1041,15 +1113,15 @@ List<_PresentedPurchase> _presentedPurchases(
   required bool unbilled,
   DateTime? cutoffDate,
 }) {
-  final matches = repository.transactions
-      .where((item) =>
-          item.accountId == account.id &&
-          (cutoffDate == null || !item.transactionDate.isAfter(cutoffDate)) &&
-          item.affectsBalance &&
-          (unbilled
-              ? period.containsUnbilled(item.transactionDate)
-              : period.containsBilled(item.transactionDate)))
-      .toList()
+  final matches = repository.transactions.where((item) {
+    if (item.accountId != account.id ||
+        !item.affectsBalance ||
+        (cutoffDate != null && item.transactionDate.isAfter(cutoffDate))) {
+      return false;
+    }
+    final day = creditCardSourceBillingDate(item, account.id);
+    return unbilled ? period.containsUnbilled(day) : period.containsBilled(day);
+  }).toList()
     ..sort((a, b) => b.transactionDate.compareTo(a.transactionDate));
   return matches.map(
     (item) {
@@ -1058,6 +1130,8 @@ List<_PresentedPurchase> _presentedPurchases(
           ? '其他账户'
           : repository.accountName(item.toAccountId!);
       final charge = creditCardSourceCharge(item, account.id);
+      final billingDay = creditCardSourceBillingDate(item, account.id);
+      final occurred = _shortDate(item.transactionDate);
       final direction = switch (item.type) {
         TransactionType.income => '信用卡收入',
         TransactionType.adjustment => '信用卡调整',
@@ -1066,7 +1140,9 @@ List<_PresentedPurchase> _presentedPurchases(
       };
       return _PresentedPurchase(
         transaction: item,
-        date: '${item.transactionDate.month}月${item.transactionDate.day}日',
+        date: DateUtils.isSameDay(item.transactionDate, billingDay)
+            ? occurred
+            : '$occurred · 入账 ${_shortDate(billingDay)}',
         title: item.merchant ?? item.description ?? direction,
         category: isTransfer
             ? '信用卡转出 · $destinationName'

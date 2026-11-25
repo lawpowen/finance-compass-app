@@ -144,6 +144,12 @@ class _CardFundingWindow {
   final double Function(double, String) convertToBase;
   final _ledger = <String, List<FinanceTransaction>>{};
 
+  bool _isCardTransfer(FinanceTransaction tx) =>
+      tx.type == TransactionType.transfer &&
+      tx.accountId != tx.toAccountId &&
+      _cards.containsKey(tx.accountId) &&
+      _cards.containsKey(tx.toAccountId);
+
   _DebtFunding Function(DateTime) timeline(DateTime end) {
     final histories = [
       for (final card in _cards.values)
@@ -188,11 +194,11 @@ class _CardFundingWindow {
       if (tx.transactionDate.isAfter(end)) continue;
       if (!tx.affectsBalance) {
         if (!includePlanned ||
-            !fromCash(tx) ||
+            !(fromCash(tx) || _isCardTransfer(tx)) ||
             tx.transactionDate.isBefore(firstPlanDay)) {
           continue;
         }
-        // Only the in-memory billing projection treats the scheduled receipt as paid.
+        // Apply both legs of a scheduled card payment only in this projection.
         tx = FinanceTransaction(
             id: tx.id,
             type: tx.type,
@@ -202,20 +208,28 @@ class _CardFundingWindow {
             currency: tx.currency,
             toCurrency: tx.toCurrency,
             toAmount: tx.toAmount,
+            cardPostingDate: tx.cardPostingDate,
             transactionDate: tx.transactionDate);
-        if (tx.transactionDate.isBefore(start)) balance += tx.transferInAmount;
+        if (tx.transactionDate.isBefore(start)) {
+          balance += accountTransactionDelta(card.id, tx);
+        }
       }
       if (tx.transactionDate.isBefore(start)) {
         rows.add(tx);
         grossRows.add(tx);
       } else {
         (events[_fundingDay(tx.transactionDate)] ??= []).add(tx);
+        if (!card.hasCompleteCreditCardProfile &&
+            _isCardTransfer(tx) &&
+            accountTransactionDelta(card.id, tx) < 0) {
+          final maturity = estimatedCreditCardDueDate(tx.transactionDate);
+          if (!maturity.isAfter(end)) events.putIfAbsent(maturity, () => []);
+        }
       }
     }
     var grossBalance = balance;
-    final estimatedOpeningDebt =
-        (-balance).clamp(0.0, double.infinity).toDouble();
-    final estimatedDue = DateTime(openingAsOf.year, openingAsOf.month + 1, 25);
+    final openingBalance = balance;
+    final estimatedDue = estimatedCreditCardDueDate(openingAsOf);
     if (card.hasCompleteCreditCardProfile) {
       for (var month = DateTime(start.year, start.month);
           !month.isAfter(end);
@@ -234,22 +248,35 @@ class _CardFundingWindow {
     Map<DateTime, double> dueAmounts(
         DateTime day, List<FinanceTransaction> entries, double signedBalance) {
       if (!card.hasCompleteCreditCardProfile) {
-        if (day.isBefore(estimatedDue) || estimatedOpeningDebt <= 0) return {};
-        var remaining = estimatedOpeningDebt;
+        if (day.isBefore(estimatedDue) || signedBalance >= 0) return {};
+        final estimates = <DateTime, double>{
+          if (openingBalance < 0) estimatedDue: -openingBalance,
+        };
+        var credit = openingBalance.clamp(0.0, double.infinity).toDouble();
         for (final tx
             in entries.where((t) => !t.transactionDate.isBefore(start))) {
-          if (tx.type == TransactionType.transfer &&
-              tx.toAccountId == card.id &&
-              tx.accountId != card.id) {
-            remaining -= tx.transferInAmount;
+          final delta = accountTransactionDelta(card.id, tx);
+          if (delta < 0 && _isCardTransfer(tx)) {
+            final maturity = estimatedCreditCardDueDate(tx.transactionDate);
+            estimates[maturity] = (estimates[maturity] ?? 0) - delta;
+          } else if (delta > 0 ||
+              (tx.type == TransactionType.transfer &&
+                  tx.toAccountId == card.id)) {
+            credit += delta;
           }
-          final charge = creditCardSourceCharge(tx, card.id);
-          if (charge < 0) remaining += charge;
         }
-        final amount = remaining
-            .clamp(0.0, (-signedBalance).clamp(0.0, double.infinity))
-            .toDouble();
-        return amount > 0 ? {estimatedDue: amount} : {};
+        final due = <DateTime, double>{};
+        var outstanding = -signedBalance;
+        // Without contractual billing dates estimates follow economic posting order.
+        for (final estimate in estimates.entries) {
+          if (estimate.key.isAfter(day)) break;
+          final remaining = estimate.value - credit;
+          credit = (-remaining).clamp(0.0, double.infinity).toDouble();
+          final amount = remaining.clamp(0.0, outstanding).toDouble();
+          if (amount > 0) due[estimate.key] = amount;
+          outstanding -= amount;
+        }
+        return due;
       }
       final billing = calculateCreditCardBilling(
           account: card,
@@ -277,12 +304,7 @@ class _CardFundingWindow {
           return order != 0 ? order : a.id.compareTo(b.id);
         });
       for (final tx in postings) {
-        final incoming = tx.type == TransactionType.transfer &&
-                tx.toAccountId == card.id &&
-                tx.accountId != card.id
-            ? tx.transferInAmount
-            : 0.0;
-        final delta = incoming - creditCardSourceCharge(tx, card.id);
+        final delta = accountTransactionDelta(card.id, tx);
         final cash = fromCash(tx);
         final before = delta > 0 && replaceable.isNotEmpty
             ? dueAmounts(day, rows, balance)
@@ -295,12 +317,16 @@ class _CardFundingWindow {
         }
         if (before != null) {
           final after = dueAmounts(day, rows, balance);
+          final movedToAnotherCard = _isCardTransfer(tx);
           for (final statement in replaceable.keys.toList()) {
             final reduction =
                 (before[statement] ?? 0) - (after[statement] ?? 0);
             final matched =
                 reduction.clamp(0.0, replaceable[statement]!).toDouble();
-            if (cash) reserved -= matched;
+            if (cash || movedToAnotherCard) reserved -= matched;
+            // This obligation moved to another card's statement. It is no
+            // longer due here and was never covered by a bank payment.
+            if (movedToAnotherCard) grossObligation -= matched;
             // A merchant refund can settle the real statement, but cannot
             // return an earlier cash payment to the forecast's bank account.
             final left = replaceable[statement]! - matched;

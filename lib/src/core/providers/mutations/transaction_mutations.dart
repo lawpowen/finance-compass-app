@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/finance_repository.dart';
 import '../../models/account.dart';
+import '../../models/credit_card_billing.dart' show creditCardSourceBillingDate;
 import '../../models/loan_amortization.dart';
 import '../../models/loan_settlement.dart';
 import '../../models/transaction.dart';
@@ -195,6 +196,11 @@ class TransactionMutations extends Notifier<void> {
                 .where((tx) => tx.type == TransactionType.expense)
                 .firstOrNull;
             if (interest == null) continue;
+            // A merged entry can represent only one source-card statement day.
+            if (creditCardSourceBillingDate(principal, principal.accountId) !=
+                creditCardSourceBillingDate(interest, interest.accountId)) {
+              continue;
+            }
             final number = principal.legacyLoanPartNumber!;
             final paidPrincipal = principal.toAmount ?? principal.amount;
             final payment = ((principal.amount * 100).round() +
@@ -214,6 +220,7 @@ class TransactionMutations extends Notifier<void> {
               currency: principal.currency,
               toCurrency: principal.transferInCurrency,
               transactionDate: principal.transactionDate,
+              cardPostingDate: principal.cardPostingDate ?? interest.cardPostingDate,
               recordDate: principal.recordDate,
               status: TransactionStatus.planned,
               loanInstallmentNumber: number,
