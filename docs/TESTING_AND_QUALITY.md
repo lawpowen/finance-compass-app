@@ -2,6 +2,8 @@
 
 ## 2026-11-25 Web 25 已安装 PWA 渲染性能与恢复
 
+Homelab 生产验收使用提交 `95e4b9a`。切换前在线 SQLite 备份通过校验，仅替换 Web 容器，并核对了原同步容器、账本卷、账本修订及同修订快照。公网首页、启动脚本和 Worker 的 SHA-256 与候选镜像一致，健康接口返回 200，匿名访问账本修订和推送配置返回 401。隔离 Chrome 模拟 Android standalone，先以 Web 24 软件模式启动，等待用户确认后切换 Web 25。原 URL 上的 Flutter 首帧可见，CanvasKit 实际使用 Intel Iris Xe / ANGLE D3D11 的 WebGL 表面。
+
 渲染器源码 lint 可在仓库根目录运行 `dart tool/lint_web_renderer.dart`。它检查 Flutter 展开模板之前的 `web/flutter_bootstrap.js`。规则 `web-renderer/platform-default` 拦截浏览器 UA、平台、触摸点、安装标记及 `display-mode` 媒体查询，`web-renderer/always-cpu` 拦截将 CanvasKit 软件选项直接设为 `true` 或引用同值常量。安装界面等其他脚本不在检查范围内。显式 CPU、会话回退和保存中延迟重载等行为由 `test/web_bootstrap.test.mjs` 验证。
 
 PowerShell 与 shell 两个 Web 构建脚本在编译和清理输出目录前运行同一检查。静态及同步 Docker 源码构建沿用 shell 入口。直接调用 SDK 的 `flutter build web` 时先单独执行上述 lint。`flutter test --no-pub` 也会检查当前启动脚本和 lint 正反例。单独执行 `flutter analyze` 仅分析 Dart。
