@@ -2,6 +2,8 @@
 
 ## 2026-11-25 Web 24 PWA 冷启动与图标回前台
 
+Homelab 生产部署运行 `0247c65`。升级前在线 SQLite 备份通过校验，仅替换 Web 容器。切换后复核了原同步容器、账本卷、SQLite 完整性和账本修订连续性。公网首页、启动脚本和 Worker 的 SHA-256 均与候选镜像一致，健康接口返回 200。独立 Chrome 配置先加载线上 Web 23，再确认更新，验证了 Web 24 缓存激活、启动占位消失及 Flutter 首帧显示。模拟 Android standalone 的公网入口无需查询参数即采用软件绘图。
+
 - 升级前在 Chrome 157 用 `WEBGL_lose_context` 分别令离屏画布和闭合 Shadow DOM 画布失活。两种原生事件均为 `bubbles=false、composed=false`，旧的 window 监听器收件数为 0。Flutter 3.44.1 本地发布 SDK 的 CanvasKit 会在自然丢失时读取尚未初始化的 `late _handledContextLostEvent`；编译版本的主画布实测抛出 `LateInitializationError`。
 - 启动测试覆盖本机主题存储拒绝访问、慢读超时、旧结果晚到、用户选择竞争、首次进入本机账本时沿用旧主题，以及首帧前后的 CSS 占位。Web 浏览器专测为 `flutter test --no-pub --platform chrome test/settings_boot_browser.dart`。该版本 Flutter 在 Windows 上运行 Chrome 测试时，若测试服务器对 `/canvaskit/chromium/` 返回 404，可在测试期间将项目 SDK 的两个 Chromium CanvasKit 文件放入测试静态目录 `test/canvaskit/chromium/`，测试后清理。
 - `node --test test/web_bootstrap.test.mjs` 验证后台切换、BFCache、先可见后失活、静默失活探测、等待恢复、表单保护和连续失败降级。设置 `CHROME_EXECUTABLE` 指向本机 Chrome，运行 `node --test test/web_bootstrap_browser.test.mjs` 可用真实上下文检查引擎式替换后的重绘及输入保留。Flutter 的 `test/pwa_resume_repaint_test.dart` 验证同一帧返回事件合并为一次根画面重绘，已有详情路由保持打开。
