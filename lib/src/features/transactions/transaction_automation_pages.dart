@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/data/finance_repository.dart';
+import '../../core/database/app_database.dart' show AppDatabase;
 import '../../core/models/transaction.dart';
 import '../../core/providers/mutations/transaction_mutations.dart';
 import '../../core/providers/repository_provider.dart';
@@ -24,10 +25,15 @@ Future<bool> saveTransactionPreset(
   required FinanceTransaction transaction,
   int? intervalMonths,
   bool fromStoredTransaction = false,
+  AppDatabase? expectedDatabase,
 }) async {
   try {
     final ledger = await ref.read(financeRepositoryProvider.future);
     if (!context.mounted) return false;
+    if (expectedDatabase != null &&
+        !identical(ledger.database, expectedDatabase)) {
+      throw const FormatException('账本已切换，请重新打开交易。');
+    }
     final source = fromStoredTransaction
         ? ledger.transactions.where((t) => t.id == transaction.id).firstOrNull
         : transaction;
@@ -63,12 +69,14 @@ Future<bool> saveTransactionPreset(
     final mutations = ref.read(transactionMutationsProvider.notifier);
     if (intervalMonths == null) {
       await mutations.addTransactionTemplate(
+          expectedDatabase: ledger.database,
           name: name,
           transaction: source,
           fromStoredTransaction: fromStoredTransaction,
           categoryChoice: choice);
     } else {
       await mutations.addRecurringTransactionRule(
+          expectedDatabase: ledger.database,
           name: name,
           transaction: source,
           intervalMonths: intervalMonths,

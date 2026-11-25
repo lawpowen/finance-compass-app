@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/finance_repository.dart';
+import '../../database/app_database.dart' show AppDatabase;
 import '../../models/account.dart';
 import '../../models/credit_card_billing.dart' show creditCardSourceBillingDate;
 import '../../models/loan_amortization.dart';
@@ -21,40 +22,46 @@ class TransactionMutations extends Notifier<void> {
   FinanceRepositoryNotifier get _repoNotifier =>
       ref.read(financeRepositoryProvider.notifier);
 
-  /// Creates a single transaction.
-  Future<void> addTransaction(FinanceTransaction transaction) async {
-    await _repoNotifier
-        .mutate((repository) => repository.addTransaction(transaction));
+  Future<void> _mutate(
+    AppDatabase? expectedDatabase,
+    Future<FinanceRepository> Function(FinanceRepository) change,
+  ) async {
+    await _repoNotifier.mutate((current) {
+      // The active ledger can change while an editor is open or a write is queued.
+      if (expectedDatabase != null &&
+          !identical(expectedDatabase, current.database)) {
+        throw const FormatException('账本已切换，请重新打开交易。');
+      }
+      return change(current);
+    });
   }
 
-  /// Creates multiple transactions in a single batch.
-  Future<void> addTransactions(List<FinanceTransaction> transactions) async {
-    await _repoNotifier
-        .mutate((repository) => repository.addTransactions(transactions));
-  }
+  Future<void> addTransaction(FinanceTransaction transaction,
+          {AppDatabase? expectedDatabase}) =>
+      _mutate(expectedDatabase, (r) => r.addTransaction(transaction));
 
-  /// Updates an existing transaction (reverses old balance effects, applies new).
-  Future<void> updateTransaction(FinanceTransaction transaction) async {
-    await _repoNotifier.mutate(
-        (repository) => repository.updateExistingTransaction(transaction));
-  }
+  Future<void> addTransactions(List<FinanceTransaction> transactions,
+          {AppDatabase? expectedDatabase}) =>
+      _mutate(expectedDatabase, (r) => r.addTransactions(transactions));
+
+  Future<void> updateTransaction(FinanceTransaction transaction,
+          {AppDatabase? expectedDatabase}) =>
+      _mutate(
+          expectedDatabase, (r) => r.updateExistingTransaction(transaction));
 
   /// Deletes a transaction and reverses its balance effects.
-  Future<void> deleteTransaction(String transactionId) async {
-    await _repoNotifier.mutate((repository) {
-      final ids =
-          _expandLoanInstallmentDeletionIds(repository, [transactionId]);
-      return repository.deleteExistingTransactions(ids);
-    });
-  }
+  Future<void> deleteTransaction(String transactionId,
+          {AppDatabase? expectedDatabase}) =>
+      deleteTransactions([transactionId], expectedDatabase: expectedDatabase);
 
   /// Deletes multiple transactions atomically and reverses every balance effect.
-  Future<void> deleteTransactions(Iterable<String> transactionIds) async {
-    await _repoNotifier.mutate((repository) {
-      final ids = _expandLoanInstallmentDeletionIds(repository, transactionIds);
-      return repository.deleteExistingTransactions(ids);
-    });
-  }
+  Future<void> deleteTransactions(Iterable<String> transactionIds,
+          {AppDatabase? expectedDatabase}) =>
+      _mutate(expectedDatabase, (repository) {
+        final ids =
+            _expandLoanInstallmentDeletionIds(repository, transactionIds);
+        return repository.deleteExistingTransactions(ids);
+      });
 
   /// Atomically replaces [deleteIds] with [insertItems] in one transaction.
   Future<void> replaceTransactions({
@@ -293,15 +300,16 @@ class TransactionMutations extends Notifier<void> {
     required FinanceTransaction transaction,
     PresetCategoryChoice? categoryChoice,
     bool fromStoredTransaction = false,
-  }) async {
-    await _repoNotifier
-        .mutate((repository) => repository.addTransactionTemplate(
-              name: name,
-              transaction: transaction,
-              categoryChoice: categoryChoice,
-              fromStoredTransaction: fromStoredTransaction,
-            ));
-  }
+    AppDatabase? expectedDatabase,
+  }) =>
+      _mutate(
+          expectedDatabase,
+          (repository) => repository.addTransactionTemplate(
+                name: name,
+                transaction: transaction,
+                categoryChoice: categoryChoice,
+                fromStoredTransaction: fromStoredTransaction,
+              ));
 
   /// Deletes a transaction template by id.
   Future<void> deleteTransactionTemplate(String templateId) async {
@@ -329,16 +337,17 @@ class TransactionMutations extends Notifier<void> {
     PresetCategoryChoice? categoryChoice,
     bool fromStoredTransaction = false,
     required int intervalMonths,
-  }) async {
-    await _repoNotifier
-        .mutate((repository) => repository.addRecurringTransactionRule(
-              name: name,
-              transaction: transaction,
-              categoryChoice: categoryChoice,
-              fromStoredTransaction: fromStoredTransaction,
-              intervalMonths: intervalMonths,
-            ));
-  }
+    AppDatabase? expectedDatabase,
+  }) =>
+      _mutate(
+          expectedDatabase,
+          (repository) => repository.addRecurringTransactionRule(
+                name: name,
+                transaction: transaction,
+                categoryChoice: categoryChoice,
+                fromStoredTransaction: fromStoredTransaction,
+                intervalMonths: intervalMonths,
+              ));
 
   /// Deletes a recurring transaction rule.
   Future<void> deleteRecurringTransactionRule(String ruleId) async {

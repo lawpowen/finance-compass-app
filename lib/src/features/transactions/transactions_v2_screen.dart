@@ -906,39 +906,61 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
     bool editExisting = false,
     String? title,
   }) async {
+    final opening = repository;
+    final scope = ProviderScope.containerOf(context, listen: false);
     final result = await Navigator.of(context).push<TransactionFormResult>(
       MaterialPageRoute(
         fullscreenDialog: true,
-        builder: (_) => TransactionComposerPage(
-          repository: repository,
-          draft: draft,
-          editExisting: editExisting,
-          title: title,
+        builder: (_) => UncontrolledProviderScope(
+          container: scope,
+          child: TransactionComposerPage(
+            repository: opening,
+            draft: draft,
+            editExisting: editExisting,
+            title: title,
+          ),
         ),
       ),
     );
-    if (result == null) return;
-    final mutations = ref.read(transactionMutationsProvider.notifier);
-    if (result.deletedTransactionId case final transactionId?) {
-      await mutations.deleteTransaction(transactionId);
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('交易已删除')),
-        );
-      }
+    if (result == null || !mounted || !context.mounted) return;
+    if (!identical(opening.database, repository.database)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('账本已切换，请重新选择交易。')),
+      );
       return;
     }
-    if (editExisting && result.transactions.length == 1) {
-      await mutations.updateTransaction(result.transactions.first);
-    } else if (result.transactions.length == 1) {
-      await mutations.addTransaction(result.transactions.first);
-    } else {
-      await mutations.addTransactions(result.transactions);
-    }
-    if (!editExisting && result.transactions.length > 1 && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('已生成 ${result.transactions.length} 笔周期交易')),
-      );
+    final mutations = ref.read(transactionMutationsProvider.notifier);
+    try {
+      if (result.deletedTransactionId case final transactionId?) {
+        await mutations.deleteTransaction(transactionId,
+            expectedDatabase: opening.database);
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('交易已删除')),
+          );
+        }
+        return;
+      }
+      if (editExisting && result.transactions.length == 1) {
+        await mutations.updateTransaction(result.transactions.first,
+            expectedDatabase: opening.database);
+      } else if (result.transactions.length == 1) {
+        await mutations.addTransaction(result.transactions.first,
+            expectedDatabase: opening.database);
+      } else {
+        await mutations.addTransactions(result.transactions,
+            expectedDatabase: opening.database);
+      }
+      if (!editExisting && result.transactions.length > 1 && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('已生成 ${result.transactions.length} 笔周期交易')),
+        );
+      }
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('交易操作失败：$error')));
+      }
     }
   }
 
@@ -972,7 +994,7 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
       return;
     }
     if (value == 'delete') {
-      await _confirmAndDelete([transaction.id]);
+      await _confirmAndDelete(context, [transaction.id]);
     }
   }
 
@@ -980,6 +1002,7 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
     BuildContext context,
     FinanceTransaction transaction,
   ) async {
+    final opening = repository;
     var pendingName = _transactionActionName(transaction);
     final name = await showDialog<String>(
       context: context,
@@ -1009,12 +1032,13 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
     if (!mounted || name == null || name.isEmpty) return;
     if (!context.mounted ||
         !await saveTransactionPreset(context, ref,
+            expectedDatabase: opening.database,
             name: name,
             transaction: transaction,
             fromStoredTransaction: true)) {
       return;
     }
-    if (!mounted) return;
+    if (!mounted || !context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('模板「$name」已保存')),
     );
@@ -1024,6 +1048,7 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
     BuildContext context,
     FinanceTransaction transaction,
   ) async {
+    final opening = repository;
     var pendingName = _transactionActionName(transaction);
     var intervalMonths = 1;
     final result = await showDialog<_RecurringRuleDraft>(
@@ -1087,13 +1112,14 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
       return;
     }
     if (!await saveTransactionPreset(context, ref,
+        expectedDatabase: opening.database,
         name: result.name,
         transaction: transaction,
         intervalMonths: result.intervalMonths,
         fromStoredTransaction: true)) {
       return;
     }
-    if (!mounted) return;
+    if (!mounted || !context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('周期规则「${result.name}」已保存，并生成未来 3 个完整月份的预计交易'),
@@ -1114,19 +1140,26 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
   }
 
   void _openSearch() {
-    showSearch<void>(
-      context: context,
-      delegate: _TransactionSearchDelegate(
-        repository: repository,
-        onEdit: (item) => _showTransactionEditor(
-          context,
-          draft: item,
-          editExisting: true,
-        ),
-        onAction: (value, item) => _handleTransactionAction(
-          context,
-          value,
-          item,
+    final scope = ProviderScope.containerOf(context, listen: false);
+    final opening = repository;
+    Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => UncontrolledProviderScope(
+          container: scope,
+          child: _TransactionSearchPage(
+            repository: opening,
+            onAction: (searchContext, value, item) async {
+              if (mounted && identical(opening.database, repository.database)) {
+                await _handleTransactionAction(searchContext, value, item);
+              }
+            },
+            onDelete: (searchContext, ids) async {
+              if (!mounted || !identical(opening.database, repository.database)) {
+                return false;
+              }
+              return _confirmAndDelete(searchContext, ids);
+            },
+          ),
         ),
       ),
     );
@@ -1232,12 +1265,15 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
   Future<void> _deleteSelected() async {
     final ids = selectedTransactionIds.toList(growable: false);
     if (ids.isEmpty) return;
-    await _confirmAndDelete(ids);
+    if (await _confirmAndDelete(context, ids) && mounted) _clearSelection();
   }
 
-  Future<void> _confirmAndDelete(List<String> ids) async {
+  Future<bool> _confirmAndDelete(
+      BuildContext actionContext, List<String> ids) async {
+    if (isDeleting || ids.isEmpty) return false;
+    final opening = repository;
     final confirmed = await showDialog<bool>(
-          context: context,
+          context: actionContext,
           builder: (dialogContext) => AlertDialog(
             title: Text('删除 ${ids.length} 笔交易？'),
             content: Text(
@@ -1263,26 +1299,32 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
           ),
         ) ??
         false;
-    if (!confirmed || !mounted) return;
+    if (!confirmed || !mounted || !actionContext.mounted) return false;
+    if (!identical(opening.database, repository.database)) {
+      ScaffoldMessenger.of(actionContext).showSnackBar(
+        const SnackBar(content: Text('账本已切换，请重新选择交易。')),
+      );
+      return false;
+    }
 
     setState(() => isDeleting = true);
     try {
       await ref
           .read(transactionMutationsProvider.notifier)
-          .deleteTransactions(ids);
-      if (!mounted) return;
-      setState(() {
-        selectionMode = false;
-        selectedTransactionIds.clear();
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('已删除 ${ids.length} 笔交易')),
-      );
+          .deleteTransactions(ids, expectedDatabase: opening.database);
+      if (actionContext.mounted) {
+        ScaffoldMessenger.of(actionContext).showSnackBar(
+          SnackBar(content: Text('已删除 ${ids.length} 笔交易')),
+        );
+      }
+      return true;
     } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('删除失败：$error')),
-      );
+      if (actionContext.mounted) {
+        ScaffoldMessenger.of(actionContext).showSnackBar(
+          SnackBar(content: Text('删除失败：$error')),
+        );
+      }
+      return false;
     } finally {
       if (mounted) setState(() => isDeleting = false);
     }
@@ -2281,6 +2323,7 @@ class _DesktopLedgerCells extends StatelessWidget {
 
 class _TransactionRow extends StatelessWidget {
   const _TransactionRow({
+    super.key,
     required this.item,
     required this.repository,
     this.onTap,
@@ -2514,68 +2557,192 @@ class _TransactionRow extends StatelessWidget {
   }
 }
 
-class _TransactionSearchDelegate extends SearchDelegate<void> {
-  _TransactionSearchDelegate({
+class _TransactionSearchPage extends ConsumerStatefulWidget {
+  const _TransactionSearchPage({
     required this.repository,
-    required this.onEdit,
     required this.onAction,
+    required this.onDelete,
   });
 
   final FinanceRepository repository;
-  final Future<void> Function(FinanceTransaction item) onEdit;
-  final Future<void> Function(String value, FinanceTransaction item) onAction;
+  final Future<void> Function(BuildContext, String, FinanceTransaction)
+      onAction;
+  final Future<bool> Function(BuildContext, List<String>) onDelete;
 
   @override
-  List<Widget>? buildActions(BuildContext context) => [
-        IconButton(
-          onPressed: () => query = '',
-          icon: const Icon(Icons.clear_rounded),
+  ConsumerState<_TransactionSearchPage> createState() =>
+      _TransactionSearchPageState();
+}
+
+class _TransactionSearchPageState
+    extends ConsumerState<_TransactionSearchPage> {
+  final _input = TextEditingController();
+  final _focus = FocusNode();
+  final _scroll = ScrollController();
+  final _selected = <String>{};
+  bool _deleting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focus.requestFocus();
+    });
+  }
+
+  @override
+  void dispose() {
+    _input.dispose();
+    _focus.dispose();
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  void _queryChanged() {
+    if (_scroll.hasClients) _scroll.jumpTo(0);
+    setState(_selected.clear);
+  }
+
+  void _toggle(String id) {
+    _focus.unfocus();
+    setState(() {
+      if (!_selected.add(id)) _selected.remove(id);
+    });
+  }
+
+  Future<void> _delete(List<String> ids) async {
+    if (_deleting || ids.isEmpty) return;
+    _focus.unfocus();
+    setState(() => _deleting = true);
+    try {
+      final deleted = await widget.onDelete(context, ids);
+      if (deleted && mounted) _selected.clear();
+    } finally {
+      if (mounted) setState(() => _deleting = false);
+    }
+  }
+
+  void _act(String value, FinanceTransaction item) {
+    _focus.unfocus();
+    if (value == 'delete') {
+      _delete([item.id]);
+    } else {
+      widget.onAction(context, value, item);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final repository =
+        ref.watch(financeRepositoryProvider).valueOrNull ?? widget.repository;
+    final sameLedger =
+        identical(repository.database, widget.repository.database);
+    final needle = _input.text.trim().toLowerCase();
+    final matches = sameLedger
+        ? repository.transactions
+            .where((item) {
+              if (needle.isEmpty) return true;
+              return [
+                item.merchant,
+                item.description,
+                repository.accountName(item.accountId),
+                if (item.categoryId != null)
+                  repository.categoryName(item.categoryId!),
+              ]
+                  .whereType<String>()
+                  .any((value) => value.toLowerCase().contains(needle));
+            })
+            .take(50)
+            .toList()
+        : const <FinanceTransaction>[];
+    final visibleIds = matches.map((item) => item.id).toSet();
+    _selected.retainAll(visibleIds);
+    final selecting = _selected.isNotEmpty;
+
+    return PopScope<void>(
+      canPop: !selecting && !_deleting,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && selecting && !_deleting) setState(_selected.clear);
+      },
+      child: Scaffold(
+        key: const Key('transaction-search-page'),
+        appBar: AppBar(
+          leading: IconButton(
+            tooltip: selecting
+                ? '退出选择'
+                : MaterialLocalizations.of(context).backButtonTooltip,
+            icon: Icon(
+                selecting ? Icons.close_rounded : Icons.arrow_back_rounded),
+            onPressed:
+                _deleting ? null : () => Navigator.of(context).maybePop(),
+          ),
+          title: selecting
+              ? Text('已选择 ${_selected.length} 笔')
+              : TextField(
+                  key: const Key('transaction-search-input'),
+                  controller: _input,
+                  focusNode: _focus,
+                  textInputAction: TextInputAction.search,
+                  decoration: const InputDecoration(
+                      hintText: '搜索交易', border: InputBorder.none),
+                  onChanged: (_) => _queryChanged(),
+                  onSubmitted: (_) => _focus.unfocus(),
+                ),
+          actions: [
+            if (selecting) ...[
+              IconButton(
+                tooltip: '选择当前搜索结果',
+                icon: const Icon(Icons.select_all_rounded),
+                onPressed: _deleting
+                    ? null
+                    : () => setState(() => _selected.addAll(visibleIds)),
+              ),
+              IconButton(
+                tooltip: '删除所选交易',
+                color: financePaletteOf(context).expense,
+                icon: const Icon(Icons.delete_outline_rounded),
+                onPressed: _deleting
+                    ? null
+                    : () => _delete(_selected.toList(growable: false)),
+              ),
+            ] else
+              IconButton(
+                tooltip: '清空搜索',
+                icon: const Icon(Icons.clear_rounded),
+                onPressed: () {
+                  _input.clear();
+                  _queryChanged();
+                  _focus.requestFocus();
+                },
+              ),
+          ],
         ),
-      ];
-
-  @override
-  Widget? buildLeading(BuildContext context) => IconButton(
-        onPressed: () => close(context, null),
-        icon: const Icon(Icons.arrow_back_rounded),
-      );
-
-  @override
-  Widget buildResults(BuildContext context) => _results(context);
-
-  @override
-  Widget buildSuggestions(BuildContext context) => _results(context);
-
-  Widget _results(BuildContext context) {
-    final needle = query.trim().toLowerCase();
-    final matches = repository.transactions.where((item) {
-      if (needle.isEmpty) return true;
-      return [
-        item.merchant,
-        item.description,
-        repository.accountName(item.accountId),
-        if (item.categoryId != null) repository.categoryName(item.categoryId!),
-      ]
-          .whereType<String>()
-          .any((value) => value.toLowerCase().contains(needle));
-    }).take(50);
-    return ListView(
-      padding: compassPagePadding,
-      children: matches
-          .map(
-            (item) => _TransactionRow(
-              item: item,
-              repository: repository,
-              onTap: () async {
-                close(context, null);
-                await onEdit(item);
-              },
-              onAction: (value) async {
-                close(context, null);
-                await onAction(value, item);
-              },
-            ),
-          )
-          .toList(),
+        body: matches.isEmpty
+            ? Center(child: Text(sameLedger ? '没有匹配的交易' : '账本已切换，请返回后重新搜索。'))
+            : ListView.builder(
+                key: const Key('transaction-search-results'),
+                controller: _scroll,
+                padding: compassPagePadding,
+                itemCount: matches.length,
+                itemBuilder: (context, index) {
+                  final item = matches[index];
+                  return _TransactionRow(
+                    key: ValueKey(item.id),
+                    item: item,
+                    repository: repository,
+                    selected: _selected.contains(item.id),
+                    onTap: _deleting
+                        ? null
+                        : () =>
+                            selecting ? _toggle(item.id) : _act('edit', item),
+                    onLongPress: _deleting ? null : () => _toggle(item.id),
+                    onAction: _deleting || selecting
+                        ? null
+                        : (value) => _act(value, item),
+                  );
+                },
+              ),
+      ),
     );
   }
 }

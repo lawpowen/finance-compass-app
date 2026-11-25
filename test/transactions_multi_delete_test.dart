@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:drift/native.dart';
 import 'package:finance_app/src/core/data/finance_repository.dart';
 import 'package:finance_app/src/core/database/app_database.dart'
     show AppDatabase;
 import 'package:finance_app/src/core/models/account.dart';
 import 'package:finance_app/src/core/models/transaction.dart';
+import 'package:finance_app/src/core/providers/mutations/transaction_mutations.dart';
 import 'package:finance_app/src/core/providers/repository_provider.dart';
 import 'package:finance_app/src/core/settings/app_theme_style.dart';
 import 'package:finance_app/src/core/theme/finance_theme.dart';
@@ -13,6 +16,60 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('a queued deletion cannot remove the same id from another ledger',
+      () async {
+    Future<FinanceRepository> ledger() async {
+      final db = AppDatabase.forTesting(NativeDatabase.memory());
+      addTearDown(db.close);
+      var repo = await FinanceRepository.load(db);
+      repo = await repo.addAccount(const Account(
+          id: 'bank',
+          name: 'Bank',
+          accountType: AccountType.cash,
+          reportGroup: ReportGroup.cash,
+          currency: 'MYR',
+          currentBalance: 100));
+      return repo.addTransaction(FinanceTransaction(
+          id: 'same-id',
+          type: TransactionType.expense,
+          accountId: 'bank',
+          amount: 25,
+          currency: 'MYR',
+          transactionDate: DateTime(2026, 11, 1)));
+    }
+
+    final original = await ledger();
+    final replacement = await ledger();
+    final container = ProviderContainer(overrides: [
+      financeRepositoryProvider
+          .overrideWith(() => _TestRepositoryNotifier(original)),
+    ]);
+    addTearDown(container.dispose);
+    await container.read(financeRepositoryProvider.future);
+    final running = Completer<void>();
+    final release = Completer<void>();
+    final first =
+        container.read(financeRepositoryProvider.notifier).mutate((_) async {
+      running.complete();
+      await release.future;
+      return replacement;
+    });
+    await running.future;
+    final deletion = container
+        .read(transactionMutationsProvider.notifier)
+        .deleteTransactions(['same-id'], expectedDatabase: original.database);
+    final rejected = expectLater(deletion, throwsFormatException);
+    await Future<void>.delayed(Duration.zero);
+    release.complete();
+    await first;
+    await rejected;
+    for (final repo in [original, replacement]) {
+      final stored = await repo.refresh();
+      expect(stored.transactions.single.id, 'same-id');
+      expect(stored.accounts.single.currentBalance, 75);
+    }
+  });
+
   testWidgets('long press selects multiple transactions and deletes live',
       (tester) async {
     tester.view.physicalSize = const Size(390, 844);
