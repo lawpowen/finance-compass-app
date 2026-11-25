@@ -32,18 +32,38 @@
   <link rel="icon" type="image/png" href="favicon.png"/>
 
   <title>Finance Compass</title>
+  <style>
+    html, body { margin: 0; background: #123b3a; }
+    #finance-boot {
+      position: fixed;
+      inset: 0;
+      z-index: 1;
+      display: grid;
+      place-content: center;
+      justify-items: center;
+      gap: 1rem;
+      background: #123b3a;
+      color: #f2f7f3;
+      font: 500 1rem/1.5 system-ui, sans-serif;
+    }
+    #finance-boot::before {
+      content: "";
+      width: 1.75rem;
+      height: 1.75rem;
+      border: 3px solid #618784;
+      border-top-color: currentColor;
+      border-radius: 50%;
+    }
+    @media (prefers-reduced-motion: no-preference) {
+      #finance-boot::before { animation: boot-spin 1s linear infinite; }
+      @keyframes boot-spin { to { transform: rotate(1turn); } }
+    }
+  </style>
   <link rel="preload" href="main.dart.js" as="script">
   <link rel="manifest" href="manifest.json">
 </head>
 <body>
-  <!--
-    You can customize the "flutter_bootstrap.js" script.
-    This is useful to provide a custom configuration to the Flutter loader
-    or to give the user feedback during the initialization process.
-
-    For more details:
-    * https://docs.flutter.dev/platform-integration/web/initialization
-  -->
+  <div id="finance-boot" role="status" lang="zh">正在打开 Finance Compass…</div>
   <script src="flutter_bootstrap.js" async></script>
   <script src="pwa_bootstrap.js" defer></script>
 </body>

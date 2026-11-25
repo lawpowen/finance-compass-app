@@ -9,4 +9,8 @@ void Function() listenForPwaUpdates(void Function() onReady) => () {};
 
 void Function() listenForNetworkReconnect(void Function() onReconnect) => () {};
 
+void Function() listenForPwaRepaint(void Function() repaint,
+        {required bool Function() hasOpenEditor}) =>
+    () {};
+
 Future<void> applyPwaUpdate() async => throw UnsupportedError('仅浏览器支持网页更新。');

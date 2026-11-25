@@ -157,6 +157,28 @@ void main() {
     expect(bootstrap, isNot(contains('flutter_service_worker_version')));
   });
 
+  test('the launch status renders without JavaScript under both delivery CSPs',
+      () async {
+    final html = await File('${root.path}/web/index.html').readAsString();
+    expect(html, contains('id="finance-boot"'));
+    expect(html, contains('role="status"'));
+    expect(html.indexOf('id="finance-boot"'),
+        lessThan(html.indexOf('<script src="flutter_bootstrap.js"')));
+    for (final script
+        in RegExp(r'<script\b([^>]*)>([\s\S]*?)</script>', caseSensitive: false)
+            .allMatches(html)) {
+      expect(script[1], contains('src='));
+      expect(script[2]!.trim(), isEmpty);
+    }
+    for (final target in ['selfhost', 'sync']) {
+      final caddy =
+          await File('${root.path}/deploy/$target/Caddyfile').readAsString();
+      final policy = RegExp(r"script-src ([^;]+)").firstMatch(caddy)![1]!;
+      expect(policy, contains("'self'"));
+      expect(policy, isNot(contains("'unsafe-inline'")));
+    }
+  });
+
   test('fallback fonts are vendored with a complete checksum list', () async {
     final fontsDir = Directory('${root.path}/web/fonts');
     final lines = (await File('${fontsDir.path}/SHA256SUMS').readAsLines())

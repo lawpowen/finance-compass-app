@@ -26,7 +26,11 @@ flowchart LR
 
 ## PWA 与 Apple/Android 使用方式
 
-网页与已安装的 PWA 默认使用 CanvasKit WebGL。设备的图形驱动不稳定时，可以通过地址末尾的 `?cpu=1` 切换到软件绘图。此模式关闭实时模糊与发光阴影以降低重绘成本。通过 `node --test test/web_bootstrap.test.mjs` 验证默认路径、软件回退及同源字体配置。[Flutter Web 初始化选项](https://docs.flutter.dev/platform-integration/web/initialization)
+Web 24 的 HTML 在加载期间显示品牌底色及启动提示。Flutter 首帧出现后移除提示。Web 主题按浏览器与 origin 保存在 `localStorage` 的 `finance-compass.theme_style`，首帧不等偏好读取。首次进入本地账本时，若尚未选择 Web 主题，应用会从该账本已打开的原始快照沿用旧设备主题。只使用同步登录的设备可在外观设置中重新选择。原生设备沿用 SQLite。浏览器限制存储或偏好读取超过 2 秒时，应用以默认主题继续启动。
+
+Android 从主屏幕打开独立 PWA 时默认使用 CanvasKit 软件绘图。Flutter 3.44.1 的 `CkSurface.onContextLost()` 会先读取尚未初始化的 `_handledContextLostEvent`，实际上下文丢失时可能在重建画布前抛出异常。软件绘图可让已打开的记账表单避开这条路径，液态玻璃在此模式简化模糊和阴影。普通 Android 网页、iOS 和桌面默认保留 WebGL。回到前台、浏览器恢复缓存页面，或引擎重建丢失的画布时，Flutter 会重新绘制当前画面。画布恢复期间保留当前路由与表单。确认上下文持续失活后才重载；同一标签页 60 秒内再次失败，或浏览器禁止记录重试时间时，以保留其他参数的 `?cpu=1` 软件模式重新打开。正在保存或有尚未持久化的同步更改时会等待，打开编辑页面时会在重载前请求确认。
+
+可手工添加 `?cpu=1` 使用软件绘图，该模式关闭实时模糊与发光阴影。要重新尝试硬件加速，移除地址中的 `cpu` 参数；在安装的 Android PWA 里可显式指定 `?gpu=1`。`cpu` 同时存在时优先。运行 `node --test test/web_bootstrap.test.mjs` 可验证回前台、真实画布事件对应的恢复策略及同源字体配置。[Flutter Web 初始化选项](https://docs.flutter.dev/platform-integration/web/initialization)
 
 - **iOS/iPadOS Safari**：通过 HTTPS 打开站点，点击分享按钮，再选择“添加到主屏幕”。Safari 不提供 Chromium 式安装提示；离线缓存与本地存储受 iOS 存储回收策略影响，所以不应以它代替 JSON 备份。
 - **Android Chrome**：通过 HTTPS 打开站点，在 Chrome 菜单选择“安装应用”或“添加到主屏幕”。manifest 和 standalone display 已配置；Service Worker 会缓存静态应用外壳，首次完整加载后可离线打开。它不会让服务器持有或同步账本。

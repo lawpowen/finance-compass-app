@@ -31,9 +31,13 @@ final _beforeUnload = ((_BeforeUnloadEvent event) {
 
 bool _protected = false;
 
+@JS('window.financeCompassProtectPendingChanges')
+external set _protectGraphicsRecovery(JSBoolean value);
+
 void protectPendingChanges(bool protect) {
   if (protect == _protected) return;
   _protected = protect;
+  _protectGraphicsRecovery = protect.toJS;
   if (protect) {
     _addEventListener('beforeunload'.toJS, _beforeUnload);
   } else {
@@ -59,6 +63,24 @@ void Function() listenForNetworkReconnect(void Function() onReconnect) {
   final listener = onReconnect.toJS;
   _addEventListener('online'.toJS, listener);
   return () => _removeEventListener('online'.toJS, listener);
+}
+
+@JS('window.financeCompassHasOpenEditor')
+external JSFunction? get _hasOpenEditor;
+@JS('window.financeCompassHasOpenEditor')
+external set _hasOpenEditor(JSFunction? callback);
+
+void Function() listenForPwaRepaint(void Function() repaint,
+    {required bool Function() hasOpenEditor}) {
+  final type = 'finance-compass-repaint'.toJS;
+  final listener = ((JSAny? _) => repaint()).toJS;
+  final editor = hasOpenEditor.toJS;
+  _hasOpenEditor = editor;
+  _addEventListener(type, listener);
+  return () {
+    _removeEventListener(type, listener);
+    if (_hasOpenEditor == editor) _hasOpenEditor = null;
+  };
 }
 
 Future<void> applyPwaUpdate() async {

@@ -59,10 +59,15 @@ class _FinanceSyncGateState extends State<FinanceSyncGate> {
   bool _updatePromptOpen = false;
   Timer? _updatePromptTimer;
   late final VoidCallback _stopListeningForUpdates;
+  late final AppLifecycleListener _surfaceLifecycle;
+  late final VoidCallback _stopListeningForRepaint;
 
   @override
   void initState() {
     super.initState();
+    _surfaceLifecycle = AppLifecycleListener(onResume: _repaintSurface);
+    _stopListeningForRepaint = listenForPwaRepaint(_repaintSurface,
+        hasOpenEditor: () => _hasOpenEditor);
     _stopListeningForUpdates = listenForPwaUpdates(_offerUpdate);
     if (widget.localOnly) {
       _offline = true;
@@ -74,6 +79,8 @@ class _FinanceSyncGateState extends State<FinanceSyncGate> {
 
   @override
   void dispose() {
+    _surfaceLifecycle.dispose();
+    _stopListeningForRepaint();
     _stopListeningForUpdates();
     _updatePromptTimer?.cancel();
     _client.close();
@@ -82,6 +89,16 @@ class _FinanceSyncGateState extends State<FinanceSyncGate> {
     _confirmation.dispose();
     _closeLedger();
     super.dispose();
+  }
+
+  void _repaintSurface() {
+    // CanvasKit can replace its surface while the widget tree is idle. Repaint
+    // the current scene without rebuilding the navigator or its open forms.
+    final binding = WidgetsBinding.instance;
+    for (final view in binding.renderViews) {
+      view.markNeedsPaint();
+    }
+    binding.scheduleForcedFrame();
   }
 
   void _offerUpdate() {
@@ -95,34 +112,32 @@ class _FinanceSyncGateState extends State<FinanceSyncGate> {
     });
   }
 
+  NavigatorState? get _activeNavigator => _session != null
+      ? _navigator.currentState
+      : _offline
+          ? _offlineNavigator.currentState
+          : _loginNavigator.currentState;
+
+  bool get _hasOpenEditor =>
+      _activeNavigator?.canPop() == true ||
+      _workspaceNavigation.hasOpenPage ||
+      _offlineWorkspaceNavigation.hasOpenPage ||
+      (_session == null &&
+          !_offline &&
+          (_username.text.isNotEmpty ||
+              _password.text.isNotEmpty ||
+              _confirmation.text.isNotEmpty)) ||
+      _session?.needsRecovery == true;
+
   BuildContext? get _updateContext {
     if (_busy ||
         _updatePromptOpen ||
+        _hasOpenEditor ||
+        _session?.busy == true ||
         WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
       return null;
     }
-    final session = _session;
-    final navigator = session != null
-        ? _navigator.currentState
-        : _offline
-            ? _offlineNavigator.currentState
-            : _loginNavigator.currentState;
-    if (navigator?.canPop() != false ||
-        _workspaceNavigation.hasOpenPage ||
-        _offlineWorkspaceNavigation.hasOpenPage) {
-      return null;
-    }
-    if (session != null) {
-      if (session.busy || session.needsRecovery) {
-        return null;
-      }
-    } else if (!_offline &&
-        (_username.text.isNotEmpty ||
-            _password.text.isNotEmpty ||
-            _confirmation.text.isNotEmpty)) {
-      return null;
-    }
-    return navigator?.overlay?.context;
+    return _activeNavigator?.overlay?.context;
   }
 
   Future<void> _showUpdatePrompt() async {
@@ -276,25 +291,40 @@ class _FinanceSyncGateState extends State<FinanceSyncGate> {
     if (_offline) {
       return ProviderScope(
         key: const ValueKey('offline'),
-        child: FinanceApp(
-          settingsController: widget.settingsController,
-          navigatorKey: _offlineNavigator,
-          workspaceNavigation: _offlineWorkspaceNavigation,
-          syncSettings: _settingsActions(
-            widget.localOnly
-                ? null
-                : CompassSettingsRow(
-                    icon: Icons.login_rounded,
-                    title: '返回同步登录',
-                    onTap: () {
-                      setState(() => _offline = false);
-                      unawaited(_connect());
-                    },
-                  ),
+        child: Consumer(
+          builder: (context, ref, child) {
+            unawaited(widget.settingsController.adoptLocalLedgerTheme(() => ref
+                .read(financeRepositoryProvider.future)
+                .then((ledger) => ledger.metaValues['theme_style'])));
+            return child!;
+          },
+          child: FinanceApp(
+            settingsController: widget.settingsController,
+            navigatorKey: _offlineNavigator,
+            workspaceNavigation: _offlineWorkspaceNavigation,
+            syncSettings: _settingsActions(
+              widget.localOnly
+                  ? null
+                  : CompassSettingsRow(
+                      icon: Icons.login_rounded,
+                      title: '返回同步登录',
+                      onTap: () {
+                        setState(() => _offline = false);
+                        unawaited(_connect());
+                      },
+                    ),
+            ),
           ),
         ),
       );
     }
+    return ListenableBuilder(
+      listenable: widget.settingsController,
+      builder: (context, _) => _buildLoginPage(),
+    );
+  }
+
+  Widget _buildLoginPage() {
     final theme = buildFinanceTheme(widget.settingsController.themeStyle);
     return MaterialApp(
       title: 'Finance Compass',

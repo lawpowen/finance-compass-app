@@ -1,5 +1,15 @@
 # 测试与质量
 
+## 2026-11-25 Web 24 PWA 冷启动与图标回前台
+
+- 升级前在 Chrome 157 用 `WEBGL_lose_context` 分别令离屏画布和闭合 Shadow DOM 画布失活。两种原生事件均为 `bubbles=false、composed=false`，旧的 window 监听器收件数为 0。Flutter 3.44.1 本地发布 SDK 的 CanvasKit 会在自然丢失时读取尚未初始化的 `late _handledContextLostEvent`；编译版本的主画布实测抛出 `LateInitializationError`。
+- 启动测试覆盖本机主题存储拒绝访问、慢读超时、旧结果晚到、用户选择竞争、首次进入本机账本时沿用旧主题，以及首帧前后的 CSS 占位。Web 浏览器专测为 `flutter test --no-pub --platform chrome test/settings_boot_browser.dart`。该版本 Flutter 在 Windows 上运行 Chrome 测试时，若测试服务器对 `/canvaskit/chromium/` 返回 404，可在测试期间将项目 SDK 的两个 Chromium CanvasKit 文件放入测试静态目录 `test/canvaskit/chromium/`，测试后清理。
+- `node --test test/web_bootstrap.test.mjs` 验证后台切换、BFCache、先可见后失活、静默失活探测、等待恢复、表单保护和连续失败降级。设置 `CHROME_EXECUTABLE` 指向本机 Chrome，运行 `node --test test/web_bootstrap_browser.test.mjs` 可用真实上下文检查引擎式替换后的重绘及输入保留。Flutter 的 `test/pwa_resume_repaint_test.dart` 验证同一帧返回事件合并为一次根画面重绘，已有详情路由保持打开。
+
+Windows 工作树使用 Flutter 3.44.1 构建同步 Web release。全仓 Flutter 443 项通过，2 项条件跳过（本机 AI 网关集成、手工截图）。Chrome 主题读写与迁移 4 项通过。Node 服务端与启动策略 46 项通过，另行启用真实 Chrome 的画布回归 1 项通过。静态分析为 0 error、0 warning、64 info，默认因 info 返回 1。
+
+发布构建在本机回环地址使用生产 CSP 验证。禁用主题读取并拒绝创建 Drift Worker 后，登录界面仍出现。对真实 CanvasKit 主画布连续触发失活，硬件重载与软件回退都恢复了可见登录画面；Web 23 Worker 等待确认，随后 Web 24 激活并再次渲染首帧。Chrome 模拟 Android standalone 时，CanvasKit 直接使用软件绘图，经 Chrome 冻结、解冻，再切换标签页使页面恢复可见后，页面时间原点保持不变，抽样画面与切换前相同。WebGL 试验采用 Chrome 的 SwiftShader 后端。本机 ADB 未连接 Android 真机。
+
 ## 2026-11-25 阶段 5 同步、迁移与状态刷新
 
 Windows 工作树使用 Flutter 3.44.1。全仓 `flutter test --no-pub` 通过 437 项，0 项失败，2 项条件跳过（本地 AI 网关未运行、手工截图未启用）。全量 `node --test server/*.test.mjs` 通过 36 项，其中指定的同步、提醒与推送三份测试单独运行通过 31 项。`flutter analyze --no-pub lib/ test/` 得到 0 error、0 warning、64 info，默认因 info 返回 1；增加 `--no-fatal-infos` 后返回 0。推送账号隔离和时区变更使用模拟浏览器及本地服务端验证。真实设备系统通知投递尚待真机验证。

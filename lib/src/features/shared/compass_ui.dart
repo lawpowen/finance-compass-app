@@ -1,10 +1,11 @@
 import 'dart:math' as math;
 import 'dart:ui' show ImageFilter;
 
-import 'package:flutter/foundation.dart'
-    show kIsWeb, listEquals, visibleForTesting;
+import 'package:flutter/foundation.dart' show listEquals, visibleForTesting;
 import 'package:flutter/material.dart';
 
+import '../../core/platform/web_renderer_stub.dart'
+    if (dart.library.js_interop) '../../core/platform/web_renderer_web.dart';
 import '../../core/theme/finance_colors.dart';
 import '../../core/theme/finance_theme.dart';
 import '../../core/utils/currency_formatter.dart' show activeBaseCurrencyCode;
@@ -13,11 +14,9 @@ import '../../core/utils/currency_formatter.dart' show activeBaseCurrencyCode;
 @visibleForTesting
 bool? debugOverrideCompassCpuSoftwareWeb;
 
-/// Returns true when the Web runtime explicitly selects CPU software CanvasKit
-/// (via `?cpu=1`), or when overridden in tests.
+/// Keep blur and shadow costs in step with the renderer used for this page.
 bool get compassIsCpuSoftwareWeb =>
-    debugOverrideCompassCpuSoftwareWeb ??
-    (kIsWeb && Uri.base.queryParameters.containsKey('cpu'));
+    debugOverrideCompassCpuSoftwareWeb ?? isSoftwareRenderer;
 
 const compassPagePadding = EdgeInsets.fromLTRB(20, 16, 20, 28);
 const compassDesktopPagePadding = EdgeInsets.fromLTRB(28, 24, 28, 32);
