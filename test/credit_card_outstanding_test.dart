@@ -45,13 +45,14 @@ FinanceTransaction _charge(
   double amount,
   DateTime date, {
   TransactionStatus status = TransactionStatus.actual,
+  String currency = 'MYR',
 }) {
   return FinanceTransaction(
     id: id,
     type: TransactionType.expense,
     accountId: accountId,
     amount: amount,
-    currency: 'MYR',
+    currency: currency,
     transactionDate: date,
     status: status,
   );
@@ -80,6 +81,63 @@ class _CardRepository extends FinanceRepositoryNotifier {
 
   @override
   Future<FinanceRepository> build() async => repository;
+}
+
+Finder _row(String name) =>
+    find.ancestor(of: find.text(name), matching: find.byType(InkWell)).first;
+
+Account _cycleCard(String name, {String currency = 'MYR', int dueDay = 25}) =>
+    Account(
+        id: name,
+        name: name,
+        accountType: AccountType.creditCard,
+        reportGroup: ReportGroup.credit,
+        currency: currency,
+        currentBalance: 0,
+        creditLimit: 1000,
+        statementDay: 9,
+        paymentDueDay: dueDay);
+
+void _expectRow(
+  WidgetTester tester,
+  String name, {
+  required String badge,
+  required Color badgeColor,
+  required String label,
+  required String amount,
+  required Color amountColor,
+}) {
+  final row = _row(name);
+  final status = find.descendant(
+    of: row,
+    matching: find.widgetWithText(CompassStatusBadge, badge),
+  );
+  final amountLabel = find.descendant(of: row, matching: find.text(label));
+  final amountText = find.descendant(of: row, matching: find.text(amount));
+  expect(status, findsOneWidget, reason: name);
+  expect(tester.widget<CompassStatusBadge>(status).color, badgeColor);
+  expect(amountLabel, findsOneWidget, reason: name);
+  expect(amountText, findsOneWidget, reason: name);
+  expect(tester.widget<Text>(amountText).style?.color, amountColor);
+  expect(tester.getCenter(amountText).dx,
+      greaterThan(tester.getCenter(status).dx));
+  expect(tester.getCenter(amountText).dy,
+      greaterThan(tester.getCenter(amountLabel).dy));
+}
+
+Future<void> _openCards(WidgetTester tester, FinanceRepository repository,
+    {required DateTime asOf}) async {
+  tester.view.physicalSize = const Size(390, 2400);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
+  await tester.pumpWidget(MaterialApp(
+    theme: buildFinanceTheme(AppThemeStyle.monochrome),
+    home: Scaffold(body: AccountsV2Screen(repository: repository, asOf: asOf)),
+  ));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('信用'));
+  await tester.pumpAndSettle();
 }
 
 void main() {
@@ -311,6 +369,8 @@ void main() {
           120,
           DateTime(today.year, today.month + 3, 10),
         ),
+        _charge('undated-future', 'undated', 8,
+            DateTime(today.year, today.month + 2, 8)),
       ],
     );
 
@@ -344,8 +404,30 @@ void main() {
         findsOneWidget);
     expect(find.text('暂无欠款'), findsOneWidget);
     expect(find.text('账期待设置'), findsOneWidget);
-    expect(find.text('当前为估算提醒'), findsOneWidget);
+    expect(
+        find.descendant(
+            of: _row('Undated'), matching: find.textContaining('当前为估算提醒')),
+        findsOneWidget);
     expect(find.textContaining('账期日期待设置'), findsNothing);
+    final palette = financePaletteOf(tester.element(_row('Gap')));
+    _expectRow(tester, 'Gap',
+        badge: '尚未出账',
+        badgeColor: palette.income,
+        label: '当前欠款',
+        amount: 'MYR 120.00',
+        amountColor: palette.textPrimary);
+    _expectRow(tester, 'Overpaid',
+        badge: '暂无欠款',
+        badgeColor: palette.income,
+        label: '当前欠款',
+        amount: 'MYR 0.00',
+        amountColor: palette.income);
+    _expectRow(tester, 'Undated',
+        badge: '账期待设置',
+        badgeColor: palette.expense,
+        label: '当前欠款（估算）',
+        amount: 'MYR 8.00',
+        amountColor: palette.expense);
     expect(tester.takeException(), isNull);
   });
 
@@ -436,6 +518,18 @@ void main() {
     expect(find.text('额度已用 9%'), findsOneWidget); // 470 / 5000 at cutoff
     expect(find.text('额度已用 29%'), findsNothing);
     expect(find.textContaining('本期应还 '), findsNothing);
+    final palette = financePaletteOf(tester.element(_row('Debt')));
+    final debtAmount =
+        find.descendant(of: _row('Debt'), matching: find.text('MYR 470.00'));
+    expect(find.descendant(of: _row('Debt'), matching: find.text('月末欠款')),
+        findsOneWidget);
+    expect(tester.widget<Text>(debtAmount).style?.color, palette.expense);
+    _expectRow(tester, 'Overpaid',
+        badge: '暂无欠款',
+        badgeColor: palette.income,
+        label: '月末欠款',
+        amount: 'MYR 0.00',
+        amountColor: palette.income);
 
     tester.view.physicalSize = const Size(960, 844);
     await tester.pumpAndSettle();
@@ -450,7 +544,133 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('due amount, month-end debt and committed usage stay distinct',
+  testWidgets(
+      'paid Laz PayLater shows the entire next cycle while group totals keep the month cutoff',
+      (tester) async {
+    const name = 'Laz PayLater';
+    final repository = await _repositoryWith([
+      _cycleCard(name),
+      const Account(
+          id: 'bank',
+          name: 'Bank',
+          accountType: AccountType.cash,
+          reportGroup: ReportGroup.cash,
+          currency: 'MYR',
+          initialBalance: 100,
+          currentBalance: 100),
+    ], [
+      _charge('november-statement', name, 100, DateTime(2026, 10, 20)),
+      _charge('november-spend', name, 79.56, DateTime(2026, 11, 20)),
+      FinanceTransaction(
+          id: 'november-payment',
+          type: TransactionType.transfer,
+          accountId: 'bank',
+          toAccountId: name,
+          amount: 100,
+          currency: 'MYR',
+          transactionDate: DateTime(2026, 11, 25)),
+      _charge('december-instalment', name, 180.88, DateTime(2026, 12, 9)),
+      _charge('january-instalment', name, 19.56, DateTime(2027, 1, 9)),
+      _charge('not-committed', name, 500, DateTime(2026, 12, 7),
+          status: TransactionStatus.planned),
+    ]);
+    await _openCards(tester, repository, asOf: DateTime(2026, 11, 25));
+    final palette = financePaletteOf(tester.element(_row(name)));
+    _expectRow(tester, name,
+        badge: '本期已还清',
+        badgeColor: palette.income,
+        label: '下期已使用',
+        amount: 'MYR 260.44',
+        amountColor: palette.textPrimary);
+    expect(find.descendant(of: _row(name), matching: find.text('月末欠款')),
+        findsNothing);
+    expect(find.text('负债总额  MYR 79.56'), findsOneWidget);
+    expect(
+        tester.widget<Text>(find.byKey(const Key('accounts-net-worth'))).data,
+        '- MYR 79.56');
+    expect(find.textContaining('含未来承诺余额 - MYR 280.00'), findsOneWidget);
+    expect(find.text('额度已用 28%'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('account-cutoff-selector')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('account-cutoff-2026-10')));
+    await tester.pumpAndSettle();
+    _expectRow(tester, name,
+        badge: '尚未出账',
+        badgeColor: palette.income,
+        label: '月末欠款',
+        amount: 'MYR 100.00',
+        amountColor: palette.textPrimary);
+    expect(find.text('负债总额  MYR 100.00'), findsOneWidget);
+    expect(find.textContaining('含未来承诺余额'), findsNothing);
+    expect(find.text('额度已用 10%'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'due bills, future use and base equivalents follow each card statement',
+      (tester) async {
+    var repo = await _repositoryWith([
+      _cycleCard('Pending FX', currency: 'USD', dueDay: 28),
+      _cycleCard('Late', dueDay: 20),
+      _cycleCard('Next'),
+      _cycleCard('Settled'),
+    ], [
+      _charge('fx-bill', 'Pending FX', 40, DateTime(2026, 11, 3),
+          currency: 'USD'),
+      _charge('fx-new', 'Pending FX', 8, DateTime(2026, 11, 20),
+          currency: 'USD'),
+      _charge('fx-committed', 'Pending FX', 9, DateTime(2026, 12, 9),
+          currency: 'USD'),
+      _charge('older-overdue', 'Late', 7, DateTime(2026, 10, 8)),
+      _charge('newer-overdue', 'Late', 60, DateTime(2026, 11, 3)),
+      _charge('unbilled', 'Next', 18.30, DateTime(2026, 11, 22)),
+      _charge('unbilled-instalment', 'Next', 20.20, DateTime(2026, 12, 7)),
+      _charge('closed', 'Settled', 25, DateTime(2026, 11, 3)),
+      _charge('refund', 'Settled', -25, DateTime(2026, 11, 6)),
+    ]);
+    repo = await repo.updateExchangeRates({'MYR': 1, 'USD': 4}, ['MYR', 'USD']);
+    await _openCards(tester, repo, asOf: DateTime(2026, 11, 25));
+    final palette = financePaletteOf(tester.element(_row('Pending FX')));
+    _expectRow(tester, 'Pending FX',
+        badge: '待还款',
+        badgeColor: palette.expense,
+        label: '本期应还',
+        amount: 'USD 40.00',
+        amountColor: palette.expense);
+    expect(
+        find.descendant(
+            of: _row('Pending FX'), matching: find.text('≈ MYR 160.00')),
+        findsOneWidget);
+    final nextUsage = find.descendant(
+        of: _row('Pending FX'), matching: find.text('下期已用 USD 17.00'));
+    expect(tester.widget<Text>(nextUsage).style?.color, palette.textMuted);
+    _expectRow(tester, 'Late',
+        badge: '逾期未还',
+        badgeColor: palette.expense,
+        label: '逾期应还',
+        amount: 'MYR 7.00',
+        amountColor: palette.expense);
+    final otherBills =
+        find.descendant(of: _row('Late'), matching: find.text('另有 1 期已出账待还'));
+    expect(tester.widget<Text>(otherBills).style?.color, palette.textMuted);
+    _expectRow(tester, 'Next',
+        badge: '尚未出账',
+        badgeColor: palette.income,
+        label: '下期已使用',
+        amount: 'MYR 38.50',
+        amountColor: palette.textPrimary);
+    _expectRow(tester, 'Settled',
+        badge: '本期已还清',
+        badgeColor: palette.income,
+        label: '本期账单',
+        amount: 'MYR 0.00',
+        amountColor: palette.income);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'due-today row uses the bill for its main amount and committed debt for usage',
       (tester) async {
     tester.view.physicalSize = const Size(390, 1800);
     tester.view.devicePixelRatio = 1;
@@ -501,14 +721,18 @@ void main() {
     final row = find
         .ancestor(of: find.text('PayLater'), matching: find.byType(InkWell))
         .first;
-    expect(
-        find.descendant(of: row, matching: find.text('今日到期')), findsOneWidget);
-    expect(
-        find.descendant(of: row, matching: find.text('月末欠款')), findsOneWidget);
+    final palette = financePaletteOf(tester.element(row));
+    _expectRow(tester, 'PayLater',
+        badge: '今日到期',
+        badgeColor: palette.expense,
+        label: '今日应还',
+        amount: 'MYR 241.94',
+        amountColor: palette.expense);
+    expect(find.descendant(of: row, matching: find.text('月末欠款')), findsNothing);
     expect(find.descendant(of: row, matching: find.text('MYR 300.00')),
-        findsOneWidget);
-    expect(find.descendant(of: row, matching: find.text('本期应还 MYR 241.94')),
-        findsOneWidget);
+        findsNothing);
+    expect(find.descendant(of: row, matching: find.textContaining('本期应还 ')),
+        findsNothing);
     expect(find.text('本期应还 MYR 20.00'), findsNothing);
     expect(find.descendant(of: row, matching: find.text('额度已用 50%')),
         findsOneWidget);

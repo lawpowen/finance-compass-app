@@ -1,6 +1,6 @@
 // Keep "consent-" in future release cache names so installed clients can
 // choose when to activate the next worker.
-const CACHE_NAME = 'finance-compass-shell-consent-v0.10.1-sync26';
+const CACHE_NAME = 'finance-compass-shell-consent-v0.10.1-sync27';
 const SHELL_CACHE_PREFIX = 'finance-compass-shell-';
 const CONSENT_CACHE_PREFIX = 'finance-compass-shell-consent-';
 // Keep the complete rendering and local-database runtime available after a

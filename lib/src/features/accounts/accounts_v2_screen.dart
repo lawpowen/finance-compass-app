@@ -18,9 +18,10 @@ import 'credit_card_detail_screen.dart';
 import 'loan_detail_screen.dart';
 
 class AccountsV2Screen extends ConsumerStatefulWidget {
-  const AccountsV2Screen({super.key, required this.repository});
+  const AccountsV2Screen({super.key, required this.repository, this.asOf});
 
   final FinanceRepository repository;
+  final DateTime? asOf;
 
   @override
   ConsumerState<AccountsV2Screen> createState() => _AccountsV2ScreenState();
@@ -28,17 +29,20 @@ class AccountsV2Screen extends ConsumerStatefulWidget {
 
 class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
   int selectedGroup = 1;
-  DateTime selectedCutoffMonth = DateTime(
-    DateTime.now().year,
-    DateTime.now().month,
-  );
+  late DateTime selectedCutoffMonth = _currentMonth;
+
+  DateTime get _now => widget.asOf ?? DateTime.now();
+  DateTime get _currentMonth {
+    final now = _now;
+    return DateTime(now.year, now.month);
+  }
 
   FinanceRepository get repository => widget.repository;
 
   @override
   Widget build(BuildContext context) {
     final repository = widget.repository;
-    final now = DateTime.now();
+    final now = _now;
     final cutoffDate = _endOfMonth(selectedCutoffMonth);
     final isHistorical = selectedCutoffMonth.year != now.year ||
         selectedCutoffMonth.month != now.month;
@@ -413,11 +417,7 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
                     InkWell(
                       borderRadius: BorderRadius.circular(10),
                       onTap: () {
-                        final current = DateTime.now();
-                        setState(() {
-                          selectedCutoffMonth =
-                              DateTime(current.year, current.month);
-                        });
+                        setState(() => selectedCutoffMonth = _currentMonth);
                       },
                       child: Padding(
                         padding: const EdgeInsets.symmetric(
@@ -497,6 +497,7 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
                 account: account,
                 repository: repository,
                 cutoffDate: cutoffDate,
+                billingDate: isHistorical ? cutoffDate : now,
                 isHistorical: isHistorical,
                 onTap: () => _openAccount(
                   context,
@@ -615,11 +616,7 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
                     ),
                     TextButton(
                       onPressed: () {
-                        final now = DateTime.now();
-                        Navigator.pop(
-                          sheetContext,
-                          DateTime(now.year, now.month),
-                        );
+                        Navigator.pop(sheetContext, _currentMonth);
                       },
                       child: const Text('返回本月'),
                     ),
@@ -672,7 +669,7 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
   }
 
   List<DateTime> _availableCutoffMonths() {
-    final now = DateTime.now();
+    final now = _now;
     final candidates = <DateTime>[
       DateTime(now.year, now.month),
       ...repository.transactions.map(
@@ -1027,6 +1024,7 @@ class _AccountRow extends StatelessWidget {
     required this.account,
     required this.repository,
     required this.cutoffDate,
+    required this.billingDate,
     required this.isHistorical,
     required this.onTap,
   });
@@ -1034,26 +1032,24 @@ class _AccountRow extends StatelessWidget {
   final Account account;
   final FinanceRepository repository;
   final DateTime cutoffDate;
+  final DateTime billingDate;
   final bool isHistorical;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final palette = financePaletteOf(context);
-    final now = isHistorical ? cutoffDate : DateTime.now();
-    final scopedTransactions = repository.transactions.where(
-      (item) => !item.transactionDate.isAfter(cutoffDate),
-    );
+    final scopedTransactions = isHistorical
+        ? repository.transactions
+            .where((t) => !t.transactionDate.isAfter(cutoffDate))
+        : repository.transactions;
     final rawBalance = repository.accountBalanceAt(account.id, cutoffDate);
-    final creditDebt = account.accountType == AccountType.creditCard
-        ? repository.creditCardOutstandingBalance(
-            account.id,
-            cutoffDate: cutoffDate,
-          )
+    final usageAmount = account.accountType == AccountType.creditCard
+        ? isHistorical
+            ? repository.creditCardOutstandingBalance(account.id,
+                cutoffDate: cutoffDate)
+            : repository.creditCardCommittedOutstandingBalance(account.id)
         : null;
-    final usageAmount = creditDebt == null || isHistorical
-        ? creditDebt
-        : repository.creditCardCommittedOutstandingBalance(account.id);
     final overpaid = account.accountType == AccountType.creditCard
         ? repository.creditCardCreditBalance(
             account.id,
@@ -1064,10 +1060,10 @@ class _AccountRow extends StatelessWidget {
         ? repository.creditCardBillingSummary(
             account.id,
             cutoffDate: isHistorical ? cutoffDate : null,
-            now: now,
+            now: billingDate,
           )
         : null;
-    final cardDisplay = billing == null
+    final cardDisplay = billing == null || usageAmount == null
         ? null
         : _accountCardDisplay(
             resolveCreditCardDisplayState(
@@ -1075,16 +1071,17 @@ class _AccountRow extends StatelessWidget {
               hasBilledActivity: hasCreditCardBilledActivity(
                 account: account,
                 transactions: scopedTransactions,
-                now: now,
+                now: billingDate,
               ),
-              now: now,
+              now: billingDate,
               committedOutstanding: usageAmount,
             ),
             billing,
             palette,
-            liveMonthEndDebt: isHistorical ? null : creditDebt,
+            usageAmount: usageAmount,
+            historical: isHistorical,
           );
-    final amount = creditDebt ??
+    final amount = cardDisplay?.amount ??
         (account.accountType == AccountType.loan
             ? (-rawBalance).clamp(0.0, double.infinity).toDouble()
             : rawBalance.abs());
@@ -1144,7 +1141,11 @@ class _AccountRow extends StatelessWidget {
           ].whereType<String>().where((item) => item.isNotEmpty).join(' · ')
         : [
             if (!account.isActive && !isHistorical) '已停用',
-            if (!isHistorical && account.currentBalance != rawBalance)
+            if (!isHistorical &&
+                usageAmount != null &&
+                ((usageAmount - amount).abs() > .005 ||
+                    (usageAmount - billing.outstandingBalance).abs() > .005 ||
+                    (account.currentBalance - rawBalance).abs() > .005))
               '含未来承诺余额 ${compassMoney(account.currentBalance, currency: account.currency)}',
             billing.isEstimated
                 ? '当前为估算提醒'
@@ -1192,13 +1193,12 @@ class _AccountRow extends StatelessWidget {
             ),
             const SizedBox(width: 8),
             _AccountAmountColumn(
-              hasBilling: billing != null,
+              amountLabel: cardDisplay?.amountLabel,
               isNegativeCash: isNegativeCash,
               amount: amount,
               currency: account.currency,
-              amountColor: cardDisplay != null
-                  ? cardDisplay.color
-                  : (isNegativeCash ? palette.expense : palette.textPrimary),
+              amountColor: cardDisplay?.amountColor ??
+                  (isNegativeCash ? palette.expense : palette.textPrimary),
               baseEquivalent: baseEquivalent,
               baseCurrency: baseCurrency,
             ),
@@ -1242,13 +1242,19 @@ class _AccountStatusExtras extends StatelessWidget {
               if (cardDisplay case final display?) ...[
                 CompassStatusBadge(
                   label: display.statusLabel,
-                  color: display.color,
+                  color: display.badgeColor,
                 ),
-                if (display.amountDue case final due?)
-                  Text('本期应还 ${compassMoney(due, currency: currency)}',
+                if (display.nextUsage case final next?)
+                  Text('下期已用 ${compassMoney(next, currency: currency)}',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: display.color,
+                          color: palette.textMuted,
                           fontFeatures: compassTabularFigures)),
+                if (display.otherStatements > 0)
+                  Text('另有 ${display.otherStatements} 期已出账待还',
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: palette.textMuted)),
               ],
               if (overpaid > 0)
                 CompassStatusBadge(
@@ -1287,7 +1293,7 @@ class _AccountStatusExtras extends StatelessWidget {
 
 class _AccountAmountColumn extends StatelessWidget {
   const _AccountAmountColumn({
-    required this.hasBilling,
+    required this.amountLabel,
     required this.isNegativeCash,
     required this.amount,
     required this.currency,
@@ -1296,7 +1302,7 @@ class _AccountAmountColumn extends StatelessWidget {
     required this.baseCurrency,
   });
 
-  final bool hasBilling;
+  final String? amountLabel;
   final bool isNegativeCash;
   final double amount;
   final String currency;
@@ -1308,8 +1314,8 @@ class _AccountAmountColumn extends StatelessWidget {
   Widget build(BuildContext context) => Column(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          if (hasBilling)
-            Text('月末欠款', style: Theme.of(context).textTheme.bodySmall),
+          if (amountLabel case final label?)
+            Text(label, style: Theme.of(context).textTheme.bodySmall),
           const SizedBox(height: 3),
           Text(
             '${isNegativeCash ? '- ' : ''}${compassMoney(amount, currency: currency)}',
@@ -1337,41 +1343,84 @@ class _AccountAmountColumn extends StatelessWidget {
 }
 
 class _AccountCardDisplay {
-  const _AccountCardDisplay(this.statusLabel, this.color, {this.amountDue});
+  const _AccountCardDisplay({
+    required this.statusLabel,
+    required this.badgeColor,
+    required this.amountLabel,
+    required this.amount,
+    required this.amountColor,
+    this.nextUsage,
+    this.otherStatements = 0,
+  });
 
   final String statusLabel;
-  final Color color;
-  final double? amountDue;
+  final Color badgeColor;
+  final String amountLabel;
+  final double amount;
+  final Color amountColor;
+  final double? nextUsage;
+  final int otherStatements;
 }
 
 _AccountCardDisplay _accountCardDisplay(
   CreditCardDisplayState state,
   CreditCardBillingSummary summary,
   FinanceThemePalette palette, {
-  required double? liveMonthEndDebt,
+  required double usageAmount,
+  required bool historical,
 }) {
-  final billed = summary.billedBalance;
-  final amountDue = liveMonthEndDebt != null &&
-          billed > .005 &&
-          billed.toStringAsFixed(2) != liveMonthEndDebt.toStringAsFixed(2)
-      ? billed
-      : null;
-  return switch (state) {
-    CreditCardDisplayState.overdue =>
-      _AccountCardDisplay('逾期未还', palette.expense, amountDue: amountDue),
-    CreditCardDisplayState.dueToday =>
-      _AccountCardDisplay('今日到期', palette.expense, amountDue: amountDue),
-    CreditCardDisplayState.paymentDue =>
-      _AccountCardDisplay('待还款', palette.expense, amountDue: amountDue),
-    CreditCardDisplayState.paidThisCycle =>
-      _AccountCardDisplay('本期已还清', palette.income),
-    CreditCardDisplayState.unbilledOnly =>
-      _AccountCardDisplay('尚未出账', palette.income),
-    CreditCardDisplayState.noBalance =>
-      _AccountCardDisplay('暂无欠款', palette.income),
-    CreditCardDisplayState.profileIncomplete =>
-      _AccountCardDisplay('账期待设置', palette.expense),
+  final hasNextUsage = summary.unbilledBalance > .005;
+  final paymentDue = state == CreditCardDisplayState.overdue ||
+      state == CreditCardDisplayState.dueToday ||
+      state == CreditCardDisplayState.paymentDue;
+  final warningBadge =
+      paymentDue || state == CreditCardDisplayState.profileIncomplete;
+  final (badge, label, liveAmount) = switch (state) {
+    CreditCardDisplayState.overdue => ('逾期未还', '逾期应还', summary.billedBalance),
+    CreditCardDisplayState.dueToday => ('今日到期', '今日应还', summary.billedBalance),
+    CreditCardDisplayState.paymentDue => ('待还款', '本期应还', summary.billedBalance),
+    CreditCardDisplayState.paidThisCycle when hasNextUsage => (
+        '本期已还清',
+        '下期已使用',
+        summary.unbilledBalance
+      ),
+    CreditCardDisplayState.paidThisCycle => ('本期已还清', '本期账单', 0.0),
+    CreditCardDisplayState.unbilledOnly when hasNextUsage => (
+        '尚未出账',
+        '下期已使用',
+        summary.unbilledBalance
+      ),
+    CreditCardDisplayState.unbilledOnly => ('尚未出账', '当前欠款', usageAmount),
+    CreditCardDisplayState.noBalance => ('暂无欠款', '当前欠款', 0.0),
+    CreditCardDisplayState.profileIncomplete => (
+        '账期待设置',
+        '当前欠款（估算）',
+        usageAmount
+      ),
   };
+  // In history usageAmount is the debt at the selected cutoff. A positive
+  // balance owed can have a paid badge when it belongs to a later statement.
+  final amount = historical ? usageAmount : liveAmount;
+  final colorAsDue = historical ? paymentDue && amount > .005 : warningBadge;
+  final amountColor = colorAsDue
+      ? palette.expense
+      : amount > .005
+          ? palette.textPrimary
+          : palette.income;
+  return _AccountCardDisplay(
+    statusLabel: badge,
+    badgeColor: warningBadge ? palette.expense : palette.income,
+    amountLabel: historical ? '月末欠款' : label,
+    amount: amount,
+    amountColor: amountColor,
+    nextUsage: !historical && paymentDue && hasNextUsage
+        ? summary.unbilledBalance
+        : null,
+    otherStatements:
+        !historical && paymentDue && summary.openStatements.length > 1
+            ? summary.openStatements.length - 1
+            : 0,
+  );
 }
 
 String _groupLabel(int index) => switch (index) {
