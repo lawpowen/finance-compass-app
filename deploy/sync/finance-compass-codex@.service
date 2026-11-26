@@ -5,7 +5,7 @@ After=network.target
 [Service]
 Type=simple
 User=%i
-Environment=FINANCE_AI_MODEL=gpt-5.6-terra
+Environment=FINANCE_AI_MODEL=gpt-6.1-terra
 Environment=FINANCE_CODEX_SOCKET=/var/lib/finance-compass-codex-%i/chat.sock
 Environment=FINANCE_CODEX_WORKDIR=/run/finance-compass-codex-work-%i
 EnvironmentFile=-/etc/finance-compass/codex-%i.env

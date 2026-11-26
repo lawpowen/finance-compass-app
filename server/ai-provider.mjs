@@ -143,6 +143,7 @@ export function createAiProvider(env = process.env, options = {}) {
     completionEndpoint(env.FINANCE_AI_BASE_URL?.trim());
   const model = env.FINANCE_AI_MODEL?.trim();
   const gateModel = env.FINANCE_AI_GATE_MODEL?.trim() || model;
+  if (codex && (model !== 'gpt-6.1-terra' || gateModel !== model)) return null;
   const validModel = value => value && value.length <= 256 && !/[\x00-\x1f\x7f]/.test(value);
   const token = codex ? undefined : env.FINANCE_AI_API_KEY?.trim();
   if (!endpoint || !validModel(model) ||

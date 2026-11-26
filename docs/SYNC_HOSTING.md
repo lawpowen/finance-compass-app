@@ -105,11 +105,11 @@ HTTP 网关须支持 `POST /v1/chat/completions`。门控使用 `stream:false` �
 
 ### Homelab 的 Codex/Terra
 
-宿主机使用已登录的 Codex CLI 和其模型目录中实际提供的 `gpt-5.6-terra`。桥接服务通过本机 stdio 创建临时线程，只接受本版本 Finance 的固定提示与五种账本查询定义。账本查询在同步服务执行。容器仅挂载专用 socket 目录；Codex 登录材料由宿主 CLI 自行管理。模型请求消耗该登录账号的模型额度。
+宿主机使用已登录的 Codex CLI，门控和主回复均锁定 `gpt-6.1-terra`。若模型不可用、请求被改派或运行时报告了其他型号，服务终止该次回答。桥接服务通过本机 stdio 创建临时线程，只接受本版本 Finance 的固定提示与五种账本查询定义。账本查询在同步服务执行。容器仅挂载专用 socket 目录；Codex 登录材料由宿主 CLI 自行管理。模型请求消耗该登录账号的模型额度。
 
-1. 用宿主登录用户运行 `codex --version` 与 `codex login status`。适配器核对 CLI 0.145.0、模型和权限；升级 CLI 后先用隔离账本复验。
+1. 用宿主登录用户安装 Finance 专用 CLI：`npm install --prefix "$HOME/finance-compass-deploy/codex-bridge/cli-0.172.0" --save-exact --ignore-scripts @openai/codex@0.172.0`。用该目录下的 `node_modules/.bin/codex --version` 和 `login status` 核对版本与登录状态。适配器使用这个固定版本，升级前应先用隔离账本复验。
 2. 将 `~/finance-compass-deploy/codex-bridge/current` 指向候选发布中的 `deploy/sync`。把同目录的 `finance-compass-codex@.service` 安装到 `/etc/systemd/system/`，由系统管理器重新载入并启用 `finance-compass-codex@lawpowen.service`。实例以指定的普通登录用户运行。其私有挂载命名空间隔离个人开发指引，宿主文件保持原状。socket 父目录权限为 0700，socket 为 0600；同步容器和桥接进程的有效 UID 须一致。
-3. 在部署配置设 `FINANCE_AI_MODEL=gpt-5.6-terra` 与 `FINANCE_AI_CODEX_DIR=/var/lib/finance-compass-codex-lawpowen`。使用 `-f deploy/sync/compose.yml -f deploy/sync/compose.codex.yml` 两个文件管理同步服务。覆盖文件选择私有传输。此模式无需填写 API Key 或 HTTP Base URL，门控使用同一 Terra 模型。
+3. 设置 `FINANCE_AI_CODEX_DIR=/var/lib/finance-compass-codex-lawpowen`，使用 `-f deploy/sync/compose.yml -f deploy/sync/compose.codex.yml` 两个文件管理同步服务。覆盖文件选择私有传输，并将 `FINANCE_AI_MODEL` 和 `FINANCE_AI_GATE_MODEL` 固定为 `gpt-6.1-terra`。若之前使用过 systemd 环境文件，应同步更新其中的模型名。
 4. 在同一同步镜像中运行仓库的 `tool/smoke_codex_terra.mjs`，可将脚本只读挂载为 `/app/tool/smoke_codex_terra.mjs`。脚本自行启动内存账本并核对两笔合成交易、工具调用和实际分段时间；只需连接 Finance socket。切回旧版本时，恢复原镜像和原部署配置，继续使用原账本卷。
 
 同步容器内的 `host.docker.internal` 映射到宿主网桥。仅监听宿主机 `127.0.0.1` 的网关需先提供容器可访问的受控入口。由已有内网代理限制来源和认证，浏览器仅访问账本站点。状态接口表示配置已启用，真实模型、路由权限与工具兼容性可在隔离测试账号上用合成账本核对。
@@ -118,7 +118,7 @@ HTTP 网关须支持 `POST /v1/chat/completions`。门控使用 `stream:false` �
 
 ## 部署和运维
 
-Homelab 的 Web 29 发布提交为 `94581b1`。使用 Codex 的实例从当前发布目录运行以下命令查看状态；更新或重建时沿用相同的项目名、环境文件和两个 Compose 文件。
+使用 Codex 的实例从当前发布目录运行以下命令查看状态。更新或重建时沿用相同的项目名、环境文件和两个 Compose 文件。
 
 ```sh
 cd ~/finance-compass-deploy/current

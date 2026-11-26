@@ -12,7 +12,7 @@
 
 ## 同步账本 AI 查询链路
 
-Homelab 的 `codex_terra` 适配器以 Unix socket 连接部署用户的独立桥接进程。`codex-gateway.mjs` 校验 Finance 请求与工具定义，`codex-turn.mjs` 通过官方 app-server stdio 接收最终回复增量。每轮创建临时线程，核对实际模型、权限配置和 MCP 清单；动态财务工具请求送回同步服务，由绑定修订版的闭包执行。
+Homelab 的 `codex_terra` 适配器以 Unix socket 连接独立桥接进程。`codex-gateway.mjs` 校验 Finance 请求与工具定义。`codex-turn.mjs` 通过官方 app-server stdio 建立临时线程，逐次核对实际模型、权限与 MCP 清单。GPT-6.1-Terra 以结构化结果选择直接回答或请求一个已声明的只读查询；同步服务校验参数，在本轮绑定的账本修订上执行查询。只有最终答案的文本增量作为回复发送至浏览器。
 
 总览与报表的「AI 理财助手」进入同一聊天页。Riverpod 将对话及本轮请求绑定到当前登录会话，退出或切换账号会中止查询并清空消息。发送前若有本机待同步记录，先尝试同步；若仍待上传，界面标明回答基于服务端修订版。Web 传输用同源 Fetch、ReadableStream 和 AbortController，原生传输用 HTTP 响应流。聊天记录仅存在会话内存，旧版外部 AI 摘要导出继续独立工作。
 

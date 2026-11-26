@@ -191,7 +191,7 @@ function uniqueSocket() {
 
 function terra(socketPath, options) {
   return createAiProvider({
-    FINANCE_AI_PROVIDER: 'codex_terra', FINANCE_AI_MODEL: 'gpt-5.6-terra',
+    FINANCE_AI_PROVIDER: 'codex_terra', FINANCE_AI_MODEL: 'gpt-6.1-terra',
     FINANCE_AI_CODEX_SOCKET: socketPath,
     FINANCE_AI_BASE_URL: 'http://unused.invalid', FINANCE_AI_API_KEY: 'unused-test-key',
   }, options);
@@ -218,7 +218,7 @@ test('Codex uses its private socket for gate and live deltas and cancels a stall
   await disconnected.promise;
   assert.equal(received.length, 2);
   for (const request of received) {
-    assert.equal(request.body.model, 'gpt-5.6-terra');
+    assert.equal(request.body.model, 'gpt-6.1-terra');
     assert.equal(request.path, '/v1/chat/completions');
     assert.equal(request.method, 'POST');
     assert.equal(request.authorization, undefined);
@@ -227,6 +227,10 @@ test('Codex uses its private socket for gate and live deltas and cancels a stall
 });
 
 test('Codex configuration and a missing private socket never fall back to TCP', async () => {
+  const config = { FINANCE_AI_PROVIDER: 'codex_terra', FINANCE_AI_CODEX_SOCKET: uniqueSocket() };
+  assert.equal(createAiProvider({ ...config, FINANCE_AI_MODEL: 'gpt-5.6-terra' }), null);
+  assert.equal(createAiProvider({ ...config, FINANCE_AI_MODEL: 'gpt-6.1-terra',
+    FINANCE_AI_GATE_MODEL: 'gpt-5.6-terra' }), null);
   for (const invalid of [undefined, '', 'relative/run.sock', 'http://host/run.sock', '//remote/share']) {
     assert.equal(terra(invalid), null);
   }

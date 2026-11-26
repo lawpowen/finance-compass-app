@@ -195,7 +195,7 @@ export async function listenPrivate(server, socketPath) {
 if (import.meta.main) {
   process.umask(0o077);
   const model = process.env.FINANCE_AI_MODEL;
-  if (!model || !/^[\w.-]+-terra$/.test(model)) throw new Error('A fixed Terra model is required');
+  if (model !== 'gpt-6.1-terra') throw new Error('Finance requires gpt-6.1-terra');
   const { runCodexTurn } = await import('./codex-turn.mjs');
   const { server, stop } = createFinanceGateway({ model, runTurn: runCodexTurn });
   await listenPrivate(server, process.env.FINANCE_CODEX_SOCKET);

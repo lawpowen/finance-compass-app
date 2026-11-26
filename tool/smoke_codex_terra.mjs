@@ -9,6 +9,7 @@ import { createSyncServer } from '../server/sync.mjs';
 
 const provider = createAiProvider();
 assert.equal(provider?.name, 'codex_terra', 'A configured Finance Codex/Terra socket is required');
+assert.equal(process.env.FINANCE_AI_MODEL, 'gpt-6.1-terra');
 const store = openStore(':memory:');
 const origin = 'https://finance-acceptance.example.test';
 const server = createSyncServer({ store, origin, aiProvider: provider });

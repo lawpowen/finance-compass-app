@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { chmod, lstat, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,7 +10,17 @@ import test from 'node:test';
 import { createFinanceGateway, listenPrivate } from '../deploy/sync/codex-gateway.mjs';
 import { runAiChat } from './ai-chat.mjs';
 
-const model = 'gpt-5.6-terra';
+const model = 'gpt-6.1-terra';
+test('the installed bridge and both Compose model settings select the required Terra release', async () => {
+  const config = file => readFile(new URL('../deploy/sync/' + file, import.meta.url), 'utf8');
+  const unit = await config('finance-compass-codex@.service');
+  const compose = await config('compose.codex.yml');
+  assert.deepEqual([...unit.matchAll(/^Environment=FINANCE_AI_MODEL=(\S+)\s*$/gm)].map(m => m[1]), [model]);
+  for (const key of ['FINANCE_AI_MODEL', 'FINANCE_AI_GATE_MODEL']) {
+    const settings = [...compose.matchAll(new RegExp('^ +'+key+': (\\S+)\\s*$', 'gm'))].map(m => m[1]);
+    assert.deepEqual(settings, [model]);
+  }
+});
 const allowed = '{"allowed":true,"reason":"finance"}';
 const toolCall = { id: 'finance_1', name: 'get_monthly_overview', arguments: '{"month_key":"2026-11"}' };
 

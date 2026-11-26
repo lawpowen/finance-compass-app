@@ -3,6 +3,8 @@ services:
   sync:
     environment:
       FINANCE_AI_PROVIDER: codex_terra
+      FINANCE_AI_MODEL: gpt-6.1-terra
+      FINANCE_AI_GATE_MODEL: gpt-6.1-terra
       FINANCE_AI_CODEX_SOCKET: /run/finance-codex/chat.sock
       FINANCE_AI_BASE_URL: ""
       FINANCE_AI_API_KEY: ""
