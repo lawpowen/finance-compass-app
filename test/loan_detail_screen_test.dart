@@ -550,6 +550,16 @@ void main() {
     await tester.pumpAndSettle();
     // P1: 500 - (195 - 48) = 353. I1: 10 - (5 - 2) = 7.
     // Period 2 is fully booked in the future but still owed today.
+    final firstRow = find.byKey(const Key('loan-installment-1'));
+    final secondRow = find.byKey(const Key('loan-installment-2'));
+    expect(find.descendant(of: firstRow, matching: find.byKey(const Key('loan-payment-partial'))), findsOneWidget);
+    expect(find.descendant(of: firstRow, matching: find.textContaining('已冲正')), findsOneWidget);
+    expect(find.byKey(const Key('loan-payment-ordinary')), findsNothing);
+    expect(find.descendant(of: secondRow, matching: find.byKey(const Key('loan-payment-future-2'))), findsOneWidget);
+    expect(find.descendant(
+      of: find.byKey(const Key('loan-installment-2')),
+      matching: find.textContaining('已确认，待入账'),
+    ), findsOneWidget);
     expect(find.text('RM 865.00'), findsOneWidget);
     expect(find.text('RM 12.00'), findsOneWidget);
     expect(find.text('待付 RM 360.00'), findsOneWidget);
@@ -624,6 +634,10 @@ void main() {
 
   testWidgets('historical loan detail is read only until returning current',
       (tester) async {
+    tester.view.physicalSize = const Size(800, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     final database = AppDatabase.forTesting(NativeDatabase.memory());
     addTearDown(database.close);
     var repository = await FinanceRepository.load(database);
@@ -644,6 +658,15 @@ void main() {
       loanRepaymentMethod: LoanRepaymentMethod.equalPrincipal,
     );
     repository = await repository.addAccount(loan);
+    repository = await repository.addAccount(const Account(
+      id: 'history-payer', name: '还款账户', accountType: AccountType.bankSaving,
+      reportGroup: ReportGroup.cash, currency: 'MYR', initialBalance: 5000, currentBalance: 5000,
+    ));
+    repository = await repository.addTransaction(FinanceTransaction(
+      id: 'future-part-payment', type: TransactionType.transfer, accountId: 'history-payer',
+      toAccountId: loan.id, loanInstallmentNumber: 1, amount: 300, toAmount: 250,
+      currency: 'MYR', transactionDate: DateTime(now.year, now.month + 1, 15),
+    ));
     final container = ProviderContainer(
       overrides: [
         financeRepositoryProvider.overrideWith(
@@ -669,6 +692,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('loan-historical-banner')), findsOneWidget);
+    final firstPeriod = find.byKey(const Key('loan-installment-1'));
+    expect(find.descendant(of: firstPeriod, matching: find.textContaining(' · 预计')), findsOneWidget);
+    expect(find.byKey(const Key('loan-payment-future-part-payment')), findsNothing);
+    expect(find.textContaining('待入账'), findsNothing);
     expect(find.byKey(const Key('record-loan-installment')), findsNothing);
     expect(
       find.byKey(const Key('generate-loan-planned-transactions')),
@@ -687,6 +714,9 @@ void main() {
     await tester.tap(find.byKey(const Key('loan-return-current')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('loan-historical-banner')), findsNothing);
+    expect(find.descendant(of: firstPeriod, matching: find.textContaining('部分已确认，待入账')), findsOneWidget);
+    expect(find.text('其中待入账 RM 300.00'), findsOneWidget);
+    expect(find.descendant(of: firstPeriod, matching: find.byKey(const Key('loan-payment-future-part-payment'))), findsOneWidget);
     expect(find.byKey(const Key('record-loan-installment')), findsOneWidget);
   });
 

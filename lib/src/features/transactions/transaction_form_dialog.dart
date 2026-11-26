@@ -66,6 +66,53 @@ bool hasUnallocatedLoanSplit(
   return entry.toAmount != entry.amount || entry.currency != target.currency;
 }
 
+/// A future actual is already booked but cannot settle an installment today.
+/// Keep the selected day unless the user confirms an early payment.
+Future<DateTime?> dateForLoanStatusChange(
+  BuildContext context, {
+  required FinanceTransaction? original,
+  required TransactionType type,
+  required String? toAccountId,
+  required TransactionStatus before,
+  required TransactionStatus after,
+  required DateTime date,
+}) async {
+  final today = DateUtils.dateOnly(DateTime.now());
+  if (original == null ||
+      original.status != TransactionStatus.planned ||
+      before != TransactionStatus.planned ||
+      after != TransactionStatus.actual ||
+      original.type != type ||
+      original.toAccountId != toAccountId ||
+      (original.loanInstallmentNumber == null &&
+          original.legacyLoanPartNumber == null) ||
+      !DateUtils.dateOnly(date).isAfter(today)) {
+    return date;
+  }
+  return showDialog<DateTime>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text('确认还款日期'),
+      content: Text('原交易日期为 ${date.year}年${date.month}月${date.day}日。'
+          '保留原日期，这笔还款会在当天计入对应期次。'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext),
+          child: const Text('取消'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext, date),
+          child: const Text('保留原日期'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(dialogContext, today),
+          child: const Text('今天已还'),
+        ),
+      ],
+    ),
+  );
+}
+
 /// Legacy layout retained for compatibility; the active UI uses TransactionComposerPage.
 class TransactionFormDialog extends StatefulWidget {
   const TransactionFormDialog({
@@ -271,8 +318,7 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                   value: transactionStatus,
                   plannedLabel: _statusLabel(TransactionStatus.planned),
                   actualLabel: _statusLabel(TransactionStatus.actual),
-                  onChanged: (value) =>
-                      setState(() => transactionStatus = value),
+                  onChanged: _changeStatus,
                 ),
                 const SizedBox(height: 8),
                 Align(
@@ -689,6 +735,31 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
             (!newEntry && categoryId == null)
         ? null
         : _preferredCategoryId(categories.where((c) => !c.isArchived).toList());
+  }
+
+  Future<void> _changeStatus(TransactionStatus next) async {
+    final date =
+        _usesCreditCardAccount ? recordDate : settlementDate ?? recordDate;
+    final chosen = await dateForLoanStatusChange(
+      context,
+      original: widget.initialTransaction,
+      type: transactionType,
+      toAccountId: toAccountId,
+      before: transactionStatus,
+      after: next,
+      date: date,
+    );
+    if (!mounted || chosen == null) return;
+    setState(() {
+      transactionStatus = next;
+      if (chosen != date) {
+        if (_usesCreditCardAccount) {
+          recordDate = chosen;
+        } else {
+          settlementDate = chosen;
+        }
+      }
+    });
   }
 
   void _syncDateFields(bool wasCard) {

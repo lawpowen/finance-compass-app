@@ -374,11 +374,11 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
               CompassSegmentedControl(
                 labels: const ['已发生', '预计'],
                 selectedIndex: status == TransactionStatus.planned ? 1 : 0,
-                onChanged: (index) => setState(() {
-                  status = index == 0
+                onChanged: (index) => _changeStatus(
+                  index == 0
                       ? TransactionStatus.actual
-                      : TransactionStatus.planned;
-                }),
+                      : TransactionStatus.planned,
+                ),
               ),
               if (status == TransactionStatus.planned) ...[
                 const SizedBox(height: 6),
@@ -895,6 +895,25 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
           );
         }),
       );
+
+  Future<void> _changeStatus(TransactionStatus next) async {
+    final chosen = await dateForLoanStatusChange(
+      context,
+      original: widget.editExisting && !widget.isPresetDefinition
+          ? widget.draft
+          : null,
+      type: type,
+      toAccountId: toAccountId,
+      before: status,
+      after: next,
+      date: date,
+    );
+    if (!mounted || chosen == null) return;
+    setState(() {
+      status = next;
+      date = chosen;
+    });
+  }
 
   Future<void> _pickDate() async {
     final value = await showDatePicker(

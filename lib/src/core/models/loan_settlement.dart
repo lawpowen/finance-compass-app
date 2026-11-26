@@ -1,11 +1,23 @@
 import 'loan_amortization.dart';
 import 'transaction.dart';
 
+/// One transaction's signed contribution in the loan's currency.
+typedef LoanPaymentRecord = ({
+  FinanceTransaction transaction,
+  int principalCents,
+  int interestCents,
+});
+
 /// Amounts credited to each installment in loan-currency cents.
 class LoanSettlement {
-  LoanSettlement._(this._credits);
+  LoanSettlement._(this._credits, this._records);
 
   final Map<int, ({int principal, int interest})> _credits;
+  final Map<int, List<LoanPaymentRecord>>? _records;
+
+  /// Contributing records, newest payment first, when requested at construction.
+  List<LoanPaymentRecord> recordsFor(int number) =>
+      _records?[number] ?? const [];
 
   factory LoanSettlement.forLoan({
     required String loanId,
@@ -13,8 +25,10 @@ class LoanSettlement {
     required Iterable<FinanceTransaction> transactions,
     DateTime? cutoff,
     bool includePlanned = false,
+    bool includeRecords = false,
   }) {
     final credits = <int, ({int principal, int interest})>{};
+    final records = includeRecords ? <int, List<LoanPaymentRecord>>{} : null;
     final loanCurrency = currency.trim().toUpperCase();
     for (final tx in transactions) {
       if ((cutoff != null && tx.transactionDate.isAfter(cutoff)) ||
@@ -52,8 +66,25 @@ class LoanSettlement {
         principal: (previous?.principal ?? 0) + principal,
         interest: (previous?.interest ?? 0) + interest,
       );
+      if (records != null) {
+        (records[number] ??= []).add((
+          transaction: tx,
+          principalCents: principal,
+          interestCents: interest,
+        ));
+      }
     }
-    return LoanSettlement._(credits);
+    records?.updateAll((_, payments) {
+      payments.sort((a, b) {
+        final byDate = b.transaction.transactionDate
+            .compareTo(a.transaction.transactionDate);
+        return byDate != 0
+            ? byDate
+            : a.transaction.id.compareTo(b.transaction.id);
+      });
+      return List.unmodifiable(payments);
+    });
+    return LoanSettlement._(credits, records);
   }
 
   LoanInstallment remaining(LoanInstallment due) {

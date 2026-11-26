@@ -99,7 +99,7 @@ class TransactionMutations extends Notifier<void> {
               if (due == null || due.dueDate != confirmed.dueDate) return null;
               final now = DateTime.now();
               final cutoff =
-                  DateTime(now.year, now.month, now.day, 23, 59, 59, 999);
+                  DateTime(now.year, now.month, now.day, 23, 59, 59, 999, 999);
               final occurred = LoanSettlement.forLoan(
                   loanId: loanId,
                   currency: loan.currency,

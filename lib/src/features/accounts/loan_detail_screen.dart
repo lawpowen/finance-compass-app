@@ -75,7 +75,7 @@ class _LoanDetailScreenState extends ConsumerState<LoanDetailScreen> {
     final isHistorical = _historicalCutoff != null;
     final today = DateTime.now();
     final cutoffDate = _historicalCutoff ??
-        DateTime(today.year, today.month, today.day, 23, 59, 59, 999);
+        DateTime(today.year, today.month, today.day, 23, 59, 59, 999, 999);
     final schedule = account.accountType == AccountType.loan
         ? _tryScheduleFor(account)
         : null;
@@ -131,12 +131,29 @@ class _LoanDetailScreenState extends ConsumerState<LoanDetailScreen> {
         loanId: account.id,
         currency: account.currency,
         transactions: _repository.transactions,
-        cutoff: cutoffDate);
+        cutoff: cutoffDate,
+        includeRecords: isHistorical);
     final residuals = {
       for (final item in schedule.installments)
         item.number: allocations.remaining(item)
     };
     final unpaid = residuals.values.where((item) => item.payment > 0).toList();
+    final booked = isHistorical
+        ? allocations
+        : LoanSettlement.forLoan(
+            loanId: account.id,
+            currency: account.currency,
+            transactions: ledger.transactions,
+            includeRecords: true,
+          );
+    final available = isHistorical
+        ? residuals
+        : {
+            for (final item in schedule.installments)
+              item.number: installmentAvailableToRecord(item, allocations, booked),
+          };
+    final awaitingPosting =
+        unpaid.where((item) => available[item.number]!.payment == 0).length;
     final remainingInterest = unpaid.fold<int>(
             0, (cents, item) => cents + (item.interest * 100).round()) /
         100;
@@ -158,14 +175,7 @@ class _LoanDetailScreenState extends ConsumerState<LoanDetailScreen> {
         .firstOrNull;
     final nextInstallment = isHistorical || nextDue == null
         ? null
-        : installmentAvailableToRecord(
-            nextDue,
-            allocations,
-            LoanSettlement.forLoan(
-              loanId: account.id,
-              currency: account.currency,
-              transactions: _repository.transactions,
-            ));
+        : available[nextDue.number];
     final balance = _repository.accountBalanceAt(account.id, cutoffDate);
     final outstanding = (-balance).clamp(0.0, double.infinity).toDouble();
 
@@ -261,6 +271,7 @@ class _LoanDetailScreenState extends ConsumerState<LoanDetailScreen> {
                     Text(
                       '${_methodLabel(account.loanRepaymentMethod!)} · '
                       '${unpaid.length} 期未付清'
+                      '${awaitingPosting > 0 ? '（其中 $awaitingPosting 期已确认待入账）' : ''}'
                       '${schedule.installments.length == account.loanTermMonths ? '' : ' · 原合同 ${account.loanTermMonths} 期'} · '
                       '年利率 ${account.loanAnnualInterestRate!}%',
                       style: Theme.of(context).textTheme.bodySmall,
@@ -312,7 +323,7 @@ class _LoanDetailScreenState extends ConsumerState<LoanDetailScreen> {
                 children: [
                   Expanded(
                     child: Text(
-                      '待记录还款计划',
+                      '还款计划与流水',
                       style: Theme.of(context).textTheme.titleLarge,
                     ),
                   ),
@@ -325,6 +336,10 @@ class _LoanDetailScreenState extends ConsumerState<LoanDetailScreen> {
                   installment: item,
                   currency: account.currency,
                   remaining: residuals[item.number]!,
+                  available: available[item.number]!,
+                  records: booked.recordsFor(item.number),
+                  accountName: ledger.accountName,
+                  cutoff: cutoffDate,
                 ),
               ),
             ],
@@ -573,13 +588,30 @@ class _InstallmentRow extends StatelessWidget {
     required this.installment,
     required this.currency,
     required this.remaining,
+    required this.available,
+    required this.records,
+    required this.accountName,
+    required this.cutoff,
   });
 
   final LoanInstallment installment;
   final String currency;
   final LoanInstallment remaining;
+  final LoanInstallment available;
+  final List<LoanPaymentRecord> records;
+  final String Function(String) accountName;
+  final DateTime cutoff;
   bool get isPaid => remaining.payment == 0;
   bool get isPartial => !isPaid && remaining.payment != installment.payment;
+  int get pendingCents =>
+      (remaining.payment * 100).round() - (available.payment * 100).round();
+
+  String get statusLabel {
+    if (isPaid) return '已记录';
+    if (available.payment == 0) return isPartial ? '部分已还，余款待入账' : '已确认，待入账';
+    if (isPartial) return '部分还款';
+    return pendingCents > 0 ? '部分已确认，待入账' : '预计';
+  }
 
   @override
   Widget build(BuildContext context) => Container(
@@ -590,7 +622,27 @@ class _InstallmentRow extends StatelessWidget {
           border: Border.all(color: financePaletteOf(context).border),
           borderRadius: BorderRadius.circular(14),
         ),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _contractSummary(context),
+            if (records.isNotEmpty) ...[
+              const Divider(),
+              Text('还款流水', style: Theme.of(context).textTheme.labelMedium),
+              for (final record in records)
+                _LoanPaymentLine(
+                  key: Key('loan-payment-${record.transaction.id}'),
+                  record: record,
+                  payer: accountName(record.transaction.accountId),
+                  currency: currency,
+                  pending: record.transaction.transactionDate.isAfter(cutoff),
+                ),
+            ],
+          ],
+        ),
+      );
+
+  Widget _contractSummary(BuildContext context) => Row(
           children: [
             SizedBox(
               width: 36,
@@ -601,8 +653,7 @@ class _InstallmentRow extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '${_date(installment.dueDate)} · '
-                    '${isPaid ? '已记录' : isPartial ? '部分还款' : '预计'}',
+                    '${_date(installment.dueDate)} · $statusLabel',
                     style: TextStyle(
                       color: isPaid
                           ? financePaletteOf(context).income
@@ -613,6 +664,8 @@ class _InstallmentRow extends StatelessWidget {
                   if (isPartial)
                     Text(
                         '待付 ${formatMoney(remaining.payment, currency: currency)}'),
+                  if (pendingCents > 0 && available.payment > 0)
+                    Text('其中待入账 ${formatMoney(pendingCents / 100, currency: currency)}'),
                   const SizedBox(height: 3),
                   Text(
                     '本金 ${formatMoney(installment.principal, currency: currency)} · '
@@ -643,8 +696,48 @@ class _InstallmentRow extends StatelessWidget {
               ],
             ),
           ],
-        ),
       );
+}
+
+class _LoanPaymentLine extends StatelessWidget {
+  const _LoanPaymentLine({
+    super.key,
+    required this.record,
+    required this.payer,
+    required this.currency,
+    required this.pending,
+  });
+
+  final LoanPaymentRecord record;
+  final String payer;
+  final String currency;
+  final bool pending;
+
+  @override
+  Widget build(BuildContext context) {
+    final tx = record.transaction;
+    final status = tx.amount.isNegative
+        ? (pending ? '冲正待入账' : '已冲正')
+        : (pending ? '待入账' : '已还款');
+    final principalLabel = tx.amount.isNegative ? '冲正本金' : pending ? '待入账本金' : '实还本金';
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '${_date(tx.transactionDate.toLocal())} · $payer · '
+            '$status ${formatMoney(tx.amount, currency: tx.currency)}',
+          ),
+          Text(
+            '$principalLabel ${formatMoney(record.principalCents / 100, currency: currency)} · '
+            '利息 ${formatMoney(record.interestCents / 100, currency: currency)}',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 String _date(DateTime value) =>
