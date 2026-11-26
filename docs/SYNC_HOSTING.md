@@ -118,6 +118,15 @@ HTTP 网关须支持 `POST /v1/chat/completions`。门控使用 `stream:false` �
 
 ## 部署和运维
 
+Homelab 的 Web 29 发布提交为 `94581b1`。使用 Codex 的实例从当前发布目录运行以下命令查看状态；更新或重建时沿用相同的项目名、环境文件和两个 Compose 文件。
+
+```sh
+cd ~/finance-compass-deploy/current
+sudo -n docker compose -p finance-compass --env-file "$HOME/finance-compass-deploy/runtime.env" \
+  -f deploy/sync/compose.yml -f deploy/sync/compose.codex.yml ps
+systemctl is-active finance-compass-codex@lawpowen.service
+```
+
 构建需要 Docker Engine、Compose、对 Flutter SDK 与镜像仓库的出站访问。将 `FINANCE_SYNC_ORIGIN` 设置为公网 HTTPS 来源（无路径）。以下命令从项目根目录执行，可在 Docker 前加 `sudo`。Caddy 默认只绑定宿主 `127.0.0.1:18765`，反向代理负责 TLS 和把同一域名的所有路径转发到该端口。
 
 ```sh

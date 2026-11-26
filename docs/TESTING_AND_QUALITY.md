@@ -4,7 +4,9 @@
 
 Homelab 真实模型验收使用独立的 Node 24 内存账本、实际 Finance HTTP 认证和宿主 Codex CLI 0.145.0。GPT-5.6-Terra 通过主题门控后调用 `search_transactions`，从最近 30 笔之外找出指定商户的两笔支出，回答 MYR 49.73。修订号为 1，26 个真实文本增量中首段在 10.4 秒到达，整轮用时 11.6 秒。回归入口 `tool/smoke_codex_terra.mjs` 可重复此测试，模型分段数及用时随调用变化。
 
-2026-11-26 本地候选验收：Flutter 3.44.1 全仓 526 项通过，2 项条件跳过；真实 Chrome 的 Fetch/AbortSignal 传输测试另行通过。Node 26.12.1 全仓 104 项通过。静态分析 0 error、0 warning、61 项既有 info，默认命令因 info 返回 1，使用 `--no-fatal-infos` 返回 0。
+2026-11-26 正式发布 `94581b1`。通过正式宿主服务与正式同步镜像中的内存测试账本再次确认两笔合计 MYR 49.73，返回 26 段，首段 10.0 秒、完成 11.0 秒。线上同步容器健康，Terra 服务已启用开机启动；公网首页、主程序、Worker 和 Flutter 启动文件与已验收的前端 SHA-256 一致。未登录访问 AI 状态和账本修订均返回 401。部署前在线备份和部署后的 SQLite 完整性、账户账本修订连续性校验通过。
+
+Flutter 3.44.1 全仓 526 项通过，2 项条件跳过；真实 Chrome 的 Fetch/AbortSignal 传输测试另行通过。加入 Terra 适配器后的 Windows Node 全仓 117 项通过，1 项 Linux 文件权限用例条件跳过；该权限用例在 Homelab 隔离 Linux 容器中通过。静态分析 0 error、0 warning、61 项既有 info，默认命令因 info 返回 1，使用 `--no-fatal-infos` 返回 0。
 
 同步前端包 `build/finance-compass-web29-sync.zip` 的 SHA-256 为 `2e896bf88f558e7ae28f890466995202b9ec8e36783ed6afd3ee50b1fb71f7a0`。已校验 144 个文件、38 项预缓存、104 份字体校验和、锁定的 SQLite WASM 与 ZIP CRC。内置助手需配套 Web 29 同步服务和代理配置。
 
