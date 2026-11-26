@@ -1,5 +1,20 @@
 # 测试与质量
 
+## Web 29 内置理财助手
+
+Homelab 真实模型验收使用独立的 Node 24 内存账本、实际 Finance HTTP 认证和宿主 Codex CLI 0.145.0。GPT-5.6-Terra 通过主题门控后调用 `search_transactions`，从最近 30 笔之外找出指定商户的两笔支出，回答 MYR 49.73。修订号为 1，26 个真实文本增量中首段在 10.4 秒到达，整轮用时 11.6 秒。回归入口 `tool/smoke_codex_terra.mjs` 可重复此测试，模型分段数及用时随调用变化。
+
+2026-11-26 本地候选验收：Flutter 3.44.1 全仓 526 项通过，2 项条件跳过；真实 Chrome 的 Fetch/AbortSignal 传输测试另行通过。Node 26.12.1 全仓 104 项通过。静态分析 0 error、0 warning、61 项既有 info，默认命令因 info 返回 1，使用 `--no-fatal-infos` 返回 0。
+
+同步前端包 `build/finance-compass-web29-sync.zip` 的 SHA-256 为 `2e896bf88f558e7ae28f890466995202b9ec8e36783ed6afd3ee50b1fb71f7a0`。已校验 144 个文件、38 项预缓存、104 份字体校验和、锁定的 SQLite WASM 与 ZIP CRC。内置助手需配套 Web 29 同步服务和代理配置。
+
+真实 Chrome 157 经本地 Caddy 和同步服务登录合成账本，从总览点击「本月消费与预算」。测试网关延后第二段时，第一段已经显示；点击「停止生成」后上游收到取消。浏览器实际加载的主程序 SHA-256 为 `919f6973125c67e2e07b88a7ddc67a5518690c2790a44e0dbe264e8c1ab3d844`。独立代理测试中，第二个并发请求返回 429，第一条取消后再次请求返回 200。
+
+- 用 `node --test server/*.test.mjs test/web_bootstrap.test.mjs` 运行服务端和 Web 启动回归。两个独立的合成账号覆盖认证、Origin、参数校验、分账号与分地址限流、门控期间会话失效、分段交付及断开后释放名额。模拟兼容网关覆盖多工具调用、跨块中文和上游中断。
+- 财务用例覆盖新账号修订 0、跨卡还 PayLater、银行入账日、旧转账的到账金额、贷款本金与利息、未知汇率、父子分类预算及检索超过 30 笔时的全量总计。使用合成数据，不要求真实模型或个人账本参与自动测试。
+- Flutter 全仓测试包含聊天页面、登录会话状态、流解码器及原生 HTTP 传输。另以 `flutter test --no-pub --platform chrome test/ai_chat_transport_browser.dart` 验证浏览器收到第一段字节时即可显示中文，取消读取会触发真实 AbortSignal。Windows Chrome 的同源 CanvasKit 测试资源准备方法与现有浏览器测试相同。
+- 发布前使用与同步镜像一致的 Caddy 2.11.9 执行 `caddy validate --config deploy/sync/Caddyfile --adapter caddyfile`。通过实际代理验证首段文本早于最终事件到达。在同一账号中止一条尚未完成的流后，下一条请求应能开始。
+
 ## Web 28 交易搜索多选删除
 
 2026-11-26 在 Homelab 发布 `510ccc1`。升级前的在线备份和升级后的账本完整性检查均通过。公网 Chrome 验证了 Web 27 确认升级至 Web 28；首页、主程序、启动脚本及 Worker 的 SHA-256 与候选镜像一致。另以发布后的前端文件连接本机隔离账本，在真实 Chrome 长按多选并删除两笔各 10 元的交易，余额由 960 恢复至 980，搜索页保留关键词并显示剩余结果。生产账本未参与删除试验。

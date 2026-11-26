@@ -15,7 +15,8 @@
 
 :8080 {
   root * /srv
-  encode zstd gzip
+  @compressible not path /api/sync/v1/ai/chat
+  encode @compressible zstd gzip
 
   header {
     -Server
@@ -25,6 +26,13 @@
     Strict-Transport-Security "max-age=31536000"
     Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
     Content-Security-Policy "default-src 'self'; base-uri 'self'; connect-src 'self'; frame-ancestors 'none'; img-src 'self' data: blob:; manifest-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:"
+  }
+
+  handle /api/sync/v1/ai/chat {
+    reverse_proxy sync:8081 {
+      flush_interval -1
+      header_up X-Finance-Client-IP {http.request.remote.host}
+    }
   }
 
   handle /api/sync/v1/* {

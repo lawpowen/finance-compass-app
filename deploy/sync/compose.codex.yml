@@ -1,0 +1,15 @@
+# Layer over compose.yml when the sync service uses the host's Finance-only Codex socket.
+services:
+  sync:
+    environment:
+      FINANCE_AI_PROVIDER: codex_terra
+      FINANCE_AI_CODEX_SOCKET: /run/finance-codex/chat.sock
+      FINANCE_AI_BASE_URL: ""
+      FINANCE_AI_API_KEY: ""
+    volumes:
+      - type: bind
+        source: "${FINANCE_AI_CODEX_DIR:?Set FINANCE_AI_CODEX_DIR to the host socket directory}"
+        target: /run/finance-codex
+        read_only: true
+        bind:
+          create_host_path: false

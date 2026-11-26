@@ -129,7 +129,7 @@ const schema = {
   },
 };
 
-function validCategoryHierarchy(categories) {
+export function validCategoryHierarchy(categories) {
   const byId = new Map(categories.map((row) => [row.id, row]));
   const checked = new Set();
   for (const category of categories) {

@@ -1,10 +1,13 @@
 import { createServer } from 'node:http';
+import { once } from 'node:events';
 import { isIP } from 'node:net';
 import { pathToFileURL } from 'node:url';
 import { databasePath, openStore, passwordValid, sessionLifetime, usernameValid } from './store.mjs';
 import { openPushService } from './push.mjs';
 import { reminderEvents } from './reminder-events.mjs';
 import { validSnapshot } from './snapshot.mjs';
+import { createAiProvider } from './ai-provider.mjs';
+import { runAiChat, validateChatBody } from './ai-chat.mjs';
 
 const api = '/api/sync/v1';
 const sessionCookie = '__Host-finance_session';
@@ -16,6 +19,7 @@ const utf8 = new TextDecoder('utf-8', { fatal: true });
 class HttpError extends Error {
   constructor(status, code) {
     super(code);
+    this.code = code;
     this.status = status;
   }
 }
@@ -59,6 +63,11 @@ function getSession(request) {
   return null;
 }
 
+function clientAddress(request) {
+  const forwarded = request.headers['x-finance-client-ip'];
+  return typeof forwarded === 'string' && isIP(forwarded) ? forwarded : request.socket.remoteAddress;
+}
+
 function authLimits() {
   let active = 0;
   const minute = 60 * 1000;
@@ -69,9 +78,7 @@ function authLimits() {
     let total = 0;
     const attemptsByIp = new Map();
     return async (request, verify) => {
-      const forwarded = request.headers['x-finance-client-ip'];
-      const client = typeof forwarded === 'string' && isIP(forwarded)
-        ? forwarded : request.socket.remoteAddress;
+      const client = clientAddress(request);
       const now = Date.now();
       if (now >= interval) {
         interval = now + minute;
@@ -109,7 +116,86 @@ function setSessionCookie(response, token) {
   response.setHeader('Set-Cookie', `${sessionCookie}=${token}; Max-Age=${sessionLifetime}; ${cookieDirectives}`);
 }
 
-export function createSyncServer({ store, origin, push, allowLoopbackOrigin = false, onError = () => {} }) {
+function aiAdmission() {
+  const active = new Set();
+  const attempts = new Map();
+  const windowMs = 600_000;
+  let nextSweep = 0;
+  return (account, ip) => {
+    const now = Date.now();
+    const cutoff = now - windowMs;
+    if (now >= nextSweep) {
+      nextSweep = now + 60_000;
+      for (const [key, times] of attempts) {
+        if (times.at(-1) <= cutoff) attempts.delete(key);
+      }
+    }
+    if (active.has(account)) throw new HttpError(429, 'ai_chat_active');
+    const keys = ['account:' + account, 'ip:' + ip];
+    const recent = keys.map((key) => (attempts.get(key) ?? []).filter((time) => time > cutoff));
+    if (recent.some((times) => times.length >= 20)) throw new HttpError(429, 'ai_rate_limited');
+    keys.forEach((key, i) => attempts.set(key, [...recent[i], now]));
+    active.add(account);
+    return () => active.delete(account);
+  };
+}
+
+async function streamChat(request, response, { provider, input, readLedger, authorize }) {
+  const controller = new AbortController();
+  const { signal } = controller;
+  const deadline = () => controller.abort(new Error('ai_timeout'));
+  const disconnected = () => controller.abort(new Error('client_disconnected'));
+  const closedRequest = () => { if (!request.complete) disconnected(); };
+  const timer = setTimeout(deadline, 120_000).unref();
+  request.once('aborted', disconnected);
+  request.once('close', closedRequest);
+  response.once('close', disconnected);
+  response.setTimeout(120_000, deadline);
+  const frame = (type, data) => 'event: ' + type + '\ndata: ' + JSON.stringify(data) + '\n\n';
+  try {
+    if (response.destroyed) return;
+    response.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff', 'X-Accel-Buffering': 'no',
+    });
+    response.flushHeaders();
+    let nextAuthCheck = 0;
+    const emit = async (type, data) => {
+      signal.throwIfAborted();
+      if (type !== 'delta' || Date.now() >= nextAuthCheck) {
+        authorize();
+        nextAuthCheck = Date.now() + 1_000;
+      }
+      if (!response.write(frame(type, data))) await once(response, 'drain', { signal });
+    };
+    // The response owns the lifetime of the stream. A normally consumed POST
+    // body also fires request.close, often before the first model token.
+    await Promise.race([
+      once(signal, 'abort').then(() => { throw signal.reason; }),
+      runAiChat({ provider, input, readLedger, emit, signal }),
+    ]);
+  } catch (error) {
+    if (!response.destroyed && response.headersSent && !response.writableEnded) {
+      const expired = error instanceof HttpError && [401, 409].includes(error.status);
+      const timeout = signal.reason?.message === 'ai_timeout';
+      const code = expired ? error.message : timeout ? 'ai_timeout' : 'ai_unavailable';
+      const message = expired ? '登录状态已变更，请重新打开账本。'
+        : timeout ? '回答超时，请缩小问题范围后重试。' : '理财助手暂时无法完成回答，请稍后重试。';
+      response.write(frame('error', { code, message }));
+    }
+  } finally {
+    controller.abort();
+    clearTimeout(timer);
+    response.setTimeout(0);
+    response.off('timeout', deadline);
+    request.off('aborted', disconnected);
+    request.off('close', closedRequest);
+    response.off('close', disconnected);
+    if (!response.destroyed && !response.writableEnded) response.end();
+  }
+}
+
+export function createSyncServer({ store, origin, push, aiProvider = null, allowLoopbackOrigin = false, onError = () => {} }) {
   const publicUrl = new URL(origin);
   const localTest = allowLoopbackOrigin && publicUrl.protocol === 'http:' &&
     ['localhost', '127.0.0.1', '[::1]'].includes(publicUrl.hostname);
@@ -117,6 +203,7 @@ export function createSyncServer({ store, origin, push, allowLoopbackOrigin = fa
     throw new Error('FINANCE_SYNC_ORIGIN must be an exact HTTPS origin without a trailing slash.');
   }
   const limit = authLimits();
+  const admitChat = aiAdmission();
 
   function authorizeAccount(request) {
     const accountId = request.headers['x-finance-account'];
@@ -144,6 +231,37 @@ export function createSyncServer({ store, origin, push, allowLoopbackOrigin = fa
   }
 
   const handlers = {
+    [`GET ${api}/ai/status`](request, response) {
+      authorizeAccount(request);
+      if (request.url.includes('?')) throw new HttpError(400, 'invalid_ai_request');
+      send(response, 200, aiProvider ? { enabled: true, streaming: true, provider: aiProvider.name === 'codex_terra' ? 'codex_terra' : 'openai_compatible' } : { enabled: false });
+    },
+    async [`POST ${api}/ai/chat`](request, response) {
+      const accountId = authorizeAccount(request);
+      if (request.url.includes('?')) throw new HttpError(400, 'invalid_ai_request');
+      if (!aiProvider) throw new HttpError(503, 'ai_unavailable');
+      const raw = await jsonBody(request, 32 * 1024);
+      authorizeAccount(request);
+      let input;
+      try {
+        input = validateChatBody(raw);
+      } catch {
+        throw new HttpError(400, 'invalid_ai_request');
+      }
+      const release = admitChat(accountId, clientAddress(request));
+      try {
+        await streamChat(request, response, {
+          provider: aiProvider, input, authorize: () => authorizeAccount(request),
+          readLedger: () => {
+            const ledger = store.readLedger(getSession(request), accountId);
+            if (ledger.error) throw new HttpError(ledger.error === 'account_changed' ? 409 : 401, ledger.error);
+            return ledger;
+          },
+        });
+      } finally {
+        release();
+      }
+    },
     [`GET ${api}/health`]: (_request, response) => send(response, 200, { status: 'ok' }),
     async [`POST ${api}/register`](request, response) {
       const credentials = await jsonBody(request, 4096);
@@ -210,7 +328,7 @@ export function createSyncServer({ store, origin, push, allowLoopbackOrigin = fa
       if (request.socket.destroyed || response.writableEnded) return;
       if (error instanceof HttpError) {
         if (!request.complete) response.setHeader('Connection', 'close');
-        if (error.status === 429) response.setHeader('Retry-After', '600');
+        if (error.status === 429) response.setHeader('Retry-After', error.code === 'ai_chat_active' ? '1' : '600');
         send(response, error.status, { error: error.message });
         return;
       }
@@ -235,6 +353,7 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
     store,
     origin,
     push,
+    aiProvider: createAiProvider(),
     allowLoopbackOrigin: process.env.FINANCE_SYNC_ALLOW_INSECURE_LOOPBACK === '1',
     onError: (error) => console.error('Finance sync request failed:', error.code || error.name),
   });

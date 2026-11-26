@@ -1,0 +1,33 @@
+[Unit]
+Description=Finance Compass private Codex/Terra gateway for %i
+After=network.target
+
+[Service]
+Type=simple
+User=%i
+Environment=FINANCE_AI_MODEL=gpt-5.6-terra
+Environment=FINANCE_CODEX_SOCKET=/var/lib/finance-compass-codex-%i/chat.sock
+Environment=FINANCE_CODEX_WORKDIR=/run/finance-compass-codex-work-%i
+EnvironmentFile=-/etc/finance-compass/codex-%i.env
+StateDirectory=finance-compass-codex-%i
+StateDirectoryMode=0700
+RuntimeDirectory=finance-compass-codex-work-%i
+RuntimeDirectoryMode=0700
+WorkingDirectory=/run/finance-compass-codex-work-%i
+UMask=0077
+ExecStart=/usr/local/bin/node /home/%i/finance-compass-deploy/codex-bridge/current/codex-gateway.mjs
+Restart=on-failure
+RestartSec=3s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+# This service's ephemeral finance threads use their own accounting instructions.
+BindReadOnlyPaths=/dev/null:/home/%i/.codex/AGENTS.md
+InaccessiblePaths=-/run/docker.sock
+LimitCORE=0
+KillMode=control-group
+TimeoutStopSec=10s
+TasksMax=256
+
+[Install]
+WantedBy=multi-user.target

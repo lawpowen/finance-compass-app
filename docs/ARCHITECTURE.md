@@ -6,6 +6,8 @@ Finance Compass 共用 Flutter 界面、Riverpod 状态和 Drift 业务数据层
 
 ## 技术栈
 
+同步版 Web 29 的内置 AI 聊天从总览或报表进入，经同源 SSE 连接同步服务。主题门控放行后，服务端读取会话绑定账号的一个账本修订版，生成财务摘要并提供五项只读工具。浏览器只发送问题与有限历史。网关配置属于部署环境，账本中为外部 AI 导出保存的地址不会决定聊天流量的去向。数据边界见[模块设计](MODULE_DESIGN.md#同步账本-ai-查询链路)。
+
 - Flutter 3 / Dart 3，Material 3
 - Riverpod：数据库、Repository 和 mutation 状态传播
 - Drift + SQLite：本地持久化，当前 schema 版本为 9

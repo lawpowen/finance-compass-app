@@ -181,7 +181,11 @@ function balanceAsOf(account, transactions, today) {
   );
 }
 
-function creditBilledBalance(account, transactions, statement, today) {
+// A single FIFO allocation, also used by the authenticated read-only AI view.
+// Pending source postings never pay off earlier statements.
+export function creditLedgerAt(account, transactions, today, {
+  signedBalance = balanceAsOf(account, transactions, today), openingAsOf = today,
+} = {}) {
   const lastClosed = (day) => {
     const month = monthNumber(day);
     const cut = monthDay(month, account.statement_day);
@@ -190,17 +194,22 @@ function creditBilledBalance(account, transactions, statement, today) {
   const charges = new Map();
   const payments = [];
   const addCharge = (cut, amount) => charges.set(+cut, (charges.get(+cut) ?? 0) + amount);
-  let pendingForStatement = 0;
-  let openingDebt = -balanceAsOf(account, transactions, today);
-  let firstDay = today;
+  const pending = new Map();
+  const closed = lastClosed(today);
+  const nextCut = monthDay(monthNumber(closed) + 1, account.statement_day);
+  let openingDebt = -signedBalance;
+  let cyclePayments = 0;
+  let firstDay = openingAsOf < today ? openingAsOf : today;
   for (const item of transactions) {
-    if (item.date > today) continue;
     const source = item.account_id === account.id;
     const charge = source ? -balanceDelta(account.id, item) : 0;
     const payment = !source && item.type === 'transfer' && item.to_account_id === account.id ? transferIn(item) : 0;
     if (charge === 0 && payment === 0) continue;
-    if (item.date < firstDay) firstDay = item.date;
-    openingDebt += payment - charge;
+    const occurred = item.date <= today;
+    if (occurred) {
+      if (item.date < firstDay) firstDay = item.date;
+      openingDebt += payment - charge;
+    }
     if (charge !== 0) {
       const billingDate = parseCalendarDay(item.card_posting_date) ?? item.date;
       const month = monthNumber(billingDate);
@@ -208,14 +217,17 @@ function creditBilledBalance(account, transactions, statement, today) {
       const cut = billingDate <= close ? close : monthDay(month + 1, account.statement_day);
       // Only posted credits can cover other statements. A pending posting may
       // affect the requested upcoming statement's estimated notice.
-      addCharge(cut, billingDate <= today ? charge : 0);
-      if (billingDate > today && +cut === +statement) pendingForStatement += charge;
+      if (occurred) addCharge(cut, billingDate <= today ? charge : 0);
+      if (!occurred || billingDate > today) pending.set(+cut, (pending.get(+cut) ?? 0) + charge);
     }
-    if (payment !== 0) payments.push(item);
+    if (occurred && payment !== 0) {
+      payments.push(item);
+      if (item.date > closed) cyclePayments += payment;
+    }
   }
   // With no dated statement evidence, retain the existing estimate for a
   // notification sent shortly before the card closes.
-  if (!charges.size && !payments.length) return Math.max(0, openingDebt);
+  const noDatedEvidence = !charges.size && !payments.length;
   if (openingDebt > 0) addCharge(lastClosed(firstDay), openingDebt);
   let credit = Math.max(0, -openingDebt);
   payments.sort((a, b) => Date.parse(a.transaction_date) - Date.parse(b.transaction_date) ||
@@ -228,12 +240,31 @@ function creditBilledBalance(account, transactions, statement, today) {
     }
   }
   for (const charge of charges.values()) if (charge < 0) credit -= charge;
-  for (const [closed, charge] of [...charges].sort(([a], [b]) => a - b)) {
+  const remaining = new Map();
+  const creditBefore = new Map();
+  for (const [cut, charge] of [...charges].sort(([a], [b]) => a - b)) {
     const debit = Math.max(0, charge);
-    if (closed === +statement) return Math.max(0, debit + pendingForStatement - credit);
+    creditBefore.set(cut, credit);
+    remaining.set(cut, Math.max(0, debit - credit));
     credit = Math.max(0, credit - debit);
   }
-  return 0;
+  let unbilled = (remaining.get(+nextCut) ?? 0) + (pending.get(+nextCut) ?? 0) - credit;
+  if (openingDebt < 0 && Math.abs(openingDebt + (account.initial_balance ?? 0)) >= epsilon && signedBalance <= 0) {
+    unbilled = Math.max(unbilled, (charges.get(+nextCut) ?? 0) + (pending.get(+nextCut) ?? 0) - Math.max(0, cyclePayments));
+  }
+  return { remaining, closed, nextCut, unbilled: Math.max(0, unbilled),
+    noDatedEvidence, openingDebt, charges, pending, creditBefore };
+}
+
+function creditBilledBalance(account, transactions, statement, today) {
+  // Notifications estimate using entries already economically effective today.
+  const ledger = creditLedgerAt(account, transactions.filter((item) => item.date <= today), today, {
+    signedBalance: balanceAsOf(account, transactions, today),
+  });
+  if (ledger.noDatedEvidence) return Math.max(0, ledger.openingDebt);
+  if (!ledger.charges.has(+statement)) return 0;
+  return Math.max(0, Math.max(0, ledger.charges.get(+statement)) +
+    (ledger.pending.get(+statement) ?? 0) - ledger.creditBefore.get(+statement));
 }
 
 function creditDueStatements(account, target) {
@@ -252,6 +283,11 @@ function creditDueStatements(account, target) {
 }
 
 export function activeLoanInstallment(account, number) {
+  return Number.isInteger(number) && number >= 1 && number <= account.loan_term_months
+    ? loanInstallments(account)?.[number - 1] ?? null : null;
+}
+
+export function loanInstallments(account) {
   const {
     loan_principal: principal,
     loan_annual_interest_rate: annualRate,
@@ -261,7 +297,7 @@ export function activeLoanInstallment(account, number) {
     initial_balance: initial,
   } = account;
   const opening = Math.abs(initial ?? principal);
-  if (!Number.isInteger(term) || term > 1200 || number < 1 || number > term ||
+  if (!Number.isInteger(term) || term < 1 || term > 1200 ||
       !Number.isFinite(principal) || principal <= 0 || !Number.isFinite(annualRate) || annualRate < 0 ||
       !Number.isFinite(opening) || opening <= 0 || opening > principal ||
       !['equalInstallment', 'equalPrincipal', 'flatRate'].includes(method) ||
@@ -271,13 +307,13 @@ export function activeLoanInstallment(account, number) {
   let balance = money(opening);
   const midstream = balance < money(principal);
   const rate = annualRate / 1200;
-  if (method === 'flatRate') return flatInstallment(principal, opening, annualRate, quoted, term, number);
+  if (method === 'flatRate') return flatSchedule(principal, opening, annualRate, quoted, term);
   const regularPrincipal = money(principal / term);
   const annuity = rate === 0 ? principal / term : principal * rate / (-Math.expm1(-term * Math.log1p(rate)));
   const regularPayment = money(quoted ?? annuity);
   if (method === 'equalInstallment' && regularPayment <= money(balance * rate)) return null;
 
-  let requested = null;
+  const schedule = [];
   // Reproduce the date bounds and amounts from calculateLoanAmortization, so
   // a midstream loan with a reduced opening principal can end before its term.
   for (let index = 1; index <= term && balance > 0; index++) {
@@ -290,9 +326,9 @@ export function activeLoanInstallment(account, number) {
       principalPart = index === term ? balance : Math.min(balance, regularPrincipal);
     }
     balance = money(Math.max(0, balance - principalPart));
-    if (index === number) requested = { payment: money(principalPart + interest), principal: principalPart };
+    schedule.push({ payment: money(principalPart + interest), principal: principalPart });
   }
-  return requested;
+  return schedule;
 }
 
 // Allocate contract cents by the differences between successive cumulative
@@ -303,7 +339,7 @@ function flatPortion(total, term, index) {
     Math.floor((index - 1) * remainder / term);
 }
 
-function flatInstallment(principal, opening, annualRate, quoted, term, number) {
+function flatSchedule(principal, opening, annualRate, quoted, term) {
   const contract = cents(principal);
   const interestTotal = cents(principal * annualRate / 100 * term / 12);
   const quote = quoted == null ? null : cents(quoted);
@@ -311,27 +347,32 @@ function flatInstallment(principal, opening, annualRate, quoted, term, number) {
   if (![contract, interestTotal, balance].every(Number.isSafeInteger) ||
       (quote != null && (!Number.isSafeInteger(quote) || quote <= Math.floor(interestTotal / term)))) return null;
   const midstream = balance < contract;
-  let requested = null;
+  const schedule = [];
   for (let index = 1; index <= term && balance > 0; index++) {
     const interest = flatPortion(interestTotal, term, index);
     const regular = quote == null ? flatPortion(contract, term, index) : quote - interest;
     if (quote != null && !midstream && index < term && regular >= balance) return null;
     const payPrincipal = index === term ? balance : Math.min(balance, regular);
-    if (index === number) requested = { payment: (payPrincipal + interest) / 100, principal: payPrincipal / 100 };
+    schedule.push({ payment: (payPrincipal + interest) / 100, principal: payPrincipal / 100 });
     balance -= payPrincipal;
   }
-  return requested;
+  return schedule;
 }
 
-function loanInstallmentPaid({ account, accounts, transactions, today, installment, number, legacy }) {
-  const monthlyLabel = `贷款月供 #${number}`;
-  let paidPrincipal = 0;
-  let paidInterest = 0;
+export function loanCreditsAt({ account, accounts, transactions, today, legacy }) {
+  const credits = new Map();
+  function add(number, principal, interest) {
+    const paid = credits.get(number) ?? { principal: 0, interest: 0 };
+    paid.principal += principal;
+    paid.interest += interest;
+    credits.set(number, paid);
+  }
   for (const item of transactions) {
     if (item.date > today || item.account_id === account.id) continue;
-    if (item.legacy_loan_id === account.id && item.legacy_loan_part_number === number) {
-      if (item.type === 'transfer' && item.to_account_id === account.id) paidPrincipal += cents(transferIn(item));
-      if (item.type === 'expense') paidInterest += cents(item.amount);
+    if (item.legacy_loan_id === account.id && Number.isInteger(item.legacy_loan_part_number) &&
+        currencyUnit(item.currency) === currencyUnit(account.currency)) {
+      if (item.type === 'transfer' && item.to_account_id === account.id) add(item.legacy_loan_part_number, cents(transferIn(item)), 0);
+      if (item.type === 'expense') add(item.legacy_loan_part_number, 0, cents(item.amount));
       continue;
     }
     if (item.type !== 'transfer' || item.to_account_id !== account.id) continue;
@@ -339,23 +380,29 @@ function loanInstallmentPaid({ account, accounts, transactions, today, installme
     const sourceCurrency = (item.currency ?? 'MYR').trim().toUpperCase();
     if (targetCurrency !== (account.currency ?? 'MYR').trim().toUpperCase()) continue;
     const tagged = item.loan_installment_number != null;
-    const oldMonthly = legacy && !tagged && item.description === monthlyLabel &&
+    const match = legacy && !tagged && /^贷款月供 #([1-9]\d*)$/.exec(item.description ?? '');
+    const oldMonthly = match &&
       validMoney(item.to_amount) && validMoney(item.amount) && sourceCurrency === targetCurrency &&
       legacyCashPayer(accounts.get(item.account_id), sourceCurrency);
-    if ((tagged && item.loan_installment_number === number) || oldMonthly) {
+    if (tagged || oldMonthly) {
       const payment = item.loan_payment_amount ?? item.amount;
       const principal = item.to_amount;
       if (!Number.isFinite(payment) || !Number.isFinite(principal) || payment === 0 ||
           (principal !== 0 && Math.sign(payment) !== Math.sign(principal)) ||
           Math.abs(principal) > Math.abs(payment)) continue;
-      paidPrincipal += cents(principal);
-      paidInterest += cents(payment) - cents(principal);
+      add(item.loan_installment_number ?? Number(match[1]), cents(principal), cents(payment) - cents(principal));
       continue;
     }
   }
-  const duePrincipal = cents(installment.principal);
-  const dueInterest = cents(installment.payment) - duePrincipal;
-  return Math.max(0, paidPrincipal) >= duePrincipal && Math.max(0, paidInterest) >= dueInterest;
+  return credits;
+}
+
+export function unpaidInstallment(installment, credit) {
+  const principal = cents(installment.principal);
+  const interest = cents(installment.payment) - principal;
+  const duePrincipal = Math.max(0, principal - Math.max(0, credit?.principal ?? 0));
+  const dueInterest = Math.max(0, interest - Math.max(0, credit?.interest ?? 0));
+  return { principal: duePrincipal / 100, interest: dueInterest / 100, payment: (duePrincipal + dueInterest) / 100 };
 }
 
 function event(kind, account, target, title, body) {
@@ -380,11 +427,7 @@ export function reminderEvents(snapshot, localDay) {
   if (!today || dayKey(today) !== localDay || snapshot?.meta?.notifications_enabled === 'false' ||
       !Array.isArray(snapshot?.accounts)) return [];
   const prefs = readPreferences(snapshot.meta);
-  const legacy = snapshot.meta?.loan_installment_semantics == null;
-  const accounts = new Map(snapshot.accounts.filter((a) => a && typeof a.id === 'string').map((a) => [a.id, a]));
-  const rawTransactions = Array.isArray(snapshot.transactions) ? snapshot.transactions : [];
-  const transactionsForRead = legacy ? prepareLegacyReceipts(snapshot, accounts, rawTransactions) : rawTransactions;
-  const byAccount = indexTransactions(transactionsForRead, accounts, legacy);
+  const { accounts, legacy, byAccount } = debtLedgerIndex(snapshot);
   const paymentDates = prefs.dueToday ? [today, offsetDays(today, advanceDays)] : [offsetDays(today, advanceDays)];
   const events = [];
 
@@ -421,7 +464,9 @@ export function reminderEvents(snapshot, localDay) {
         if (+monthDay(monthNumber(target), account.loan_payment_day) !== +target) continue;
         const number = monthNumber(target) - monthNumber(start);
         const installment = activeLoanInstallment(account, number);
-        if (!installment || loanInstallmentPaid({ account, accounts, transactions, today, installment, number, legacy })) continue;
+        if (!installment) continue;
+        const credits = loanCreditsAt({ account, accounts, transactions, today, legacy });
+        if (!unpaidInstallment(installment, credits.get(number)).payment) continue;
         const isDueToday = target === today;
         events.push(event(isDueToday ? 'loan-due' : 'loan-upcoming', account, target,
           isDueToday ? '贷款今天到期' : '近期贷款还款提醒',
@@ -431,3 +476,13 @@ export function reminderEvents(snapshot, localDay) {
   }
   return events;
 }
+
+export function debtLedgerIndex(snapshot) {
+  const legacy = snapshot.meta?.loan_installment_semantics == null;
+  const accounts = new Map((snapshot.accounts ?? []).filter((a) => a && typeof a.id === 'string').map((a) => [a.id, a]));
+  const raw = snapshot.transactions ?? [];
+  const rows = legacy ? prepareLegacyReceipts(snapshot, accounts, raw) : raw;
+  return { accounts, legacy, rows, byAccount: indexTransactions(rows, accounts, legacy) };
+}
+
+export { balanceAsOf, balanceDelta, dayKey, monthDay, monthNumber, offsetDays, parseDay, validMonthDay };

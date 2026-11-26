@@ -23,6 +23,14 @@ services:
     environment:
       FINANCE_SYNC_ORIGIN: "${FINANCE_SYNC_ORIGIN:?Set FINANCE_SYNC_ORIGIN to the public HTTPS origin}"
       FINANCE_SYNC_DB: /data/finance-sync.sqlite3
+      FINANCE_AI_PROVIDER: "${FINANCE_AI_PROVIDER:-openai_compatible}"
+      FINANCE_AI_BASE_URL: "${FINANCE_AI_BASE_URL:-}"
+      FINANCE_AI_API_KEY: "${FINANCE_AI_API_KEY:-}"
+      FINANCE_AI_MODEL: "${FINANCE_AI_MODEL:-}"
+      FINANCE_AI_GATE_MODEL: "${FINANCE_AI_GATE_MODEL:-}"
+      FINANCE_AI_TIMEOUT_MS: "${FINANCE_AI_TIMEOUT_MS:-90000}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ledger:/data
     read_only: true

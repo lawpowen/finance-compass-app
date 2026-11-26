@@ -47,8 +47,8 @@ const fixture = {
   }],
 };
 
-async function createHarness(t, store) {
-  const server = createSyncServer({ store, origin });
+async function createHarness(t, store, options = {}) {
+  const server = createSyncServer({ store, origin, ...options });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   t.after(() => {
@@ -58,7 +58,7 @@ async function createHarness(t, store) {
   });
   const url = `http://127.0.0.1:${server.address().port}/api/sync/v1`;
   function request(path, {
-    method = 'GET', cookie, body, requestOrigin = origin, clientIp, rawBody,
+    method = 'GET', cookie, body, requestOrigin = origin, clientIp, rawBody, signal,
     accountId = method === 'PUT' ? '1' : null,
   } = {}) {
     const headers = { Origin: requestOrigin };
@@ -67,7 +67,7 @@ async function createHarness(t, store) {
     if (accountId !== null) headers['X-Finance-Account'] = accountId;
     if (body !== undefined || rawBody !== undefined) headers['Content-Type'] = 'application/json';
     return fetch(url + path, {
-      method, headers, body: rawBody ?? (body === undefined ? undefined : JSON.stringify(body)),
+      method, headers, signal, body: rawBody ?? (body === undefined ? undefined : JSON.stringify(body)),
     });
   }
   request.oversizedStatus = (cookie) => new Promise((resolve, reject) => {
@@ -101,6 +101,142 @@ async function signIn(request, clientIp) {
   assert.equal(login.headers.get('cache-control'), 'no-store');
   return setCookie.split(';', 1)[0];
 }
+
+test('AI is optional and its configuration is visible only to the authenticated ledger owner', async t => {
+  const store = openStore(':memory:');
+  await store.provision(username, password);
+  const request = await createHarness(t, store);
+  const cookie = await signIn(request);
+  assert.deepEqual(await (await request('/health')).json(), { status: 'ok' });
+  assert.equal((await request('/ai/status', { accountId: '1' })).status, 401);
+  assert.equal((await request('/ai/status', { cookie, accountId: '2' })).status, 409);
+  assert.deepEqual(await (await request('/ai/status', { cookie, accountId: '1' })).json(), { enabled: false });
+  assert.equal((await request('/ai/chat', { method: 'POST', cookie, accountId: '1', body: { message: '本月预算' } })).status, 503);
+  assert.equal((await request('/ledger', { cookie })).status, 200);
+});
+
+test('AI HTTP binding isolates two real accounts and excludes ledger data before scope approval', async t => {
+  const store = openStore(':memory:');
+  await store.provision(username, password);
+  const gateInputs = [], modelInputs = [], reads = [];
+  const request = await createHarness(t, { ...store, readLedger(token, id) {
+    reads.push(id);
+    return store.readLedger(token, id);
+  } }, { aiProvider: {
+    gate: async ({ messages }) => { gateInputs.push(messages); return '{"allowed":true,"reason":"finance"}'; },
+    async *stream({ messages }) { modelInputs.push(messages); yield { type: 'text', text: '已查询。' }; },
+  } });
+  const cookie = await signIn(request);
+  const second = await request('/register', { method: 'POST', body: { username: 'second-owner', password } });
+  assert.equal(second.status, 204);
+  const secondCookie = second.headers.get('set-cookie').split(';', 1)[0];
+  for (const [index, session] of [cookie, secondCookie].entries()) {
+    const snapshot = { ...fixture, accounts: [{ ...account, name: 'OWNER-' + (index + 1) + '-CASH' }] };
+    assert.equal((await request('/ledger', { method: 'PUT', accountId: String(index + 1), cookie: session,
+      body: { snapshot, baseRevision: 0, operationId: 'fixture-transaction-' + index } })).status, 200);
+  }
+  const opts = { cookie, accountId: '1' };
+  assert.deepEqual(await (await request('/ai/status', opts)).json(),
+    { enabled: true, streaming: true, provider: 'openai_compatible' });
+  const body = { message: '我的现金余额？' };
+  const chat = (b = body, opts2 = {}, path = '/ai/chat') =>
+    request(path, { method: 'POST', ...opts, body: b, ...opts2 });
+  assert.equal((await chat(body, { cookie: undefined })).status, 401);
+  assert.equal((await chat(body, { accountId: '2' })).status, 409);
+  assert.equal((await chat(body, { requestOrigin: 'https://other.example.test' })).status, 403);
+  assert.equal((await chat(body, {}, '/ai/chat?accountId=2')).status, 400);
+  for (const extra of [{ accountId: '2' }, { snapshot: fixture }, { system: 'x' }, { gateway: 'local' },
+    { history: [{ role: 'system', content: 'x' }] }, { message: 'x'.repeat(1001) }]) {
+    assert.equal((await chat({ ...body, ...extra })).status, 400);
+  }
+  assert.equal((await chat({ message: 'x'.repeat(32768) })).status, 413);
+  assert.match(await (await chat({ message: '查看其他用户账本' })).text(), /event: refused/);
+  assert.deepEqual(reads, []);
+  assert.equal(modelInputs.length, 0);
+  assert.match(await (await chat()).text(), /event: done\ndata: \{"revision":1/);
+  assert.deepEqual(reads, ['1']);
+  assert.doesNotMatch(JSON.stringify(gateInputs), /OWNER-[12]-CASH/);
+  assert.match(JSON.stringify(modelInputs), /OWNER-1-CASH/);
+  assert.doesNotMatch(JSON.stringify(modelInputs), /OWNER-2-CASH/);
+});
+
+test('active AI stream flushes immediately, cancels upstream and releases its slot', { timeout: 30_000 }, async t => {
+  const store = openStore(':memory:');
+  await store.provision(username, password);
+  const canceled = Promise.withResolvers();
+  let calls = 0;
+  const request = await createHarness(t, store, { aiProvider: {
+    gate: async () => '{"allowed":true,"reason":"finance"}',
+    async *stream({ signal }) {
+      const first = ++calls === 1;
+      yield { type: 'text', text: '第一段' };
+      if (first) {
+        await once(signal, 'abort');
+        canceled.resolve();
+      } else yield { type: 'text', text: '第二段' };
+    },
+  } });
+  const cookie = await signIn(request);
+  const chat = signal => request('/ai/chat', { method: 'POST', body: { message: '我的预算？' }, cookie, accountId: '1', signal });
+  const controller = new AbortController();
+  const response = await chat(controller.signal);
+  assert.match(response.headers.get('content-type'), /^text\/event-stream/);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.equal(response.headers.get('x-accel-buffering'), 'no');
+  const firstChunk = await response.body.getReader().read();
+  assert.match(new TextDecoder().decode(firstChunk.value), /第一段/);
+  assert.equal((await chat()).status, 429);
+  controller.abort();
+  await canceled.promise;
+  assert.match(await (await chat()).text(), /第二段[\s\S]+event: done/);
+});
+
+test('AI ten-minute quota applies independently to the account and the trusted client address', async t => {
+  const store = openStore(':memory:');
+  await store.provision(username, password);
+  const request = await createHarness(t, store, { aiProvider: {} });
+  const cookie = await signIn(request);
+  const second = await request('/register', { method: 'POST', body: { username: 'second-owner', password } });
+  const cookie2 = second.headers.get('set-cookie').split(';', 1)[0];
+  const chat = (session, accountId, clientIp) => request('/ai/chat', {
+    method: 'POST', cookie: session, accountId, clientIp, body: { message: '闲聊' },
+  });
+  for (let i = 0; i < 20; i++) {
+    const result = await chat(cookie, '1', '192.0.2.1');
+    assert.equal(result.status, 200);
+    await result.text();
+  }
+  for (const result of [await chat(cookie, '1', '192.0.2.2'), await chat(cookie2, '2', '192.0.2.1')]) {
+    assert.equal(result.status, 429);
+    assert.equal(result.headers.get('retry-after'), '600');
+  }
+  assert.equal((await chat(cookie2, '2', '192.0.2.2')).status, 200);
+});
+
+test('revoking the session during the gate prevents a later ledger read or answer', async t => {
+  const store = openStore(':memory:');
+  await store.provision(username, password);
+  const gateStarted = Promise.withResolvers(), resumeGate = Promise.withResolvers();
+  let modelCalled = false;
+  const request = await createHarness(t, store, { aiProvider: {
+    async gate() {
+      gateStarted.resolve();
+      await resumeGate.promise;
+      return '{"allowed":true,"reason":"finance"}';
+    },
+    async *stream() { modelCalled = true; yield { type: 'text', text: '账本' }; },
+  } });
+  const cookie = await signIn(request);
+  const stream = request('/ai/chat', { method: 'POST', cookie, accountId: '1', body: { message: '我的预算？' } });
+  await gateStarted.promise;
+  const logout = await request('/logout', { method: 'POST', cookie, accountId: '1' });
+  resumeGate.resolve();
+  assert.equal(logout.status, 204);
+  const events = await (await stream).text();
+  assert.match(events, /event: error\ndata: \{"code":"unauthorized"/);
+  assert.doesNotMatch(events, /event: (?:delta|done)/);
+  assert.equal(modelCalled, false);
+});
 
 test('public health, session authentication, Origin enforcement and credential rotation', async (t) => {
   const store = openStore(':memory:');

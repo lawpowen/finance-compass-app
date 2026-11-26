@@ -62,6 +62,8 @@ PWA 检测并下载新版后弹出“有新版本”。点“更新”才重新�
 | 请求 | 成功响应 |
 | --- | --- |
 | `GET /health` | 健康状态，匿名可用 |
+| `GET /ai/status` | 绑定会话及账号。关闭时返回 `{"enabled":false}`，启用时另返回 `streaming:true` 与适配器名称 |
+| `POST /ai/chat` | 同源、绑定账号。用 JSON 提交问题，接收 UTF-8 SSE。事件与限制见[接口说明](INTERFACES.md#内置-ai-理财助手) |
 | `POST /register` | `{username,password}`，创建独立账本，成功 204 并设置 HttpOnly 会话 Cookie |
 | `POST /login` | `{username,password}`，成功 204 并设置 HttpOnly 会话 Cookie |
 | `POST /logout` | 204 并清除会话 |
@@ -84,6 +86,35 @@ PWA 检测并下载新版后弹出“有新版本”。点“更新”才重新�
 保存前按实际 PUT 的 UTF-8 JSON 字节数检查完整请求体，包括 `baseRevision`、`operationId` 和 `snapshot`。16 MiB 边界本身可上传。首次超限会回滚这次工作库变更并保留原待传队列。页面暂存本次候选快照，可下载、取消，或点击「保留并编辑本机草稿」把它持久保存到当前账号的浏览器存储；在作出选择前关闭标签页可能丢失这次尚未保存的更改。
 
 旧版本遗留的超限队列或代理返回 HTTP 413 的队列，会在可编辑账本上方显示草稿提示。可以先下载备份，再分多次删减记录或导入精简备份。每一步在当前浏览器持久保存；达到可上传大小后，客户端按原修订号恢复同步。代理的实际限额低于 16 MiB 时，只有内容变小后才重新尝试被拒的请求。若服务端在清理期间产生了独立修订，仍保留本机草稿并进入现有冲突处理流程。
+
+## 可选的内置 AI 理财助手
+
+Web 29 同步前端与同版本同步服务配套使用。在部署目录的私有 `runtime.env` 中选择模型和连接方式。AI 默认关闭。
+
+| 环境变量 | 配置 |
+| --- | --- |
+| `FINANCE_AI_PROVIDER` | `openai_compatible` 使用 HTTP 网关；Homelab 的 `codex_terra` 使用 Finance 专用 Unix socket |
+| `FINANCE_AI_BASE_URL` | 网关 API 根地址。例如 `http://host.docker.internal:<端口>/v1`。也接受反代前缀或完整的 `/v1/chat/completions` 地址 |
+| `FINANCE_AI_MODEL` | 网关登记的对话模型标识，须支持流式文本及函数调用 |
+| `FINANCE_AI_GATE_MODEL` | 可选。支持 JSON 对象回复的门控模型，留空沿用对话模型 |
+| `FINANCE_AI_API_KEY` | 可选，仅由同步服务发送 Bearer 凭据，值保存在部署机私有配置中 |
+| `FINANCE_AI_TIMEOUT_MS` | 单次上游请求时限，默认 90000 毫秒。整条对话请求另有 120 秒总时限 |
+| `FINANCE_AI_CODEX_DIR` | Codex 模式下只读挂载的宿主 socket 专用目录，如 `/var/lib/finance-compass-codex-lawpowen`。容器内使用 `/run/finance-codex/chat.sock` |
+
+HTTP 网关须支持 `POST /v1/chat/completions`。门控使用 `stream:false` 和 `response_format:{"type":"json_object"}`，主回复使用 `stream:true`、`tools` 和 `delta.tool_calls`。
+
+### Homelab 的 Codex/Terra
+
+宿主机使用已登录的 Codex CLI 和其模型目录中实际提供的 `gpt-5.6-terra`。桥接服务通过本机 stdio 创建临时线程，只接受本版本 Finance 的固定提示与五种账本查询定义。账本查询在同步服务执行。容器仅挂载专用 socket 目录；Codex 登录材料由宿主 CLI 自行管理。模型请求消耗该登录账号的模型额度。
+
+1. 用宿主登录用户运行 `codex --version` 与 `codex login status`。适配器核对 CLI 0.145.0、模型和权限；升级 CLI 后先用隔离账本复验。
+2. 将 `~/finance-compass-deploy/codex-bridge/current` 指向候选发布中的 `deploy/sync`。把同目录的 `finance-compass-codex@.service` 安装到 `/etc/systemd/system/`，由系统管理器重新载入并启用 `finance-compass-codex@lawpowen.service`。实例以指定的普通登录用户运行。其私有挂载命名空间隔离个人开发指引，宿主文件保持原状。socket 父目录权限为 0700，socket 为 0600；同步容器和桥接进程的有效 UID 须一致。
+3. 在部署配置设 `FINANCE_AI_MODEL=gpt-5.6-terra` 与 `FINANCE_AI_CODEX_DIR=/var/lib/finance-compass-codex-lawpowen`。使用 `-f deploy/sync/compose.yml -f deploy/sync/compose.codex.yml` 两个文件管理同步服务。覆盖文件选择私有传输。此模式无需填写 API Key 或 HTTP Base URL，门控使用同一 Terra 模型。
+4. 在同一同步镜像中运行仓库的 `tool/smoke_codex_terra.mjs`，可将脚本只读挂载为 `/app/tool/smoke_codex_terra.mjs`。脚本自行启动内存账本并核对两笔合成交易、工具调用和实际分段时间；只需连接 Finance socket。切回旧版本时，恢复原镜像和原部署配置，继续使用原账本卷。
+
+同步容器内的 `host.docker.internal` 映射到宿主网桥。仅监听宿主机 `127.0.0.1` 的网关需先提供容器可访问的受控入口。由已有内网代理限制来源和认证，浏览器仅访问账本站点。状态接口表示配置已启用，真实模型、路由权限与工具兼容性可在隔离测试账号上用合成账本核对。
+
+启用前确认网关和模型的日志、留存政策符合账本使用者的预期。问题通过主题门控后，同步服务会向管理员配置的模型发送该账号的财务摘要，工具调用还会发送按需查询的流水。Finance Compass 服务端不持久化聊天。Caddy 为聊天单设无压缩、立即刷新的反代，并从连接信息覆盖客户端地址头。
 
 ## 部署和运维
 

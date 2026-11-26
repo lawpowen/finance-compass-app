@@ -1,5 +1,19 @@
 # 接口与导入导出
 
+## 内置 AI 理财助手
+
+同步服务的 `GET /api/sync/v1/ai/status` 与 `POST /api/sync/v1/ai/chat` 都要求会话 Cookie 及匹配的 `X-Finance-Account`。POST 要求精确匹配部署 Origin。每次聊天只提交 `message`、可选 `history` 和 `timezone`。消息去空白后为 1–1000 字符，历史最多 16 条，每条最多 1500 字符，仅接受 user 和 assistant，当前问题与历史合计最多 8000 字符。请求体最大 32 KiB，未知设备时区按 UTC。请求不接收额外字段或 URL 查询参数。
+
+| SSE 事件 | data 字段及含义 |
+| --- | --- |
+| `status` | `text`，当前只读查询的简短说明 |
+| `delta` | `text`，追加的纯文本片段 |
+| `refused` | `reason`（off_topic、prompt_injection 或 speculative_advice）及固定 `text` |
+| `done` | `revision`、`asOf`、`toolsUsed`。拒答的 revision 为 null，表示没有读取账本 |
+| `error` | `code` 与可读 `message`，本轮终止 |
+
+握手前会话失效返回 401，账号不符返回 409，异源 POST 返回 403，非法内容返回 400 或 413。每个账号与每个客户端地址各有连续十分钟 20 次的额度，每个账号最多一条活跃流，超限返回 429。中断响应取消本轮。会话失效或模型故障发生在开流后时通过 error 事件报告。上游密钥、模型 URL 和系统指令均由服务端控制。
+
 `FinanceAmountField` 暂存键盘输入，点「完成」才写回 controller。取消不改动字段。清空后确认返回空字符串，由原表单继续区分必填和可选。`FinanceTextField(isAmount: true)` 使用同一交互。
 
 `accountBalanceAt(accountId, cutoff)` 与余额追溯采用相同的锚点、实际交易和截止时刻。投资账户从最近观测正向回放；没有适用观测时从期初回放。同一时刻按 ID 确定快照顺序。

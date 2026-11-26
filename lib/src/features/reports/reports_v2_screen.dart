@@ -9,6 +9,7 @@ import '../../core/models/account.dart';
 import '../../core/models/category.dart';
 import '../../core/theme/finance_theme.dart';
 import '../../core/utils/month_key.dart';
+import '../ai/ai_chat_screen.dart';
 import '../shared/compass_ui.dart';
 import '../shared/finance_donut.dart';
 
@@ -299,6 +300,7 @@ class _ReportsV2ScreenState extends State<ReportsV2Screen> {
     final header = CompassPageHeader(
       title: '报表',
       actions: [
+        const AiChatEntryButton(),
         PopupMenuButton<_ReportOverviewRange>(
           initialValue: range,
           tooltip: '选择报表范围',

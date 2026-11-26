@@ -12,6 +12,7 @@ import '../../core/theme/finance_theme.dart';
 import '../../core/utils/month_key.dart';
 import '../accounts/credit_card_detail_screen.dart';
 import '../accounts/accounts_v2_screen.dart';
+import '../ai/ai_chat_screen.dart';
 import '../budgets/budgets_v2_screen.dart';
 import '../shared/compass_ui.dart';
 import '../shared/finance_donut.dart';
@@ -285,6 +286,7 @@ class _DashboardV2ScreenState extends ConsumerState<DashboardV2Screen> {
               ),
             ),
             const SizedBox(width: 4),
+            const AiChatEntryButton(),
             IconButton(
               tooltip: '通知与提醒',
               onPressed: () => Navigator.push(

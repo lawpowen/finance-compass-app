@@ -10,6 +10,16 @@
 
 `deploy/selfhost/` 只包含构建/静态托管边界：Docker 多阶段构建运行与本机相同的 `tool/build_web.sh`（编译 Drift Worker 与 Flutter Web 并校验交付契约），再由 Caddy 送出文件；`web/flutter_bootstrap.js` 决定引擎加载配置（不注册 Flutter 的 Service Worker 存根、回退字体走同源 `fonts/`），`web/service-worker.js` 是唯一应用 Worker；发行 ZIP 使用已构建的 `webroot` 与 runtime-only Dockerfile，因此解压后无需原始 Flutter 源码。访问控制和 TLS 是外层反向代理责任。
 
+## 同步账本 AI 查询链路
+
+Homelab 的 `codex_terra` 适配器以 Unix socket 连接部署用户的独立桥接进程。`codex-gateway.mjs` 校验 Finance 请求与工具定义，`codex-turn.mjs` 通过官方 app-server stdio 接收最终回复增量。每轮创建临时线程，核对实际模型、权限配置和 MCP 清单；动态财务工具请求送回同步服务，由绑定修订版的闭包执行。
+
+总览与报表的「AI 理财助手」进入同一聊天页。Riverpod 将对话及本轮请求绑定到当前登录会话，退出或切换账号会中止查询并清空消息。发送前若有本机待同步记录，先尝试同步；若仍待上传，界面标明回答基于服务端修订版。Web 传输用同源 Fetch、ReadableStream 和 AbortController，原生传输用 HTTP 响应流。聊天记录仅存在会话内存，旧版外部 AI 摘要导出继续独立工作。
+
+Node 的 `sync.mjs` 绑定身份、限流和处理 SSE 的生命周期。`ai-chat.mjs` 先做范围门控，通过后才读取当前账号的快照。一轮查询固定使用同一个修订版。模型通过 `ai-provider.mjs` 调用，主回复最多使用三次工具。月度收支与预算、分类区间排行、流水检索、卡账期、贷款与目标五种查询在 `ai-ledger-tools.mjs` 内校验参数。摘要由 `ai-ledger-context.mjs` 生成，信用卡和贷款与提醒服务共享账期与核销计算。账本字段作为有长度上限的数据传递，名称及流水描述经过清洗，账户长备注不进入模型上下文。
+
+消费归入交易发生日。现金收付只计算现金账户实际变动。卡转卡按接收卡的交易日核销并按付款卡的入账日归账。缺失汇率的金额列出原币，折算小计仅覆盖可估值部分。
+
 ## `core/database`
 
 负责 Drift 表、schema 升级、完整性检查、余额原子更新和 v9 迁移前备份。升级失败必须保留旧文件并向启动层返回错误。
