@@ -2,6 +2,10 @@
 
 ## 金额显示精度
 
+2026-11-27，Web 31 前端 `162c77d` 在 Homelab 上线。Flutter 全仓 535 项通过、2 项条件跳过，静态分析 0 error、0 warning；版本更新后另复验 32 项金额、账户与 Web 交付测试。隔离账本的手机 Chrome 实测 USD -0.004 显示为 USD 0.00，折算为 - MYR 0.02；USD -0.006 显示为 - USD 0.01。读取测试账本确认原始精度保留。
+
+公网 Chrome 从 Web 30 确认更新至 Web 31 后正常绘制首帧。浏览器 Worker 缓存中的主程序 SHA-256 与发布包相同，为 `73390d95a6f684d1da5e7e637511a5ff517cf26877fdf2eb8d40cd97bb70bcfc`。在线备份、SQLite 完整性和修订连续性检查通过，切换前后的同步容器 ID 相同。发布包 `build/finance-compass-web31-sync.zip` 的 SHA-256 为 `38c99c76e780cae6f56e8cbdb9200946e26c924194424ee9f777f30ff0b88839`。
+
 `test/currency_formatter_test.dart` 覆盖负零、浮点相减产生的尾差、半分舍入边界，以及不同显示位数、货币前缀与小数分隔符。`test/credit_card_outstanding_test.dart` 在账户列表检查 USD -0.004 的原币显示为中性色的 USD 0.00；按 4.7 折算为 MYR 后，仍显示负的 0.02。
 
 ## 贷款月供从预计转为实际
