@@ -396,7 +396,7 @@ class _TemplateEditorPageState extends ConsumerState<TemplateEditorPage> {
                   FittedBox(
                     fit: BoxFit.scaleDown,
                     child: Text(
-                      '${row.sign}${compassMoney(row.amount, currency: row.currency)}',
+                      row.formattedAmount,
                       style: TextStyle(color: row.color, fontSize: 24),
                     ),
                   ),
@@ -894,7 +894,7 @@ class _RecurringRuleEditorPageState
                   Text(row.name,
                       style: Theme.of(context).textTheme.headlineSmall),
                   Text(
-                    '${row.sign}${compassMoney(row.amount, currency: row.currency)}',
+                    row.formattedAmount,
                     style: TextStyle(color: row.color, fontSize: 23),
                   ),
                   Text('${row.account} · ${row.category}',
@@ -1317,7 +1317,7 @@ class _TemplatePresentation {
     required this.color,
     this.template,
     this.draft,
-    this.sign = '',
+    this.showPositiveSign = false,
   });
   final String name;
   final String account;
@@ -1328,7 +1328,8 @@ class _TemplatePresentation {
   final Color color;
   final TransactionTemplate? template;
   final FinanceTransaction? draft;
-  final String sign;
+  final bool showPositiveSign;
+  String get formattedAmount => compassMoney(amount, currency: currency, showPositiveSign: showPositiveSign);
 }
 
 class _RecurringPresentation extends _TemplatePresentation {
@@ -1343,7 +1344,7 @@ class _RecurringPresentation extends _TemplatePresentation {
     required this.date,
     this.rule,
     super.draft,
-    super.sign,
+    super.showPositiveSign,
   });
   final String date;
   final RecurringTransactionRule? rule;
@@ -1398,7 +1399,7 @@ class _TemplateRow extends StatelessWidget {
                 child: FittedBox(
                   fit: BoxFit.scaleDown,
                   child: Text(
-                    '${row.sign}${compassMoney(row.amount, currency: row.currency)}',
+                    row.formattedAmount,
                     style: TextStyle(color: row.color),
                   ),
                 ),
@@ -1462,7 +1463,7 @@ class _RecurringRow extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Text(
-                    '${row.sign}${compassMoney(row.amount, currency: row.currency)}',
+                    row.formattedAmount,
                     style: TextStyle(color: row.color),
                   ),
                   Switch(value: enabled, onChanged: onToggle),
@@ -1561,7 +1562,7 @@ _TemplatePresentation _templateFromDraft(
             ? Icons.swap_horiz_rounded
             : Icons.shopping_bag_outlined,
     color: income ? FinanceColors.compassTeal : FinanceColors.compassOrange,
-    sign: income ? '+ ' : '',
+    showPositiveSign: income,
     template: model,
     draft: draft,
   );
@@ -1611,7 +1612,7 @@ _RecurringPresentation _recurringFromDraft(
     currency: base.currency,
     icon: base.icon,
     color: base.color,
-    sign: base.sign,
+    showPositiveSign: base.showPositiveSign,
     draft: draft,
     rule: model,
   );

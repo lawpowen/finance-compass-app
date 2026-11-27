@@ -9,6 +9,27 @@ import 'package:finance_app/src/features/shared/compass_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('amounts that round to zero have no minus sign at the selected precision', () {
+    setCompassMoneyStyle(useCurrencyCode: true, useEuropeanSeparators: false);
+    addTearDown(() => setCompassMoneyStyle(useCurrencyCode: true, useEuropeanSeparators: false));
+    for (final zero in [-0.0, 0.3 - (0.1 + 0.2), -0.0049]) {
+      expect(formatMoney(zero, currency: 'MYR'), 'RM 0.00');
+      expect(compassMoney(zero, currency: 'MYR'), 'MYR 0.00');
+      expect(compassMoney(zero, showCurrency: false), '0.00');
+    }
+    expect(formatMoney(-0.005, currency: 'MYR'), '-RM 0.01');
+    expect((-0.004).toMoneyDecimal(), '0.00');
+    expect((-0.005).toMoneyDecimal(), '-0.01');
+    expect(compassMoney(0.004, currency: 'MYR', showPositiveSign: true), 'MYR 0.00');
+    expect(compassMoney(0.005, currency: 'MYR', showPositiveSign: true), '+ MYR 0.01');
+    expect(compassMoney(-0.006, currency: 'MYR'), '- MYR 0.01');
+    expect(compassMoney(-0.49, decimals: 0, showCurrency: false), '0');
+    expect(compassMoney(-0.5, decimals: 0, showCurrency: false), '-1');
+    setCompassMoneyStyle(useCurrencyCode: false, useEuropeanSeparators: true);
+    expect(compassMoney(-0.004, currency: 'USD'), 'US\$ 0,00');
+    expect(compassMoney(-0.004, currency: 'USD', decimals: 3), '- US\$ 0,004');
+  });
+
   test('formats supported currencies with user-facing labels', () {
     expect(formatMoney(12.5, currency: 'MYR'), 'RM 12.50');
     expect(formatMoney(12.5, currency: 'USD'), 'US\$ 12.50');

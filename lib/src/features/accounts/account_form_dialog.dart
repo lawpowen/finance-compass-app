@@ -102,11 +102,11 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
         TextEditingController(text: account?.institution ?? '');
     currency = normalizeCurrency(account?.currency ?? widget.defaultCurrency);
     initialBalanceController = TextEditingController(
-      text: (account?.initialBalance ?? 0).toStringAsFixed(2),
+      text: (account?.initialBalance ?? 0).toMoneyDecimal(),
     );
     currentBalanceController = TextEditingController(
       text: (account?.currentBalance ?? account?.initialBalance ?? 0)
-          .toStringAsFixed(2),
+          .toMoneyDecimal(),
     );
     noteController = TextEditingController(text: account?.note ?? '');
     creditLimitController = TextEditingController(
@@ -158,8 +158,8 @@ class _AccountFormDialogState extends State<AccountFormDialog> {
     currency = normalizeCurrency(account.currency);
     accountType = account.accountType;
     reportGroup = account.effectiveReportGroup;
-    currentBalanceController.text = account.currentBalance.toStringAsFixed(2);
-    initialBalanceController.text = account.initialBalance.toStringAsFixed(2);
+    currentBalanceController.text = account.currentBalance.toMoneyDecimal();
+    initialBalanceController.text = account.initialBalance.toMoneyDecimal();
   }
 
   @override

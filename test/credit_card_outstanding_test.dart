@@ -141,6 +141,34 @@ Future<void> _openCards(WidgetTester tester, FinanceRepository repository,
 }
 
 void main() {
+  testWidgets('a sub-cent cash balance is neutral while its converted value keeps its own sign', (tester) async {
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    const bank = Account(
+      id: 'rounding', name: '外币零钱', accountType: AccountType.bankSaving,
+      reportGroup: ReportGroup.cash, currency: 'USD',
+      initialBalance: -0.004, currentBalance: -0.004,
+    );
+    final repo = FinanceRepository.fromSnapshot(database: db, accounts: [bank]);
+    tester.view.physicalSize = const Size(390, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(MaterialApp(
+      theme: buildFinanceTheme(AppThemeStyle.monochrome),
+      home: Scaffold(body: AccountsV2Screen(repository: repo)),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('现金').last);
+    await tester.pumpAndSettle();
+    final row = _row(bank.name);
+    final native = find.descendant(of: row, matching: find.text('USD 0.00'));
+    expect(native, findsOneWidget);
+    expect(tester.widget<Text>(native).style?.color, financePaletteOf(tester.element(row)).textPrimary);
+    expect(find.descendant(of: row, matching: find.text('≈ - MYR 0.02')), findsOneWidget);
+    expect(repo.accounts.single.currentBalance, -0.004);
+  });
+
   // Statement day 15 at 2026-07-20: billed cycle 06-16..07-15, next cycle
   // 07-16..08-15.
   final now = DateTime(2026, 7, 20, 10);

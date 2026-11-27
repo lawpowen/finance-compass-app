@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/data/finance_repository.dart';
+import '../../core/utils/currency_formatter.dart' show moneyDisplayParts;
 import '../../core/models/account.dart';
 import '../../core/models/asset_snapshot.dart';
 import '../../core/models/transaction.dart';
@@ -225,7 +226,7 @@ class _AccountDetailScreenState extends ConsumerState<AccountDetailScreen> {
                 compassMoney(balance, currency: account.currency),
                 key: const Key('account-detail-balance'),
                 style: TextStyle(
-                  color: balance < 0 ? palette.expense : palette.textPrimary,
+                  color: moneyDisplayParts(balance).sign < 0 ? palette.expense : palette.textPrimary,
                   fontSize: 32,
                   fontWeight: FontWeight.w700,
                   fontFeatures: compassTabularFigures,

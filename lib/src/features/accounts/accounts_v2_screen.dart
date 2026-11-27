@@ -7,7 +7,7 @@ import '../../core/models/credit_card_billing.dart';
 import '../../core/providers/mutations/account_mutations.dart';
 import '../../core/providers/repository_provider.dart';
 import '../../core/theme/finance_theme.dart';
-import '../../core/utils/currency_formatter.dart' show normalizeCurrency;
+import '../../core/utils/currency_formatter.dart' show moneyDisplayParts, normalizeCurrency;
 import '../shared/compass_ui.dart';
 import '../shared/finance_donut.dart';
 import '../settings/settings_reference_pages.dart';
@@ -141,7 +141,7 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
               compassMoney(netAssets, currency: baseCurrency),
               key: const Key('accounts-net-worth'),
               style: TextStyle(
-                color: netAssets < 0 ? palette.expense : palette.textPrimary,
+                color: moneyDisplayParts(netAssets).sign < 0 ? palette.expense : palette.textPrimary,
                 fontSize: 34,
                 fontWeight: FontWeight.w700,
                 letterSpacing: .2,
@@ -174,7 +174,7 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
                       label: '负债',
                       value: liabilities,
                       currency: baseCurrency,
-                      valueColor: liabilities > 0 ? palette.expense : null,
+                      valueColor: moneyDisplayParts(liabilities).sign > 0 ? palette.expense : null,
                     ),
                     const SizedBox(height: 12),
                     _BreakdownLine(
@@ -193,15 +193,15 @@ class _AccountsV2ScreenState extends ConsumerState<AccountsV2Screen> {
               ),
             ],
           ),
-          if (sheet.overdrafts > 0)
+          if (moneyDisplayParts(sheet.overdrafts).sign > 0)
             _BreakdownLine(
                 label: '其他账户负余额',
                 value: sheet.overdrafts,
                 currency: baseCurrency),
-          if (sheet.loanCredit > 0)
+          if (moneyDisplayParts(sheet.loanCredit).sign > 0)
             _BreakdownLine(
                 label: '贷款溢还', value: sheet.loanCredit, currency: baseCurrency),
-          if (creditCardCredit > 0) ...[
+          if (moneyDisplayParts(creditCardCredit).sign > 0) ...[
             const SizedBox(height: 8),
             _BreakdownLine(
               key: const Key('accounts-card-credit'),
@@ -1081,19 +1081,17 @@ class _AccountRow extends StatelessWidget {
             usageAmount: usageAmount,
             historical: isHistorical,
           );
-    final amount = cardDisplay?.amount ??
-        (account.accountType == AccountType.loan
-            ? (-rawBalance).clamp(0.0, double.infinity).toDouble()
-            : rawBalance.abs());
-    final isNegativeCash = account.accountType != AccountType.creditCard &&
-        account.accountType != AccountType.loan &&
-        rawBalance < 0;
+    final amount = cardDisplay?.amount ?? switch (account.accountType) {
+      AccountType.loan => (-rawBalance).clamp(0.0, double.infinity).toDouble(),
+      AccountType.creditCard => rawBalance.abs(),
+      _ => rawBalance,
+    };
     final baseCurrency = repository.baseCurrency;
     final foreignCurrency = account.currency.trim().toUpperCase() !=
         baseCurrency.trim().toUpperCase();
     final baseEquivalent = foreignCurrency
         ? repository.tryConvertAmount(
-            amount: isNegativeCash ? -amount : amount,
+            amount: amount,
             fromCurrency: account.currency,
             toCurrency: baseCurrency,
           )
@@ -1131,7 +1129,7 @@ class _AccountRow extends StatelessWidget {
         ? [
             if (!account.isActive && !isHistorical) '已停用',
             account.institution,
-            if (account.accountType == AccountType.loan && rawBalance > 0)
+            if (account.accountType == AccountType.loan && moneyDisplayParts(rawBalance).sign > 0)
               '溢还 ${compassMoney(rawBalance, currency: account.currency)}',
             if (account.accountType == AccountType.loan &&
                 account.hasCompleteLoanProfile)
@@ -1194,11 +1192,10 @@ class _AccountRow extends StatelessWidget {
             const SizedBox(width: 8),
             _AccountAmountColumn(
               amountLabel: cardDisplay?.amountLabel,
-              isNegativeCash: isNegativeCash,
               amount: amount,
               currency: account.currency,
               amountColor: cardDisplay?.amountColor ??
-                  (isNegativeCash ? palette.expense : palette.textPrimary),
+                  (moneyDisplayParts(amount).sign < 0 ? palette.expense : palette.textPrimary),
               baseEquivalent: baseEquivalent,
               baseCurrency: baseCurrency,
             ),
@@ -1256,7 +1253,7 @@ class _AccountStatusExtras extends StatelessWidget {
                           .bodySmall
                           ?.copyWith(color: palette.textMuted)),
               ],
-              if (overpaid > 0)
+              if (moneyDisplayParts(overpaid).sign > 0)
                 CompassStatusBadge(
                   label: '溢缴 ${compassMoney(overpaid, currency: currency)}',
                   color: palette.income,
@@ -1294,7 +1291,6 @@ class _AccountStatusExtras extends StatelessWidget {
 class _AccountAmountColumn extends StatelessWidget {
   const _AccountAmountColumn({
     required this.amountLabel,
-    required this.isNegativeCash,
     required this.amount,
     required this.currency,
     required this.amountColor,
@@ -1303,7 +1299,6 @@ class _AccountAmountColumn extends StatelessWidget {
   });
 
   final String? amountLabel;
-  final bool isNegativeCash;
   final double amount;
   final String currency;
   final Color amountColor;
@@ -1318,7 +1313,7 @@ class _AccountAmountColumn extends StatelessWidget {
             Text(label, style: Theme.of(context).textTheme.bodySmall),
           const SizedBox(height: 3),
           Text(
-            '${isNegativeCash ? '- ' : ''}${compassMoney(amount, currency: currency)}',
+            compassMoney(amount, currency: currency),
             style: TextStyle(
               color: amountColor,
               fontSize: 15,

@@ -9,6 +9,7 @@ import '../../core/models/account.dart';
 import '../../core/models/category.dart';
 import '../../core/models/transaction.dart';
 import '../../core/theme/finance_theme.dart';
+import '../../core/utils/currency_formatter.dart' show MoneyDecimalText;
 import '../../core/utils/id_generator.dart';
 import '../shared/card_posting_date_field.dart';
 import '../shared/compass_ui.dart';
@@ -102,14 +103,14 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
         keepOriginal: widget.editExisting, newEntry: draft == null);
     final amount = draft?.amount ?? 0;
     amountController = TextEditingController(
-      text: draft == null ? '' : amount.toStringAsFixed(2),
+      text: draft == null ? '' : amount.toMoneyDecimal(),
     );
     toAmountController = TextEditingController(
-      text: draft?.toAmount?.toStringAsFixed(2) ?? '',
+      text: draft?.toAmount?.toMoneyDecimal() ?? '',
     );
     _toAmountEditedByUser = draft?.toAmount != null;
     loanPaymentController = TextEditingController(
-      text: draft?.loanPaymentAmount?.toStringAsFixed(2) ?? '',
+      text: draft?.loanPaymentAmount?.toMoneyDecimal() ?? '',
     );
     merchantController = TextEditingController(
       text: draft?.merchant ?? '',
@@ -651,7 +652,7 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
             toCurrency: targetCurrency,
           );
     _isAutoSettingToAmount = true;
-    toAmountController.text = converted?.toStringAsFixed(2) ?? '';
+    toAmountController.text = converted?.toMoneyDecimal() ?? '';
     _isAutoSettingToAmount = false;
     if (mounted) setState(() {});
   }
@@ -746,14 +747,14 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
         if (loanPayment != null &&
             loanCurrency != null &&
             oldCurrency != value.currency) {
-          loanPaymentController.text = loanPayment.toStringAsFixed(2);
+          loanPaymentController.text = loanPayment.toMoneyDecimal();
           amountController.text = repository
                   .tryConvertAmount(
                     amount: loanPayment,
                     fromCurrency: loanCurrency,
                     toCurrency: value.currency,
                   )
-                  ?.toStringAsFixed(2) ??
+                  ?.toMoneyDecimal() ??
               '';
         }
         _toAmountEditedByUser = false;
@@ -813,7 +814,7 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
       title: '套用模板',
       items: availableTemplates,
       label: (item) =>
-          '${item.name} · ${item.currency} ${item.amount.toStringAsFixed(2)}',
+          '${item.name} · ${item.currency} ${item.amount.toMoneyDecimal()}',
     );
     if (selected == null || !mounted) return;
     setState(() {
@@ -835,13 +836,13 @@ class _TransactionComposerPageState extends State<TransactionComposerPage> {
           hasUnallocatedLoanSplit(selected, repository) ? selected : null;
       _editingUnallocatedAmounts = false;
       loanPaymentController.text =
-          selected.loanPaymentAmount?.toStringAsFixed(2) ?? '';
+          selected.loanPaymentAmount?.toMoneyDecimal() ?? '';
       categoryId = _draftCategory(type, selected.categoryId);
-      amountController.text = selected.amount.toStringAsFixed(2);
+      amountController.text = selected.amount.toMoneyDecimal();
       merchantController.text = selected.merchant ?? '';
       noteController.text = selected.description ?? '';
       _toAmountEditedByUser = selected.toAmount != null;
-      toAmountController.text = selected.toAmount?.toStringAsFixed(2) ?? '';
+      toAmountController.text = selected.toAmount?.toMoneyDecimal() ?? '';
     });
     _updateTransferEstimate(
       force: selected.toAmount == null || _isSameCurrencyTransfer,

@@ -7,6 +7,7 @@ import '../models/budget_ledger.dart';
 import '../models/category.dart';
 import '../models/category_hierarchy.dart';
 import '../models/transaction.dart';
+import '../utils/currency_formatter.dart' show MoneyDecimalText;
 import '../utils/month_key.dart';
 
 /// Actual and planned amounts in base currency. Missing quotes retain their
@@ -325,14 +326,14 @@ class CategoryReportIndex {
         id ?? '',
         measure,
         unit,
-        ...amounts.map((a) => a?.toStringAsFixed(2) ?? ''),
+        ...amounts.map((a) => a?.toMoneyDecimal() ?? ''),
         if (amounts.every((a) => a == null))
           ''
         else
           amounts
               .whereType<double>()
               .fold(0.0, (double a, b) => a + b)
-              .toStringAsFixed(2)
+              .toMoneyDecimal()
       ]);
     }
 

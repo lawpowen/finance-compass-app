@@ -220,7 +220,7 @@ class _LoanDetailScreenState extends ConsumerState<LoanDetailScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    if (balance > 0)
+                    if (moneyDisplayParts(balance).sign > 0)
                       Text(
                           '贷款溢还 ${formatMoney(balance, currency: account.currency)}'),
                     Text(isHistorical ? '截至当月剩余贷款' : '当前剩余贷款',

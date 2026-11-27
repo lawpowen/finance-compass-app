@@ -456,7 +456,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ),
                     ),
                     Text(
-                      '${isExpense ? '-' : '+'}${formatMoney(transaction.amount, currency: transaction.currency)}',
+                      formatMoney(isExpense ? -transaction.amount : transaction.amount,
+                          currency: transaction.currency, showPositiveSign: true),
                       style: TextStyle(
                         fontWeight: FontWeight.w700,
                         color: isExpense
@@ -521,7 +522,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               ),
                             ),
                             Text(
-                              '-${formatMoney(transaction.amount, currency: transaction.currency)}',
+                              formatMoney(-transaction.amount, currency: transaction.currency),
                               style: const TextStyle(
                                 fontWeight: FontWeight.w700,
                                 color: Color(0xFFB91C1C),
@@ -878,9 +879,7 @@ class _DashboardKpiCard extends StatelessWidget {
           ),
           SizedBox(height: compact ? 5 : 8),
           Text(
-            item.amount < 0
-                ? '-${formatMoneyValue(item.amount)}'
-                : formatMoneyValue(item.amount),
+            item.amount.toMoneyDecimal(),
             style: theme.textTheme.titleMedium?.copyWith(
               color: item.color,
               fontSize: compact ? 15 : 18,

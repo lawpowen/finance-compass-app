@@ -151,7 +151,7 @@ class PeriodComparisonCard extends StatelessWidget {
                     ),
                   ),
                   Text(
-                    _formatSignedMoney(comparison.delta),
+                    formatMoney(comparison.delta, showPositiveSign: true),
                     style: theme.textTheme.labelLarge?.copyWith(
                       color: statusColor,
                       fontWeight: FontWeight.w800,
@@ -173,10 +173,6 @@ class PeriodComparisonCard extends StatelessWidget {
     );
   }
 
-  String _formatSignedMoney(double value) {
-    if (value > 0) return '+${formatMoney(value)}';
-    return formatMoney(value);
-  }
 }
 
 class _PeriodValue extends StatelessWidget {

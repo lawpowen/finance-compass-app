@@ -8,6 +8,7 @@ import '../../core/data/finance_repository.dart';
 import '../../core/models/account.dart';
 import '../../core/models/category.dart';
 import '../../core/theme/finance_theme.dart';
+import '../../core/utils/currency_formatter.dart' show moneyDisplayParts;
 import '../../core/utils/month_key.dart';
 import '../ai/ai_chat_screen.dart';
 import '../shared/compass_ui.dart';
@@ -376,7 +377,7 @@ class _ReportsV2ScreenState extends State<ReportsV2Screen> {
             ),
             key: const Key('reports-net-worth'),
             style: TextStyle(
-              color: netWorth < 0
+              color: moneyDisplayParts(netWorth, decimals: 0).sign < 0
                   ? financePaletteOf(context).expense
                   : financePaletteOf(context).textPrimary,
               fontSize: 31,
@@ -1481,22 +1482,14 @@ String _monthLabel(String monthKey) {
   return '${parts[0]}年${int.parse(parts[1])}月';
 }
 
-bool _isZero(double value, int decimals) =>
-    value.abs() < 0.5 / math.pow(10, decimals);
-
 /// Signed amount for changes; a zero change never carries a gain sign.
 String _signedMoney(double value,
-    {required String currency, int decimals = 2}) {
-  if (_isZero(value, decimals)) {
-    return compassMoney(0, currency: currency, decimals: decimals);
-  }
-  final formatted = compassMoney(value, currency: currency, decimals: decimals);
-  return value > 0 ? '+ $formatted' : formatted;
-}
+    {required String currency, int decimals = 2}) =>
+    compassMoney(value, currency: currency, decimals: decimals, showPositiveSign: true);
 
 Color _signColor(BuildContext context, double value, {int decimals = 2}) {
   final palette = financePaletteOf(context);
-  if (_isZero(value, decimals)) {
+  if (moneyDisplayParts(value, decimals: decimals).sign == 0) {
     return palette.textMuted;
   }
   return value > 0 ? palette.income : palette.expense;

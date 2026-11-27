@@ -10,6 +10,7 @@ import '../../core/models/transaction.dart';
 import '../../core/providers/mutations/transaction_mutations.dart';
 import '../../core/theme/finance_theme.dart';
 import '../../core/utils/month_key.dart';
+import '../../core/utils/currency_formatter.dart' show moneyDisplayParts;
 import '../accounts/credit_card_detail_screen.dart';
 import '../accounts/accounts_v2_screen.dart';
 import '../ai/ai_chat_screen.dart';
@@ -1048,7 +1049,7 @@ class _DashboardKpiStrip extends StatelessWidget {
         value: compassMoney(netWorth, currency: baseCurrency, decimals: 0),
         subtitle:
             '资产 ${compassMoney(totalAssets, currency: baseCurrency, decimals: 0)} · 负债 ${compassMoney(debt, currency: baseCurrency, decimals: 0)}',
-        valueColor: netWorth < 0 ? palette.expense : palette.textPrimary,
+        valueColor: moneyDisplayParts(netWorth, decimals: 0).sign < 0 ? palette.expense : palette.textPrimary,
         onTap: onOpenAccounts,
       ),
       _DashboardKpiCard(
@@ -1281,9 +1282,9 @@ class _RecentTransactionRow extends StatelessWidget {
     final isExpense = transaction.type == TransactionType.expense;
     final isIncome = transaction.type == TransactionType.income;
     final signed = isExpense ? -transaction.amount : transaction.amount;
-    final amountColor = isExpense
-        ? palette.expense
-        : (isIncome ? palette.income : palette.textPrimary);
+    final amountColor = moneyDisplayParts(signed).sign == 0
+        ? palette.textPrimary
+        : isExpense ? palette.expense : (isIncome ? palette.income : palette.textPrimary);
     final categoryName = transaction.categoryId == null
         ? (transaction.type == TransactionType.transfer ? '账户转账' : '调整')
         : repository.categoryName(transaction.categoryId!);
@@ -1341,7 +1342,7 @@ class _RecentTransactionRow extends StatelessWidget {
                 fit: BoxFit.scaleDown,
                 alignment: Alignment.centerRight,
                 child: Text(
-                  '${isIncome && signed > 0 ? '+ ' : ''}${compassMoney(signed, currency: transaction.currency)}',
+                  compassMoney(signed, currency: transaction.currency, showPositiveSign: isIncome),
                   style: TextStyle(
                     color: amountColor,
                     fontSize: 13,

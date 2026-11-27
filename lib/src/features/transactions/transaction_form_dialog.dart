@@ -376,13 +376,13 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                             if (loanPayment != null &&
                                 oldCurrency != currency) {
                               loanPaymentController.text =
-                                  loanPayment.toStringAsFixed(2);
+                                  loanPayment.toMoneyDecimal();
                               amountController.text = _ledger
                                       .tryConvertAmount(
                                           amount: loanPayment,
                                           fromCurrency: toCurrency,
                                           toCurrency: currency)
-                                      ?.toStringAsFixed(2) ??
+                                      ?.toMoneyDecimal() ??
                                   '';
                             }
                             _toAmountEditedByUser = false;
@@ -671,7 +671,7 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
       toCurrency: toCurrency,
     );
     _isAutoSettingToAmount = true;
-    toAmountController.text = estimate?.toStringAsFixed(2) ?? '';
+    toAmountController.text = estimate?.toMoneyDecimal() ?? '';
     _isAutoSettingToAmount = false;
   }
 

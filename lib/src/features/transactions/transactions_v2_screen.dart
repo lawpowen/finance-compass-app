@@ -10,6 +10,7 @@ import '../../core/models/transaction.dart';
 import '../../core/providers/mutations/transaction_mutations.dart';
 import '../../core/providers/repository_provider.dart';
 import '../../core/theme/finance_theme.dart';
+import '../../core/utils/currency_formatter.dart' show moneyDisplayParts;
 import '../shared/compass_ui.dart';
 import '../shared/finance_action_menu_button.dart';
 import 'transaction_automation_pages.dart';
@@ -757,9 +758,9 @@ class _TransactionsV2ScreenState extends ConsumerState<TransactionsV2Screen> {
       }
       final dayCount = probe - index;
       final summaryParts = <String>[
-        if (dayIncome != 0)
+        if (moneyDisplayParts(dayIncome).sign != 0)
           '收 ${dayIncome > 0 ? '+' : ''}${compassMoney(dayIncome, currency: baseCurrency)}',
-        if (dayExpense != 0)
+        if (moneyDisplayParts(dayExpense).sign != 0)
           '支 ${compassMoney(dayExpense, currency: baseCurrency)}',
       ];
       entries.add(
@@ -2348,14 +2349,15 @@ class _TransactionRow extends StatelessWidget {
     final isIncome = item.type == TransactionType.income;
     final isTransfer = item.type == TransactionType.transfer;
     final signedAmount = isExpense ? -item.amount : item.amount;
+    final sign = moneyDisplayParts(signedAmount).sign;
     final showsDirectionalSign =
         isExpense || isIncome || item.type == TransactionType.adjustment;
-    final color = (isExpense || signedAmount < 0)
-        ? palette.expense
-        : (isIncome ||
-                (item.type == TransactionType.adjustment && signedAmount > 0))
-            ? palette.income
-            : palette.textPrimary;
+    final color = switch (sign) {
+      0 => palette.textPrimary,
+      _ when isExpense || sign < 0 => palette.expense,
+      _ when isIncome || item.type == TransactionType.adjustment => palette.income,
+      _ => palette.textPrimary,
+    };
     final categoryId = item.categoryId;
     final category = categoryId == null
         ? _typeName(item.type)
@@ -2371,8 +2373,7 @@ class _TransactionRow extends StatelessWidget {
         ? mobileAccountLabel
         : '$mobileAccountLabel · $category';
     final amount = Text(
-      '${showsDirectionalSign && signedAmount > 0 ? '+ ' : ''}'
-      '${compassMoney(signedAmount, currency: item.currency)}',
+      compassMoney(signedAmount, currency: item.currency, showPositiveSign: showsDirectionalSign),
       style: TextStyle(
         color: color,
         fontSize: desktop ? 14 : 13.5,

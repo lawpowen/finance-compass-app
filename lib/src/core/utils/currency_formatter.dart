@@ -15,10 +15,26 @@ void setActiveBaseCurrency(String currency) {
   activeBaseCurrencyCode = normalizeCurrency(currency);
 }
 
-String formatMoney(double value, {String? currency}) {
+/// Keep the sign in step with the digits actually shown at this precision.
+({String magnitude, int sign}) moneyDisplayParts(num value, {int decimals = 2}) {
+  final magnitude = value.abs().toStringAsFixed(decimals);
+  final roundedZero = value.abs() < 1 && double.parse(magnitude) == 0;
+  final sign = roundedZero || value.isNaN ? 0 : value.sign.toInt();
+  return (magnitude: magnitude, sign: sign);
+}
+
+extension MoneyDecimalText on num {
+  String toMoneyDecimal() {
+    final parts = moneyDisplayParts(this);
+    return parts.sign < 0 ? '-${parts.magnitude}' : parts.magnitude;
+  }
+}
+
+String formatMoney(double value, {String? currency, bool showPositiveSign = false}) {
   final displayCurrency = normalizeCurrency(currency ?? activeBaseCurrencyCode);
-  final sign = value < 0 ? '-' : '';
-  return '$sign${currencyLabel(displayCurrency)} ${formatMoneyValue(value)}';
+  final parts = moneyDisplayParts(value);
+  final sign = parts.sign < 0 ? '-' : showPositiveSign && parts.sign > 0 ? '+' : '';
+  return '$sign${currencyLabel(displayCurrency)} ${parts.magnitude}';
 }
 
 String formatMoneyValue(double value) {

@@ -8,7 +8,7 @@ import '../../core/platform/web_renderer_stub.dart'
     if (dart.library.js_interop) '../../core/platform/web_renderer_web.dart';
 import '../../core/theme/finance_colors.dart';
 import '../../core/theme/finance_theme.dart';
-import '../../core/utils/currency_formatter.dart' show activeBaseCurrencyCode;
+import '../../core/utils/currency_formatter.dart' show activeBaseCurrencyCode, moneyDisplayParts;
 
 /// Allows tests to simulate CanvasKit's software fallback.
 @visibleForTesting
@@ -51,16 +51,18 @@ String compassMoney(
   String? currency,
   int decimals = 2,
   bool showCurrency = true,
+  bool showPositiveSign = false,
 }) {
-  final negative = value < 0;
-  final parts = value.abs().toStringAsFixed(decimals).split('.');
+  final display = moneyDisplayParts(value, decimals: decimals);
+  final sign = display.sign < 0 ? '-' : showPositiveSign && display.sign > 0 ? '+' : '';
+  final parts = display.magnitude.split('.');
   final grouped = parts.first.replaceAllMapped(
     RegExp(r'\B(?=(\d{3})+(?!\d))'),
     (_) => _compassUseEuropeanSeparators ? ' ' : ',',
   );
   final decimalMark = _compassUseEuropeanSeparators ? ',' : '.';
   final fraction = decimals == 0 ? '' : '$decimalMark${parts.last}';
-  if (!showCurrency) return '${negative ? '-' : ''}$grouped$fraction';
+  if (!showCurrency) return '$sign$grouped$fraction';
   final displayCurrency = currency ?? activeBaseCurrencyCode;
   final prefix = _compassUseCurrencyCode
       ? displayCurrency
@@ -71,7 +73,7 @@ String compassMoney(
           'TWD' => 'NT\$',
           _ => displayCurrency,
         };
-  return '${negative ? '- ' : ''}$prefix $grouped$fraction';
+  return '${sign.isEmpty ? '' : '$sign '}$prefix $grouped$fraction';
 }
 
 class CompassBackdropLayer extends StatelessWidget {
